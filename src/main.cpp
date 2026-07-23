@@ -3,7 +3,6 @@
 #include "engine/CrashReporter.hpp"
 
 #include <cstring>
-#include <memory>
 
 int main(int argc, char** argv)
 {
@@ -23,7 +22,7 @@ int main(int argc, char** argv)
 
     bool restart = false;
     do {
-        auto app = std::make_unique<majo::App>();
+        auto app = majo::createApp();
         if (!app->initialize("ダンジョンを掘る魔女", 1280, 720, testPlayMode)) {
             return 1;
         }

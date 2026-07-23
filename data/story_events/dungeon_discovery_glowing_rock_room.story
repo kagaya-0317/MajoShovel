@@ -4,4 +4,10 @@
 @once dungeon_discovery_seen_glowing_rock_room
 
 @say player ルネ
-あの岩、光ってる。
+なんだか、不思議な岩があるね
+
+@say chicory チコリ
+こり？
+
+@say player ルネ
+硬そうだけど、壊せるのかな？

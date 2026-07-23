@@ -4,7 +4,11 @@
 @once dungeon_discovery_seen_sleeping_enemy_treasure
 
 @say player ルネ
-あれ、寝てる……？
+うわ〜
+お宝があるけど、モンスターがいっぱい…
 
 @say chicory チコリ
-しーっ。
+ちぃ…
+
+@say player ルネ
+みんな寝てるから、起こさないようにしよう

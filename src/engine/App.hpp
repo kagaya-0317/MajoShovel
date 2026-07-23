@@ -12,6 +12,7 @@
 #include <SDL3/SDL.h>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <string_view>
 
@@ -19,7 +20,7 @@ namespace majo {
 
 class App {
 public:
-    App() = default;
+    App();
     ~App();
 
     bool initialize(const char* title, int width, int height, bool testPlayMode = false);
@@ -103,5 +104,7 @@ private:
     int width_ = 1280;
     int height_ = 720;
 };
+
+std::unique_ptr<App> createApp();
 
 }

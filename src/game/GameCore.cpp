@@ -40,6 +40,7 @@ constexpr std::string_view AudioSeRingThrow = "se.ring.throw";
 constexpr std::string_view AudioSeEnemyAlert = "se.enemy.alert";
 constexpr std::string_view AudioSeEnemyAttack = "se.enemy.attack";
 constexpr std::string_view AudioSeEnemyShoot = "se.enemy.shoot";
+constexpr std::string_view AudioSeJunkCrabThrow = "se.projectile.metal.launch";
 constexpr std::string_view AudioSeEnemyHeal = "se.enemy.heal";
 constexpr std::string_view AudioSeEnemyMimicBite = "se.enemy.mimic_bite";
 constexpr std::string_view AudioSeRingSlowBite = "se.ring.slow_bite";
@@ -1595,6 +1596,7 @@ void Game::resetWorldRunState()
     ringGrabOrigin_ = -1;
     ringStatus_.clear();
     runStats_ = RunStats{};
+    resetDungeonRouteDeviation();
     gameOverSelection_ = 0;
     gameOverStatus_.clear();
     bossSpawned_ = false;
@@ -2630,15 +2632,17 @@ void Game::updateScreenTransition(float dt)
             : ScreenTransitionFadeInSeconds;
         if (screenTransition_.elapsed >= fadeInSeconds) {
             const ScreenTransitionTarget completedTarget = screenTransition_.target;
-            const bool startDungeonRingIntro = dungeonRingIntroStartPending_ &&
-                screenTransition_.target == ScreenTransitionTarget::MiningStart;
+            const bool startDungeonRingIntro = dungeonRingIntroStartPending_;
             const float postTransitionStoryDelaySeconds =
                 screenTransition_.postTransitionStoryDelaySeconds;
             screenTransition_ = ScreenTransitionState{};
             if (startDungeonRingIntro) {
-                dungeonRingIntroStartPending_ = false;
-                dungeonRingIntroTimer_ = DungeonRingIntroDuration;
-                playAudioSe(AudioSeRingAppear);
+                if (mode_ == ScreenMode::Playing) {
+                    startDungeonRingIntroTimer();
+                } else {
+                    dungeonRingIntroStartPending_ = false;
+                    dungeonRingIntroTimer_ = 0.0f;
+                }
             }
             if (completedTarget == ScreenTransitionTarget::BossEncounterIntro) {
                 finishBossEncounterIntroTransition();
@@ -4170,6 +4174,11 @@ void Game::updateScreenMode(
         return;
     }
 
+    if (dungeonEventItemRequestUiActive()) {
+        updateDungeonEventItemRequestUi(input, ui);
+        return;
+    }
+
     if (updateDungeonFocus(dt)) {
         ui.consumePointer();
         return;
@@ -4567,6 +4576,7 @@ bool Game::gameProgressPaused() const
         debugStoryTestActive_ ||
         pendingStoryTriggerDelayActive() ||
         firstItemAcquisitionNoticeActive() ||
+        dungeonEventItemRequestUiActive() ||
         dungeonFocusActive() ||
         dialogue_.active() ||
         (introTutorialActive() && dungeonRingIntroActive()) ||
@@ -4584,6 +4594,7 @@ bool Game::dungeonEventUiSuppressed() const
         (!pendingStoryTrigger_.empty() ||
             !pendingStoryTriggers_.empty() ||
             pendingStoryTriggerDelayActive() ||
+            dungeonEventItemRequestUiActive() ||
             dungeonFocusActive() ||
             dialogue_.active());
 }
@@ -4623,6 +4634,13 @@ bool Game::basePresentationActive() const
         mode_ == ScreenMode::Ring;
 }
 
+void Game::startDungeonRingIntroTimer()
+{
+    dungeonRingIntroStartPending_ = false;
+    dungeonRingIntroTimer_ = DungeonRingIntroDuration;
+    playAudioSe(AudioSeRingAppear);
+}
+
 void Game::beginDungeonRingIntro()
 {
     spellRing_.resetRuntimeStateAtPlayer(player_, balance_);
@@ -4633,14 +4651,18 @@ void Game::beginDungeonRingIntro()
         return;
     }
 
-    dungeonRingIntroStartPending_ = false;
-    dungeonRingIntroTimer_ = DungeonRingIntroDuration;
-    playAudioSe(AudioSeRingAppear);
+    startDungeonRingIntroTimer();
 }
 
 void Game::updateDungeonRingIntro(float dt)
 {
-    if (mode_ != ScreenMode::Playing || dialogue_.active() || dungeonRingIntroTimer_ <= 0.0f) {
+    if (mode_ != ScreenMode::Playing || dialogue_.active()) {
+        return;
+    }
+    if (dungeonRingIntroStartPending_ && !screenTransition_.active()) {
+        startDungeonRingIntroTimer();
+    }
+    if (dungeonRingIntroTimer_ <= 0.0f) {
         return;
     }
     const bool wasActive = dungeonRingIntroTimer_ > 0.0f;
@@ -4733,6 +4755,7 @@ void Game::update(const Input& input, const Time& time)
     reloadNoticeTimer_ = std::max(0.0f, reloadNoticeTimer_ - time.deltaSeconds());
     encyclopedia_.update(time.deltaSeconds());
     updateDungeonLogs(time.deltaSeconds());
+    handleRingItemAddedEvents();
 
     if (input.debugPressed()) {
         debug_.toggle();
@@ -4852,6 +4875,7 @@ void Game::update(const Input& input, const Time& time)
             deathActive = true;
         }
         if (!deathActive) {
+            updateDungeonRouteDeviation(time.deltaSeconds());
             updateDungeonDepthTutorials();
         }
         if (!enemyTestActive_) {
@@ -5118,7 +5142,7 @@ void Game::update(const Input& input, const Time& time)
         }
         appendPickupLogs(pickupEvents);
         if (blockedObjectPickupCount > 0) {
-            pushDungeonLog("リュックがいっぱいで拾えません", "pickup_inventory_full");
+            pushImportantDungeonNotice("リュックがいっぱいで拾えません", "pickup_inventory_full");
         }
         if (gameplayRewardsEnabled()) {
             updateDigToolFailsafe(time.deltaSeconds());
@@ -5319,8 +5343,12 @@ void Game::update(const Input& input, const Time& time)
                 } else {
                     playAudioSeAt(AudioSeEnemyAttack, event.position);
                 }
-            } else if (event.type == EnemyEventType::Shoot && event.effectId == "wind_blow") {
-                playAudioSeAt(AudioSeEnemyShoot, event.position);
+            } else if (event.type == EnemyEventType::Shoot) {
+                if (event.effectId == "junk_throw") {
+                    playAudioSeAt(AudioSeJunkCrabThrow, event.position);
+                } else if (event.effectId == "wind_blow") {
+                    playAudioSeAt(AudioSeEnemyShoot, event.position);
+                }
             } else if (event.type == EnemyEventType::HealCast) {
                 playAudioSeAt(AudioSeEnemyHeal, event.position);
                 magicFx_.playHealPulse(event.position, 24.0f);

@@ -598,6 +598,13 @@ bool saveDevAutoReloadBlocked(bool blocked, std::string& outError)
 }
 }
 
+App::App() = default;
+
+std::unique_ptr<App> createApp()
+{
+    return std::make_unique<App>();
+}
+
 App::~App()
 {
     setCrashPhase("App.shutdown");

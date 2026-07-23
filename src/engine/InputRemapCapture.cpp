@@ -70,14 +70,6 @@ InputRemapCaptureResult InputRemapCapture::handleEvent(const SDL_Event& event, I
     }
 
     if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
-        if (event.key.scancode == SDL_SCANCODE_ESCAPE) {
-            cancel();
-            return InputRemapCaptureResult::Cancelled;
-        }
-        if (event.key.scancode == SDL_SCANCODE_BACKSPACE || event.key.scancode == SDL_SCANCODE_DELETE) {
-            cancel();
-            return InputRemapCaptureResult::ClearRequested;
-        }
         if (deviceGroup_ == InputRemapCaptureDeviceGroup::KeyboardMouse) {
             outBinding = {
                 .device = InputBindingDevice::Keyboard,

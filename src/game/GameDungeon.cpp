@@ -7,6 +7,8 @@
 #include "game/ExplosionWarning.hpp"
 #include "game/ItemImageRenderer.hpp"
 #include "game/NpcCharacterVisual.hpp"
+#include "game/RingDisplayName.hpp"
+#include "game/RingImpactSound.hpp"
 #include "game/SpecialObjectRules.hpp"
 
 #include <cmath>
@@ -137,6 +139,14 @@ constexpr float BossBeforeWalkInScreenMarginRatio = 0.30f;
 constexpr Vec2 DungeonEventNpcInspectSize{42.0f, 58.0f};
 constexpr Vec2 DungeonChestInspectSize{42.0f, 42.0f};
 constexpr float FootstepPitchSideOffset = 0.025f;
+constexpr float DungeonRouteDeviationEnterDistanceTiles = 12.0f;
+constexpr float DungeonRouteDeviationExitDistanceTiles = 8.0f;
+constexpr float DungeonRouteDeviationNoticeDistanceTiles = 18.0f;
+constexpr float DungeonRouteDeviationNoticeMovingSeconds = 5.0f;
+constexpr float DungeonRouteDeviationMovementEpsilon = 0.25f;
+constexpr std::string_view DungeonRouteDeviationNotice =
+    "本道から離れている　深度を進めるなら来た道を戻ろう";
+constexpr std::string_view DungeonRouteDeviationNoticeMergeKey = "dungeon_route_deviation";
 
 bool usesOuterShellBossIntroPosition(std::string_view stageId, std::string_view bossEnemyId)
 {
@@ -593,6 +603,7 @@ constexpr float DungeonFocusMoveSeconds = 0.72f;
 constexpr float DungeonFocusDefaultHoldSeconds = 2.0f;
 constexpr float DungeonRewardFocusMoveSeconds = 0.35f;
 constexpr float DungeonRewardFocusHoldSeconds = 0.8f;
+constexpr float DungeonRewardChestAppearDelaySeconds = 30.0f / 60.0f;
 constexpr float DungeonEventGuideSeconds = 45.0f;
 constexpr float DungeonEventObjectHitPaddingPx = 16.0f;
 constexpr float DungeonEventMinSpacingTiles = 8.0f;
@@ -1445,10 +1456,21 @@ std::vector<DungeonTile> buildDungeonEventCavityTiles(
 }
 
 enum class DungeonEventHitRequirement {
+    AnyContact,
     AnyDamage,
     Thunder,
     Fire,
     HeavyImpact,
+};
+
+struct DungeonEventRingHit {
+    SpellRingItem* item = nullptr;
+    int damage = 0;
+
+    explicit operator bool() const
+    {
+        return item != nullptr;
+    }
 };
 
 bool dungeonEventEffectSpecsContainAny(const std::vector<EffectSpec>& specs, std::initializer_list<std::string_view> effectIds)
@@ -1519,6 +1541,8 @@ bool dungeonEventItemLightsFire(const ObjectCatalog& catalog, const SpellRingIte
 int dungeonEventObjectHitDamageFor(const ObjectCatalog& catalog, const SpellRingItem& item, DungeonEventHitRequirement requirement)
 {
     switch (requirement) {
+    case DungeonEventHitRequirement::AnyContact:
+        return std::max({1, item.damage, item.digPower});
     case DungeonEventHitRequirement::Thunder:
         return dungeonEventItemConductsThunder(catalog, item) ? 1 : 0;
     case DungeonEventHitRequirement::Fire:
@@ -1587,32 +1611,101 @@ const char* dungeonEventItemRequestDisplayName(std::string_view requestKey)
     return "役に立ちそうなもの";
 }
 
-bool consumeDungeonEventRequestItem(
+enum class DungeonEventRequestItemAvailability {
+    Empty,
+    Available,
+    RequestMismatch,
+    Protected,
+    Equipped,
+};
+
+DungeonEventRequestItemAvailability dungeonEventRequestItemAvailability(
+    const InventorySystem& inventory,
+    int slotIndex,
+    std::string_view requestKey)
+{
+    if (const InventoryObjectStack* stack = inventory.screenObjectStackAt(slotIndex)) {
+        if (stack->count <= 0) {
+            return DungeonEventRequestItemAvailability::Empty;
+        }
+        return dungeonEventObjectMatchesRequest(stack->item, requestKey)
+            ? DungeonEventRequestItemAvailability::Available
+            : DungeonEventRequestItemAvailability::RequestMismatch;
+    }
+    if (const InventoryObjectInstance* instance = inventory.screenObjectInstanceAt(slotIndex)) {
+        if (!dungeonEventObjectMatchesRequest(instance->item, requestKey)) {
+            return DungeonEventRequestItemAvailability::RequestMismatch;
+        }
+        if (instance->instance.protectionEnabled) {
+            return DungeonEventRequestItemAvailability::Protected;
+        }
+        if (inventory.isStaffEquipped(instance->instance.instanceId)) {
+            return DungeonEventRequestItemAvailability::Equipped;
+        }
+        return DungeonEventRequestItemAvailability::Available;
+    }
+    return DungeonEventRequestItemAvailability::Empty;
+}
+
+const char* dungeonEventRequestItemAvailabilityLabel(DungeonEventRequestItemAvailability availability)
+{
+    switch (availability) {
+    case DungeonEventRequestItemAvailability::RequestMismatch:
+        return "対象外";
+    case DungeonEventRequestItemAvailability::Protected:
+        return "保護中";
+    case DungeonEventRequestItemAvailability::Equipped:
+        return "装備中";
+    case DungeonEventRequestItemAvailability::Empty:
+    case DungeonEventRequestItemAvailability::Available:
+        break;
+    }
+    return "";
+}
+
+InventoryUiEntryView dungeonEventRequestItemEntry(const InventorySystem& inventory, int slotIndex)
+{
+    InventoryUiEntryView entry{};
+    if (const InventoryObjectStack* stack = inventory.screenObjectStackAt(slotIndex)) {
+        entry.item = &stack->item;
+        entry.stackCount = stack->count;
+    } else if (const InventoryObjectInstance* instance = inventory.screenObjectInstanceAt(slotIndex)) {
+        entry.item = &instance->item;
+        entry.instance = &instance->instance;
+        entry.stackCount = 1;
+        entry.equipped = inventory.isStaffEquipped(instance->instance.instanceId);
+    }
+    return entry;
+}
+
+bool consumeDungeonEventRequestItemAt(
     InventorySystem& inventory,
+    int slotIndex,
     std::string_view requestKey,
     std::string& outObjectId,
     std::string& outDisplayName)
 {
-    for (const InventoryObjectStack& stack : inventory.objectStacks()) {
-        if (stack.count <= 0 || !dungeonEventObjectMatchesRequest(stack.item, requestKey)) {
-            continue;
-        }
-        outObjectId = stack.objectId;
-        outDisplayName = stack.item.name.empty() ? stack.objectId : stack.item.name;
-        return inventory.removeObjectItemCount(stack.objectId, 1);
+    if (dungeonEventRequestItemAvailability(inventory, slotIndex, requestKey) !=
+        DungeonEventRequestItemAvailability::Available) {
+        return false;
     }
-
-    for (const InventoryObjectInstance& instance : inventory.objectInstances()) {
-        if (instance.instance.protectionEnabled ||
-            inventory.isStaffEquipped(instance.instance.instanceId) ||
-            !dungeonEventObjectMatchesRequest(instance.item, requestKey)) {
-            continue;
-        }
-        outObjectId = instance.item.id;
-        outDisplayName = instance.item.name.empty() ? instance.item.id : instance.item.name;
-        return inventory.removeObjectInstance(instance.instance.instanceId);
+    if (const InventoryObjectStack* stack = inventory.screenObjectStackAt(slotIndex)) {
+        outObjectId = stack->objectId;
+        outDisplayName = stack->item.name.empty() ? stack->objectId : stack->item.name;
+        return inventory.removeObjectItemCount(stack->objectId, 1);
+    }
+    if (const InventoryObjectInstance* instance = inventory.screenObjectInstanceAt(slotIndex)) {
+        const std::string instanceId = instance->instance.instanceId;
+        outObjectId = instance->item.id;
+        outDisplayName = instance->item.name.empty() ? instance->item.id : instance->item.name;
+        return inventory.removeObjectInstance(instanceId);
     }
     return false;
+}
+
+UiRect dungeonEventItemRequestConfirmRect()
+{
+    return {{390.0f, 220.0f}, {500.0f, 280.0f}};
 }
 
 enum class DungeonEventNpcDialoguePhase {
@@ -1645,74 +1738,87 @@ std::string dungeonEventNpcStoryEventId(Game::DungeonEventKind kind, DungeonEven
         std::string(dungeonEventNpcDialoguePhaseId(phase));
 }
 
-std::string dungeonEventWitchRequestText(const Game::DungeonEventInstance& event)
-{
-    switch (event.kind) {
-    case Game::DungeonEventKind::BuriedWitch:
-        return "たすけて... 周りのガレキを壊してくれる？";
-    case Game::DungeonEventKind::LostBaggageWitch:
-        return "荷物を落としちゃったの。近くにあるはずなんだけど...";
-    case Game::DungeonEventKind::ItemRequestWitch:
-        return std::string(dungeonEventItemRequestDisplayName(event.requestKey)) + "がほしいの。持っていたら分けてくれる？";
-    case Game::DungeonEventKind::SurroundedWitch:
-        return "魔物に囲まれて動けないの。追い払ってくれる？";
-    case Game::DungeonEventKind::ColdWitchCampfire:
-        return "寒くて動けない... 焚き火に火をつけられる？";
-    case Game::DungeonEventKind::HeavyRockWitch:
-        return "この重い岩をどかしてほしいの。";
-    default:
-        return "ちょっと困ってるの。手を貸してくれる？";
-    }
-}
-
-std::string dungeonEventWitchProgressText(const Game::DungeonEventInstance& event)
-{
-    switch (event.kind) {
-    case Game::DungeonEventKind::BuriedWitch:
-        return "ガレキがまだ残ってるみたい。周りを掘ってくれる？";
-    case Game::DungeonEventKind::LostBaggageWitch:
-        return "落とし物は、たぶん近くにあるはず。見つけたら持ってきて。";
-    case Game::DungeonEventKind::ItemRequestWitch:
-        return std::string("まだ") + dungeonEventItemRequestDisplayName(event.requestKey) + "を探してるの。持っていたら分けてくれる？";
-    case Game::DungeonEventKind::SurroundedWitch:
-        return "まだ魔物の気配がするの。もう少しだけお願い。";
-    case Game::DungeonEventKind::ColdWitchCampfire:
-        return "焚き火に火がつけば、動けそうなんだけど...";
-    case Game::DungeonEventKind::HeavyRockWitch:
-        return "岩がまだ動かないの。壊せそうならお願い。";
-    default:
-        return "まだ困ってるの。もう少し手を貸して。";
-    }
-}
-
-std::string dungeonEventWitchRewardText(const Game::DungeonEventInstance& event)
-{
-    if (event.kind == Game::DungeonEventKind::ItemRequestWitch && !event.deliveredObjectId.empty()) {
-        return "助かったよ。これ、少しだけど受け取って。";
-    }
-    return "ありがとう。これ、少しだけど受け取って。";
-}
-
-std::string dungeonEventWitchThanksText()
-{
-    return "本当に助かったよ。気をつけてね。";
-}
-
-std::string dungeonEventWitchDialogueText(
+std::vector<std::string> dungeonEventWitchDialogueLines(
     const Game::DungeonEventInstance& event,
     DungeonEventNpcDialoguePhase phase)
 {
-    switch (phase) {
-    case DungeonEventNpcDialoguePhase::Request:
-        return dungeonEventWitchRequestText(event);
-    case DungeonEventNpcDialoguePhase::Progress:
-        return dungeonEventWitchProgressText(event);
-    case DungeonEventNpcDialoguePhase::Reward:
-        return dungeonEventWitchRewardText(event);
-    case DungeonEventNpcDialoguePhase::Thanks:
-        return dungeonEventWitchThanksText();
+    switch (event.kind) {
+    case Game::DungeonEventKind::BuriedWitch:
+        switch (phase) {
+        case DungeonEventNpcDialoguePhase::Request:
+            return {"壁が崩れてきて、動けなくなっちゃった…\nだれかここから出して〜！"};
+        case DungeonEventNpcDialoguePhase::Progress:
+            return {"壁がまだ残ってる…\nせっかくだから全部壊して！"};
+        case DungeonEventNpcDialoguePhase::Reward:
+            return {"ふう、助かったよ\nありがとう！", "お礼にこれを受け取って！"};
+        case DungeonEventNpcDialoguePhase::Thanks:
+            return {"本当に助かったよ\nあなたも気をつけてね"};
+        }
+        break;
+    case Game::DungeonEventKind::LostBaggageWitch:
+        switch (phase) {
+        case DungeonEventNpcDialoguePhase::Request:
+        case DungeonEventNpcDialoguePhase::Progress:
+            return {"ぐすん…\n私の大事な荷物が見つからないの…", "この近くにあるはずなんだけど..."};
+        case DungeonEventNpcDialoguePhase::Reward:
+            return {"あれ！？\n荷物だ！どこにあったの〜？", "助かったよ、マジ感謝！\nそうだ、お礼をあげちゃうね！"};
+        case DungeonEventNpcDialoguePhase::Thanks:
+            return {"マジ感謝〜！\n冒険ファイト〜！"};
+        }
+        break;
+    case Game::DungeonEventKind::ItemRequestWitch: {
+        const std::string requestedItem = dungeonEventItemRequestDisplayName(event.requestKey);
+        switch (phase) {
+        case DungeonEventNpcDialoguePhase::Request:
+            return {requestedItem + "がほしいの。持っていたら分けてくれる？"};
+        case DungeonEventNpcDialoguePhase::Progress:
+            return {"まだ" + requestedItem + "を探してるの。持っていたら分けてくれる？"};
+        case DungeonEventNpcDialoguePhase::Reward:
+            return {"助かったよ。これ、少しだけど受け取って。"};
+        case DungeonEventNpcDialoguePhase::Thanks:
+            return {"本当に助かったよ。気をつけてね。"};
+        }
+        break;
     }
-    return dungeonEventWitchProgressText(event);
+    case Game::DungeonEventKind::SurroundedWitch:
+        switch (phase) {
+        case DungeonEventNpcDialoguePhase::Request:
+        case DungeonEventNpcDialoguePhase::Progress:
+            return {"なんなのこいつら！\nイヤ〜〜！"};
+        case DungeonEventNpcDialoguePhase::Reward:
+            return {"はぁ、はぁ…\nやっといなくなったわ", "あなた、助けてくれてありがとね\n少しだけど受け取って！"};
+        case DungeonEventNpcDialoguePhase::Thanks:
+            return {"本当に助かったわ…\nあなたも気をつけてね！"};
+        }
+        break;
+    case Game::DungeonEventKind::ColdWitchCampfire:
+        switch (phase) {
+        case DungeonEventNpcDialoguePhase::Request:
+            return {"うう、寒い…\n寒くて動けない...", "きみ…何か火をつける物はない？\n焚き火に火をつけて欲しいの"};
+        case DungeonEventNpcDialoguePhase::Progress:
+            return {"きみ…何か火をつける物はない？\n焚き火に火をつけて欲しいの"};
+        case DungeonEventNpcDialoguePhase::Reward:
+            return {"はあ、あったかい…", "助かったよ、ありがとう\nよかったらお礼を受け取って"};
+        case DungeonEventNpcDialoguePhase::Thanks:
+            return {"焚き火、あったかい…"};
+        }
+        break;
+    case Game::DungeonEventKind::HeavyRockWitch:
+        switch (phase) {
+        case DungeonEventNpcDialoguePhase::Request:
+            return {"あら、助けに来てくれたの！？", "この岩、重くてビクともしないの！\n動かしたり壊したりできる？"};
+        case DungeonEventNpcDialoguePhase::Progress:
+            return {"この岩、重くてビクともしないの！\n動かしたり壊したりできる？"};
+        case DungeonEventNpcDialoguePhase::Reward:
+            return {"はぁ、はぁ\n重かった…", "助かったわ！\nあなた、お礼をあげるわね！"};
+        case DungeonEventNpcDialoguePhase::Thanks:
+            return {"急に岩が降ってきて潰されたの！\nあんたも気をつけな！"};
+        }
+        break;
+    default:
+        break;
+    }
+    return {"ちょっと困ってるの。手を貸してくれる？"};
 }
 
 DialogueSequence makeDungeonEventWitchDialogueSequence(
@@ -1725,12 +1831,14 @@ DialogueSequence makeDungeonEventWitchDialogueSequence(
         event.id +
         ":" +
         std::string(dungeonEventNpcDialoguePhaseId(phase));
-    sequence.lines.push_back(DialogueLine{
-        "witch",
-        "魔女",
-        "",
-        dungeonEventWitchDialogueText(event, phase),
-    });
+    for (std::string& text : dungeonEventWitchDialogueLines(event, phase)) {
+        sequence.lines.push_back(DialogueLine{
+            "witch",
+            "魔女",
+            "",
+            std::move(text),
+        });
+    }
     return sequence;
 }
 
@@ -2387,6 +2495,157 @@ DungeonTile cardinalStep(Vec2 direction)
 DungeonTile addTile(DungeonTile tile, DungeonTile step, int scale = 1)
 {
     return {tile.x + step.x * scale, tile.y + step.y * scale};
+}
+
+Vec2 predictBossSpawnPointFromWarp(const DungeonLayout& layout, Vec2 warpPosition, DungeonTile warpTile)
+{
+    const Vec2 warpTilePosition{
+        static_cast<float>(warpTile.x),
+        static_cast<float>(warpTile.y),
+    };
+    if (layout.mainPathPoints.size() >= 2) {
+        const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(layout, warpTilePosition);
+        const float pathLength = pathLengthTiles(layout.mainPathPoints);
+        if (pathLength > 0.0001f) {
+            const float baseDistance = metrics.pathProgress * pathLength;
+            const float minDistanceFromWarp = static_cast<float>(BossOffsetTiles);
+            const float minUpwardDeltaTiles = 4.0f;
+            Vec2 bossTilePoint = pointAtPathProgress(
+                layout.mainPathPoints,
+                clamp((baseDistance + minDistanceFromWarp) / pathLength, metrics.pathProgress, 1.0f));
+            for (float distanceAlongPath = baseDistance + minDistanceFromWarp;
+                distanceAlongPath <= pathLength + 0.001f;
+                distanceAlongPath += 2.0f) {
+                const Vec2 candidate = pointAtPathProgress(
+                    layout.mainPathPoints,
+                    clamp(distanceAlongPath / pathLength, metrics.pathProgress, 1.0f));
+                if (length(candidate - warpTilePosition) >= minDistanceFromWarp &&
+                    candidate.y <= warpTilePosition.y - minUpwardDeltaTiles) {
+                    bossTilePoint = candidate;
+                    break;
+                }
+            }
+            return tileWorldCenter(roundDungeonTile(bossTilePoint));
+        }
+    }
+
+    Vec2 direction = normalize(warpPosition - tileWorldCenter(layout.startTile));
+    if (lengthSquared(direction) <= 0.0001f) {
+        direction = {0.0f, -1.0f};
+    }
+    return warpPosition + direction * static_cast<float>(BossOffsetTiles * balance::TileSize);
+}
+
+DungeonTile predictBossSpawnTileFromWarp(const DungeonLayout& layout, DungeonTile warpTile)
+{
+    const Vec2 predicted = predictBossSpawnPointFromWarp(layout, tileWorldCenter(warpTile), warpTile);
+    const float tileSize = static_cast<float>(balance::TileSize);
+    return roundDungeonTile(Vec2{
+        predicted.x / tileSize - 0.5f,
+        predicted.y / tileSize - 0.5f,
+    });
+}
+
+int roguelikeAreaLengthMeters(int currentDepthMeters, int nextHoleDepthMeters)
+{
+    const int areaStartMeters = std::max(0, currentDepthMeters);
+    const int areaEndMeters = std::max(areaStartMeters + 1, nextHoleDepthMeters);
+    return std::max(1, areaEndMeters - areaStartMeters);
+}
+
+DungeonTile predictRoguelikeBigHoleTile(
+    const DungeonLayout& layout,
+    int currentDepthMeters,
+    int nextHoleDepthMeters)
+{
+    const int areaLengthMeters = roguelikeAreaLengthMeters(currentDepthMeters, nextHoleDepthMeters);
+    return layout.mainPathPoints.size() >= 2
+        ? roundDungeonTile(pointAtDungeonPathDistanceTiles(
+            layout.mainPathPoints,
+            static_cast<float>(areaLengthMeters)))
+        : layout.goalTile;
+}
+
+DungeonTile predictRoguelikeBossSpawnTile(
+    const DungeonLayout& layout,
+    int currentDepthMeters,
+    int nextHoleDepthMeters)
+{
+    const int areaLengthMeters = roguelikeAreaLengthMeters(currentDepthMeters, nextHoleDepthMeters);
+    if (layout.mainPathPoints.size() >= 2) {
+        const float bossRouteDistance = static_cast<float>(std::max(
+            0,
+            areaLengthMeters - RoguelikeGateBossDistanceBeforeHoleMeters));
+        return roundDungeonTile(pointAtDungeonPathDistanceTiles(layout.mainPathPoints, bossRouteDistance));
+    }
+
+    const DungeonTile bigHoleTile = predictRoguelikeBigHoleTile(layout, currentDepthMeters, nextHoleDepthMeters);
+    const Vec2 bigHoleTilePosition{
+        static_cast<float>(bigHoleTile.x),
+        static_cast<float>(bigHoleTile.y),
+    };
+    Vec2 direction = normalize(bigHoleTilePosition - Vec2{
+        static_cast<float>(layout.startTile.x),
+        static_cast<float>(layout.startTile.y),
+    });
+    if (lengthSquared(direction) <= 0.0001f) {
+        direction = {0.0f, -1.0f};
+    }
+    return roundDungeonTile(bigHoleTilePosition - direction * static_cast<float>(BossOffsetTiles));
+}
+
+template <typename WarpPointRange>
+void reserveBossPlacementArea(
+    PlacementReservations& reservations,
+    const DungeonLayout& layout,
+    const WarpPointRange& warpPoints,
+    bool warpPointsEnabled,
+    bool currentStageIsRoguelike,
+    std::string_view stageId,
+    std::string_view bossEnemyId,
+    int currentDepthMeters,
+    int nextHoleDepthMeters)
+{
+    std::optional<DungeonTile> bossTile;
+    if (currentStageIsRoguelike) {
+        bossTile = predictRoguelikeBossSpawnTile(layout, currentDepthMeters, nextHoleDepthMeters);
+    } else if (warpPointsEnabled && !warpPoints.empty()) {
+        bossTile = predictBossSpawnTileFromWarp(layout, warpPoints.back().tilePosition);
+    }
+    if (!bossTile.has_value()) {
+        return;
+    }
+
+    const BossArenaShape arena = bossArenaShapeForBoss(stageId, bossEnemyId);
+    reservations.reserve(*bossTile, std::max(arena.radiusX, arena.radiusY));
+}
+
+template <typename WarpPointRange>
+void reserveDungeonPlacementAnchors(
+    PlacementReservations& reservations,
+    const DungeonLayout& layout,
+    const WarpPointRange& warpPoints,
+    bool warpPointsEnabled,
+    bool currentStageIsRoguelike,
+    std::string_view stageId,
+    std::string_view bossEnemyId,
+    int currentDepthMeters,
+    int nextHoleDepthMeters)
+{
+    reserveLayoutAnchors(reservations, layout);
+    for (const auto& point : warpPoints) {
+        reservations.reserve(point.tilePosition, WarpReservationRadiusTiles);
+    }
+    reserveBossPlacementArea(
+        reservations,
+        layout,
+        warpPoints,
+        warpPointsEnabled,
+        currentStageIsRoguelike,
+        stageId,
+        bossEnemyId,
+        currentDepthMeters,
+        nextHoleDepthMeters);
 }
 
 MicroFeatureKind chooseMicroFeatureKind(int index, std::mt19937& rng)
@@ -3411,6 +3670,9 @@ void Game::finalizeCaptureAbsorbAnimation(const CaptureAbsorbAnimation& animatio
     }
 
     upsertObjectDefinition(objectCatalog_, animation.item);
+    pushImportantDungeonNotice(
+        animation.enemy.enemyName + " を捕まえた",
+        "capture_success:" + animation.enemy.enemyName);
 
     InventoryAddResult addResult;
     if (inventory_.addRuntimeObjectItem(animation.item, &addResult)) {
@@ -3421,7 +3683,6 @@ void Game::finalizeCaptureAbsorbAnimation(const CaptureAbsorbAnimation& animatio
             addResult.instanceId,
             addResult.kind == InventoryAddKind::Instance && !addResult.instanceId.empty(),
             player_.position);
-        pushDungeonLog(animation.enemy.enemyName + " を捕まえた", "capture_success:" + animation.enemy.enemyName);
     } else {
         ItemInstance instance = inventory_.createDetachedObjectInstance(animation.item);
         std::mt19937& rng = lootRuntimeRng();
@@ -5231,6 +5492,7 @@ bool Game::restoreDungeonState(bool useLatestWarpPoint)
     crateNodes_ = state.crateNodes;
     enemyNodes_ = state.enemyNodes;
     pendingBuriedEnemySpawns_.clear();
+    closeDungeonEventItemRequestUi();
     dungeonEvents_.setInstances(state.dungeonEventInstances);
     enemies_ = state.enemies;
     enemies_.clearTemporaryState();
@@ -5981,6 +6243,8 @@ std::string Game::dungeonEventDiscoveryStoryEventId(DungeonEventKind kind)
 
 void Game::initializeDungeonEventInstancesFromLayout()
 {
+    dungeonEventItemRequestUi_ = {};
+    dungeonEventItemRequestCancelState_ = {};
     dungeonEvents_.generateFromLayout(dungeonLayout_, warpPoints_, warpPointsEnabled_, currentStageId_);
     dungeonEventDiscoveryCooldown_ = 0.0f;
 }
@@ -6040,12 +6304,9 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
         });
     };
     const auto ensureRewardChest = [&](DungeonEventInstance& event, DungeonTile tile, LootChestKind chestKind) {
-        const bool spawned = ensureDungeonEventChest(event, tile, chestKind);
-        event.rewardSpawned = true;
-        if (spawned) {
-            requestDungeonRewardChestFocus(tileWorldCenter(tile));
-        }
-        return spawned;
+        const bool revealed = scheduleDungeonEventChestReveal(event, {tile}, chestKind);
+        event.rewardSpawned = revealed;
+        return revealed;
     };
     const auto activeEventEnemies = [&](const DungeonEventInstance& event) {
         return enemies_.activeDungeonEventEnemyCount(event.id);
@@ -6073,19 +6334,23 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
         }
         return nearestIndex;
     };
-    const auto hitEventObjectWithRing = [&](DungeonEventObject& object, DungeonEventHitRequirement requirement, int* outDamage = nullptr) {
-        object.hitCooldown = std::max(0.0f, object.hitCooldown - dt);
-        if (object.hitCooldown > 0.0f || object.destroyed) {
-            return false;
+    std::vector<RingImpactSoundEvent> impactSoundEvents;
+    const auto hitDungeonEventTargetWithRing = [&](
+                                                   Vec2 targetCenter,
+                                                   float& hitCooldown,
+                                                   bool inactive,
+                                                   DungeonEventHitRequirement requirement) {
+        hitCooldown = std::max(0.0f, hitCooldown - dt);
+        if (hitCooldown > 0.0f || inactive) {
+            return DungeonEventRingHit{};
         }
 
-        const Vec2 objectCenter = tileWorldCenter(object.tile);
         for (SpellRingItem* item : spellRing_.runtimeItemsMutable()) {
             if (item == nullptr || item->isBroken) {
                 continue;
             }
             const float hitRadius = std::max(8.0f, item->hitRadius);
-            if (distanceSquared(item->worldPosition, objectCenter) >
+            if (distanceSquared(item->worldPosition, targetCenter) >
                 (hitRadius + DungeonEventObjectHitPaddingPx) * (hitRadius + DungeonEventObjectHitPaddingPx)) {
                 continue;
             }
@@ -6095,15 +6360,42 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
                 continue;
             }
 
-            object.hitCooldown = std::max(0.12f, item->hitInterval);
+            hitCooldown = std::max(0.12f, item->hitInterval);
             item->actionFlashTimer = SpellRingItemActionFlashSeconds;
-        effects_.spawnEnemyHit(objectCenter, {}, false);
-            if (outDamage != nullptr) {
-                *outDamage = std::max(1, damage);
-            }
-            return true;
+            effects_.spawnEnemyHit(targetCenter, {}, false);
+            return DungeonEventRingHit{
+                .item = item,
+                .damage = std::max(1, damage),
+            };
         }
-        return false;
+        return DungeonEventRingHit{};
+    };
+    const auto hitEventObjectWithRing = [&](DungeonEventObject& object, DungeonEventHitRequirement requirement) {
+        return hitDungeonEventTargetWithRing(
+            tileWorldCenter(object.tile),
+            object.hitCooldown,
+            object.destroyed,
+            requirement);
+    };
+    const auto queueTerrainImpactSound = [&](const DungeonEventRingHit& hit, TileType targetType, RingImpactResult result, Vec2 position) {
+        if (!hit) {
+            return;
+        }
+
+        const ObjectDefinition* sourceObject = nullptr;
+        if (!hit.item->objectId.empty()) {
+            const auto objectIt = objectCatalog_.objectsById.find(hit.item->objectId);
+            if (objectIt != objectCatalog_.objectsById.end()) {
+                sourceObject = &objectIt->second;
+            }
+        }
+        impactSoundEvents.push_back(makeTerrainRingImpactSoundEvent(
+            *hit.item,
+            sourceObject,
+            targetType,
+            result,
+            position,
+            static_cast<float>(hit.damage)));
     };
 
     for (DungeonEventInstance& event : dungeonEvents_.mutableAll()) {
@@ -6376,35 +6668,34 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
         if (event.kind == DungeonEventKind::NestRoom) {
             bool allHolesDestroyed = !event.nestHoles.empty();
             for (DungeonEventNestHole& hole : event.nestHoles) {
-                hole.hitCooldown = std::max(0.0f, hole.hitCooldown - dt);
                 if (hole.destroyed) {
                     continue;
                 }
                 allHolesDestroyed = false;
                 const Vec2 holeCenter = tileWorldCenter(hole.tile);
-                if (hole.hitCooldown <= 0.0f) {
-                    for (SpellRingItem* item : spellRing_.runtimeItemsMutable()) {
-                        if (item == nullptr || item->isBroken) {
-                            continue;
+                const DungeonEventRingHit hit = hitDungeonEventTargetWithRing(
+                    holeCenter,
+                    hole.hitCooldown,
+                    hole.destroyed,
+                    DungeonEventHitRequirement::AnyContact);
+                if (hit) {
+                    hole.hp = std::max(0, hole.hp - hit.damage);
+                    hole.destroyed = hole.hp <= 0;
+                    queueTerrainImpactSound(
+                        hit,
+                        TileType::Dirt,
+                        hole.destroyed ? RingImpactResult::Break : RingImpactResult::Hit,
+                        holeCenter);
+                    if (hole.destroyed) {
+                        effects_.spawnTileBreak(
+                            holeCenter,
+                            TileType::Dirt,
+                            tileMap_.tileColorAtWorld(holeCenter),
+                            false);
+                        if (!hole.rewardSpawned) {
+                            hole.rewardSpawned = true;
+                            ensureDungeonEventChest(event, dungeonEventOffsetTile(hole.tile, 1, 0), LootChestKind::Common);
                         }
-                        const float hitRadius = std::max(8.0f, item->hitRadius);
-                        if (distanceSquared(item->worldPosition, holeCenter) > (hitRadius + 16.0f) * (hitRadius + 16.0f)) {
-                            continue;
-                        }
-                        const int damage = std::max({1, item->damage, item->digPower});
-                        hole.hp = std::max(0, hole.hp - damage);
-                        hole.hitCooldown = std::max(0.12f, item->hitInterval);
-                        item->actionFlashTimer = SpellRingItemActionFlashSeconds;
-                        effects_.spawnEnemyHit(holeCenter, {}, false);
-                        if (hole.hp <= 0) {
-                            hole.destroyed = true;
-                            effects_.spawnTileBreak(holeCenter, TileType::Dirt, tileMap_.tileColorAtWorld(holeCenter));
-                            if (!hole.rewardSpawned) {
-                                hole.rewardSpawned = true;
-                                ensureDungeonEventChest(event, dungeonEventOffsetTile(hole.tile, 1, 0), LootChestKind::Common);
-                            }
-                        }
-                        break;
                     }
                 }
                 if (hole.destroyed) {
@@ -6444,18 +6735,22 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
                 if (object.destroyed) {
                     continue;
                 }
-                int hitDamage = 0;
-                if (hitEventObjectWithRing(object, DungeonEventHitRequirement::AnyDamage, &hitDamage)) {
-                    object.hp = std::max(0, object.hp - std::max(1, hitDamage));
-                    if (object.hp <= 0) {
-                        const Vec2 objectCenter = tileWorldCenter(object.tile);
-                        object.destroyed = true;
+                const DungeonEventRingHit hit = hitEventObjectWithRing(object, DungeonEventHitRequirement::AnyDamage);
+                if (hit) {
+                    const Vec2 objectCenter = tileWorldCenter(object.tile);
+                    object.hp = std::max(0, object.hp - hit.damage);
+                    object.destroyed = object.hp <= 0;
+                    queueTerrainImpactSound(
+                        hit,
+                        TileType::Rock,
+                        object.destroyed ? RingImpactResult::Break : RingImpactResult::Hit,
+                        objectCenter);
+                    if (object.destroyed) {
                         effects_.spawnTileBreak(
                             objectCenter,
                             TileType::Rock,
                             tileMap_.tileColorAtWorld(objectCenter),
                             false);
-                        playAudioSe("se.dig.break");
                     }
                 }
             }
@@ -6565,18 +6860,22 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
                 if (object.kind != DungeonEventObjectKind::HeavyRock || object.destroyed) {
                     continue;
                 }
-                int hitDamage = 0;
-                if (hitEventObjectWithRing(object, DungeonEventHitRequirement::HeavyImpact, &hitDamage)) {
-                    object.hp = std::max(0, object.hp - std::max(1, hitDamage));
-                    if (object.hp <= 0) {
-                        const Vec2 objectCenter = tileWorldCenter(object.tile);
-                        object.destroyed = true;
+                const DungeonEventRingHit hit = hitEventObjectWithRing(object, DungeonEventHitRequirement::HeavyImpact);
+                if (hit) {
+                    const Vec2 objectCenter = tileWorldCenter(object.tile);
+                    object.hp = std::max(0, object.hp - hit.damage);
+                    object.destroyed = object.hp <= 0;
+                    queueTerrainImpactSound(
+                        hit,
+                        TileType::Rock,
+                        object.destroyed ? RingImpactResult::Break : RingImpactResult::Hit,
+                        objectCenter);
+                    if (object.destroyed) {
                         effects_.spawnTileBreak(
                             objectCenter,
                             TileType::Rock,
                             tileMap_.tileColorAtWorld(objectCenter),
                             false);
-                        playAudioSe("se.dig.break");
                     }
                 }
             }
@@ -6617,6 +6916,10 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
             }
             continue;
         }
+    }
+
+    for (const RingImpactSoundPlayback& sound : resolveRingImpactSoundEvents(impactSoundEvents, 3)) {
+        playAudioSeAt(sound.cueId, sound.position, sound.volumeScale, sound.pitchScale);
     }
 }
 
@@ -6782,62 +7085,21 @@ bool Game::updateDungeonEventNpcInteraction(const Input& input, UiContext& ui)
         event.npcRequestKnown = true;
         phase = DungeonEventNpcDialoguePhase::Request;
     } else if (event.kind == DungeonEventKind::ItemRequestWitch) {
-        std::string objectId;
-        std::string displayName;
-        if (consumeDungeonEventRequestItem(inventory_, event.requestKey, objectId, displayName)) {
-            event.deliveredObjectId = objectId;
-            event.objectiveResolved = true;
-            event.activated = true;
-            phase = DungeonEventNpcDialoguePhase::Reward;
-            pushDungeonLog("魔女に" + displayName + "を渡した", "dungeon_event_item_request:" + event.id);
-        } else {
-            phase = DungeonEventNpcDialoguePhase::Progress;
-        }
+        openDungeonEventItemRequestUi(event);
+        ui.emitSound(UiSoundEvent::Confirm);
+        ui.consumePointer();
+        return true;
     } else {
         phase = DungeonEventNpcDialoguePhase::Progress;
     }
 
     if (phase == DungeonEventNpcDialoguePhase::Reward) {
-        const auto witchRewardRequest = [](DungeonEventKind kind) -> std::optional<DungeonEventRewardRequest> {
-            switch (kind) {
-            case DungeonEventKind::BuriedWitch:
-                return DungeonEventRewardRequest{
-                    .kind = DungeonEventRewardKind::MoneyDrop,
-                    .amount = 25,
-                };
-            case DungeonEventKind::LostBaggageWitch:
-                return DungeonEventRewardRequest{
-                    .kind = DungeonEventRewardKind::MoneyDrop,
-                    .amount = 30,
-                };
-            case DungeonEventKind::ItemRequestWitch:
-            case DungeonEventKind::ColdWitchCampfire:
-                return DungeonEventRewardRequest{
-                    .kind = DungeonEventRewardKind::MaterialDrop,
-                    .materialType = MaterialType::ManaDrop,
-                    .amount = 1,
-                };
-            case DungeonEventKind::SurroundedWitch:
-            case DungeonEventKind::HeavyRockWitch:
-                return DungeonEventRewardRequest{
-                    .kind = DungeonEventRewardKind::ChestDrop,
-                    .chestKind = LootChestKind::Common,
-                    .count = 1,
-                };
-            default:
-                return std::nullopt;
-            }
-        };
-        const std::string eventId = event.id;
-        const std::optional<DungeonEventRewardRequest> reward = witchRewardRequest(event.kind);
-        onComplete = [this, eventId, reward]() {
-            DungeonEventInstance* completedEvent = dungeonEvents_.findById(eventId);
-            if (completedEvent == nullptr || completedEvent->completed) {
-                return;
-            }
-            completedEvent->rewardClaimed = true;
-            completeDungeonEvent(*completedEvent, reward);
-        };
+        if (!startDungeonEventWitchRewardDialogue(event)) {
+            return false;
+        }
+        ui.emitSound(UiSoundEvent::Confirm);
+        ui.consumePointer();
+        return true;
     }
 
     const std::string storyEventId = dungeonEventNpcStoryEventId(event.kind, phase);
@@ -6858,6 +7120,350 @@ bool Game::updateDungeonEventNpcInteraction(const Input& input, UiContext& ui)
     ui.emitSound(UiSoundEvent::Confirm);
     ui.consumePointer();
     return true;
+}
+
+std::optional<Game::DungeonEventRewardRequest> Game::dungeonEventWitchRewardRequest(DungeonEventKind kind) const
+{
+    switch (kind) {
+    case DungeonEventKind::BuriedWitch:
+        return DungeonEventRewardRequest{
+            .kind = DungeonEventRewardKind::MoneyDrop,
+            .amount = 1000,
+        };
+    case DungeonEventKind::LostBaggageWitch:
+    case DungeonEventKind::ItemRequestWitch:
+    case DungeonEventKind::ColdWitchCampfire:
+        return DungeonEventRewardRequest{
+            .kind = DungeonEventRewardKind::RareObjectDrop,
+        };
+    case DungeonEventKind::HeavyRockWitch:
+        return DungeonEventRewardRequest{
+            .kind = DungeonEventRewardKind::MoneyDrop,
+            .amount = 2000,
+        };
+    case DungeonEventKind::SurroundedWitch:
+        return DungeonEventRewardRequest{
+            .kind = DungeonEventRewardKind::MoneyDrop,
+            .amount = 5000,
+        };
+    default:
+        return std::nullopt;
+    }
+}
+
+bool Game::startDungeonEventWitchRewardDialogue(DungeonEventInstance& event)
+{
+    const std::string eventId = event.id;
+    const std::optional<DungeonEventRewardRequest> reward = dungeonEventWitchRewardRequest(event.kind);
+    std::function<void()> onComplete = [this, eventId, reward]() {
+        DungeonEventInstance* completedEvent = dungeonEvents_.findById(eventId);
+        if (completedEvent == nullptr || completedEvent->completed) {
+            return;
+        }
+        if (!completeDungeonEvent(*completedEvent, reward)) {
+            logWarning("[dungeon_event] failed to grant witch reward: " + eventId);
+        }
+    };
+
+    constexpr DungeonEventNpcDialoguePhase phase = DungeonEventNpcDialoguePhase::Reward;
+    const std::string storyEventId = dungeonEventNpcStoryEventId(event.kind, phase);
+    bool started = false;
+    if (findStoryEvent(storyEventId) != nullptr) {
+        started = startStoryEventWithCompletion(storyEventId, onComplete);
+    }
+    if (!started) {
+        started = startDialogueSequenceWithCompletion(
+            makeDungeonEventWitchDialogueSequence(event, phase),
+            std::move(onComplete));
+    }
+    if (!started) {
+        logWarning("[dungeon_event] failed to start npc reward dialogue: " + event.id);
+    }
+    return started;
+}
+
+bool Game::dungeonEventItemRequestUiActive() const
+{
+    return dungeonEventItemRequestUi_.open;
+}
+
+void Game::openDungeonEventItemRequestUi(DungeonEventInstance& event)
+{
+    if (event.kind != DungeonEventKind::ItemRequestWitch || event.completed || event.objectiveResolved) {
+        return;
+    }
+    if (event.requestKey.empty()) {
+        event.requestKey = dungeonEventItemRequestKeyFor(event);
+    }
+
+    dungeonEventItemRequestUi_ = {};
+    dungeonEventItemRequestUi_.open = true;
+    dungeonEventItemRequestUi_.eventId = event.id;
+    dungeonMapOverlayOpen_ = false;
+
+    bool foundAvailable = false;
+    for (int slotIndex = 0; slotIndex < inventory_.screenSlotCount(); ++slotIndex) {
+        if (dungeonEventRequestItemAvailability(inventory_, slotIndex, event.requestKey) !=
+            DungeonEventRequestItemAvailability::Available) {
+            continue;
+        }
+        dungeonEventItemRequestUi_.selection = slotIndex;
+        foundAvailable = true;
+        break;
+    }
+    if (!foundAvailable) {
+        dungeonEventItemRequestUi_.status =
+            std::string(dungeonEventItemRequestDisplayName(event.requestKey)) + "を持っていない";
+    }
+}
+
+void Game::closeDungeonEventItemRequestUi()
+{
+    dungeonEventItemRequestUi_ = {};
+    dungeonEventItemRequestCancelState_ = {};
+}
+
+void Game::updateDungeonEventItemRequestUi(const Input& input, UiContext& ui)
+{
+    if (!dungeonEventItemRequestUi_.open) {
+        return;
+    }
+
+    DungeonEventInstance* event = dungeonEvents_.findById(dungeonEventItemRequestUi_.eventId);
+    if (event == nullptr || event->completed || event->kind != DungeonEventKind::ItemRequestWitch) {
+        closeDungeonEventItemRequestUi();
+        return;
+    }
+
+    const InventoryUiScreenLayout& layout = standardInventoryUiScreenLayout();
+    const int slotCount = std::max(1, inventory_.screenSlotCount());
+    dungeonEventItemRequestUi_.selection =
+        std::clamp(dungeonEventItemRequestUi_.selection, 0, slotCount - 1);
+
+    if (dungeonEventItemRequestUi_.confirm.open) {
+        const UiConfirmDialogResult result = updateUiConfirmDialog(
+            dungeonEventItemRequestUi_.confirm,
+            ui,
+            input,
+            dungeonEventItemRequestConfirmRect());
+        if (result == UiConfirmDialogResult::Confirmed) {
+            std::string objectId;
+            std::string displayName;
+            const int confirmedSlot = dungeonEventItemRequestUi_.confirmSlot;
+            dungeonEventItemRequestUi_.confirmSlot = -1;
+            if (!consumeDungeonEventRequestItemAt(
+                    inventory_,
+                    confirmedSlot,
+                    event->requestKey,
+                    objectId,
+                    displayName)) {
+                dungeonEventItemRequestUi_.status = "そのアイテムは渡せなくなった";
+                ui.emitSound(UiSoundEvent::Cancel);
+            } else {
+                event->deliveredObjectId = objectId;
+                event->objectiveResolved = true;
+                event->activated = true;
+                pushDungeonLog(
+                    "魔女に" + displayName + "を渡した",
+                    "dungeon_event_item_request:" + event->id);
+                closeDungeonEventItemRequestUi();
+                if (!startDungeonEventWitchRewardDialogue(*event)) {
+                    logWarning("[dungeon_event] failed to continue item request dialogue: " + event->id);
+                }
+                ui.consumePointer();
+                return;
+            }
+        } else if (result == UiConfirmDialogResult::Cancelled) {
+            dungeonEventItemRequestUi_.confirmSlot = -1;
+        }
+        ui.block(layout.backdrop);
+        return;
+    }
+
+    if (uiCancelRequested(dungeonEventItemRequestCancelState_, input, ui, layout.window)) {
+        closeDungeonEventItemRequestUi();
+        ui.consumePointer();
+        return;
+    }
+
+    const int previousSelection = dungeonEventItemRequestUi_.selection;
+    const int columns = std::max(1, layout.grid.columns);
+    if (input.pressed(InputAction::MoveLeft)) {
+        dungeonEventItemRequestUi_.selection = std::max(0, dungeonEventItemRequestUi_.selection - 1);
+    }
+    if (input.pressed(InputAction::MoveRight)) {
+        dungeonEventItemRequestUi_.selection =
+            std::min(slotCount - 1, dungeonEventItemRequestUi_.selection + 1);
+    }
+    if (input.pressed(InputAction::MoveUp)) {
+        dungeonEventItemRequestUi_.selection =
+            std::max(0, dungeonEventItemRequestUi_.selection - columns);
+    }
+    if (input.pressed(InputAction::MoveDown)) {
+        dungeonEventItemRequestUi_.selection =
+            std::min(slotCount - 1, dungeonEventItemRequestUi_.selection + columns);
+    }
+    if (input.shortcutCursorDelta() != 0) {
+        dungeonEventItemRequestUi_.selection = std::clamp(
+            dungeonEventItemRequestUi_.selection + input.shortcutCursorDelta(),
+            0,
+            slotCount - 1);
+    }
+
+    int clickedSlot = -1;
+    for (int slotIndex = 0; slotIndex < slotCount; ++slotIndex) {
+        const UiRect slotRect = inventoryUiScreenSlotRect(layout, slotIndex);
+        if (ui.hovered(slotRect)) {
+            dungeonEventItemRequestUi_.selection = slotIndex;
+        }
+        if (ui.pressed(slotRect)) {
+            clickedSlot = slotIndex;
+        }
+    }
+    ui.emitCursorMoveIfChanged(previousSelection, dungeonEventItemRequestUi_.selection);
+
+    const bool confirmRequested =
+        clickedSlot >= 0 || input.confirmPressed() || input.useItemPressed();
+    if (confirmRequested) {
+        const int slotIndex = clickedSlot >= 0 ? clickedSlot : dungeonEventItemRequestUi_.selection;
+        const DungeonEventRequestItemAvailability availability =
+            dungeonEventRequestItemAvailability(inventory_, slotIndex, event->requestKey);
+        if (availability == DungeonEventRequestItemAvailability::Available) {
+            const InventoryUiEntryView entry = dungeonEventRequestItemEntry(inventory_, slotIndex);
+            const std::string itemName = entry.item != nullptr && !entry.item->name.empty()
+                ? entry.item->name
+                : "このアイテム";
+            dungeonEventItemRequestUi_.confirmSlot = slotIndex;
+            dungeonEventItemRequestUi_.status.clear();
+            openUiConfirmDialog(
+                dungeonEventItemRequestUi_.confirm,
+                "アイテムを渡す",
+                "「" + itemName + "」を魔女に渡しますか？\n渡したアイテムはなくなります",
+                "渡す",
+                "やめる",
+                1);
+            ui.emitSound(UiSoundEvent::Confirm);
+        } else if (availability != DungeonEventRequestItemAvailability::Empty) {
+            dungeonEventItemRequestUi_.status =
+                dungeonEventRequestItemAvailabilityLabel(availability);
+            ui.emitSound(UiSoundEvent::Cancel);
+        } else {
+            dungeonEventItemRequestUi_.status = "アイテムが入っていない";
+            ui.emitSound(UiSoundEvent::Cancel);
+        }
+    }
+
+    ui.block(layout.backdrop);
+}
+
+void Game::renderDungeonEventItemRequestUi(Renderer& renderer, double totalSeconds) const
+{
+    if (!dungeonEventItemRequestUi_.open) {
+        return;
+    }
+
+    const auto eventIt = std::find_if(
+        dungeonEvents_.all().begin(),
+        dungeonEvents_.all().end(),
+        [&](const DungeonEventInstance& event) {
+            return event.id == dungeonEventItemRequestUi_.eventId;
+        });
+    if (eventIt == dungeonEvents_.all().end()) {
+        return;
+    }
+
+    const InventoryUiScreenLayout& layout = standardInventoryUiScreenLayout();
+    drawUiModalBackdrop(renderer, layout.backdrop, {0, 0, 0, 176});
+    UiCancelControlScope cancelScope(dungeonEventItemRequestCancelState_);
+    {
+        UiWindowScope window(
+            renderer,
+            "dungeon_event.item_request",
+            layout.window,
+            "渡すアイテムを選ぶ",
+            "WASD/矢印 選択  F/Enter 渡す  Esc 戻る",
+            UiWindowOptions{true, true});
+
+        renderer.drawText(
+            {layout.gridOrigin.x, layout.window.pos.y + 54.0f},
+            std::string("依頼品: ") + dungeonEventItemRequestDisplayName(eventIt->requestKey),
+            ui::Text,
+            2);
+
+        const int slotCount = inventory_.screenSlotCount();
+        for (int slotIndex = 0; slotIndex < slotCount; ++slotIndex) {
+            const InventoryUiEntryView entry = dungeonEventRequestItemEntry(inventory_, slotIndex);
+            const DungeonEventRequestItemAvailability availability =
+                dungeonEventRequestItemAvailability(inventory_, slotIndex, eventIt->requestKey);
+            const bool disabled =
+                availability != DungeonEventRequestItemAvailability::Empty &&
+                availability != DungeonEventRequestItemAvailability::Available;
+            InventoryUiSlotStyle style;
+            style.selected = slotIndex == dungeonEventItemRequestUi_.selection;
+            style.disabled = disabled;
+            style.imageMaxSize = layout.itemImageMaxSize;
+            style.contentAlpha = disabled ? 0.42f : 1.0f;
+            style.bottomLabel = dungeonEventRequestItemAvailabilityLabel(availability);
+            style.bottomLabelColor = disabled ? ui::TextDisabled : ui::Text;
+            style.showTopRightCount = entry.stackCount > 1;
+            style.topRightCount = entry.stackCount;
+            drawInventoryUiSlot(
+                renderer,
+                inventoryUiScreenSlotRect(layout, slotIndex),
+                entry,
+                style);
+        }
+
+        const int selectedSlot = std::clamp(
+            dungeonEventItemRequestUi_.selection,
+            0,
+            std::max(0, slotCount - 1));
+        const InventoryUiEntryView detailEntry = dungeonEventRequestItemEntry(inventory_, selectedSlot);
+        const DungeonEventRequestItemAvailability detailAvailability =
+            dungeonEventRequestItemAvailability(inventory_, selectedSlot, eventIt->requestKey);
+        std::vector<InventoryUiDetailExtraLine> extraLines;
+        if (detailEntry.item != nullptr) {
+            const bool available = detailAvailability == DungeonEventRequestItemAvailability::Available;
+            extraLines.push_back({
+                .label = "依頼条件",
+                .value = dungeonEventItemRequestDisplayName(eventIt->requestKey),
+                .valueColor = ui::Text,
+            });
+            extraLines.push_back({
+                .label = "受け渡し",
+                .value = available ? "渡せる" : dungeonEventRequestItemAvailabilityLabel(detailAvailability),
+                .valueColor = available ? Color{142, 238, 174, 255} : ui::TextDisabled,
+            });
+        }
+        drawInventoryUiDetailPanel(
+            renderer,
+            layout.detailPanel,
+            detailEntry,
+            objectCatalog_,
+            encyclopedia_,
+            InventoryUiDetailOptions{
+                .animationSeconds = static_cast<float>(totalSeconds),
+                .unlockedRingCount = unlockedRingCount(),
+            },
+            extraLines);
+
+        if (!dungeonEventItemRequestUi_.status.empty()) {
+            renderer.drawText(
+                {layout.gridOrigin.x, layout.gridOrigin.y + inventoryUiGridVisibleHeight(layout.grid) + 18.0f},
+                dungeonEventItemRequestUi_.status,
+                {255, 184, 154, 255},
+                2);
+        }
+    }
+
+    if (dungeonEventItemRequestUi_.confirm.open) {
+        drawUiModalBackdrop(renderer, layout.backdrop, {0, 0, 0, 116});
+        drawUiConfirmDialog(
+            renderer,
+            dungeonEventItemRequestUi_.confirm,
+            dungeonEventItemRequestConfirmRect(),
+            "dungeon_event.item_request.confirm");
+    }
 }
 
 std::string Game::dungeonEventNpcPromptText() const
@@ -7207,19 +7813,42 @@ bool Game::spawnDungeonEventReward(DungeonEventInstance& event, const DungeonEve
             {1, -1},
             {-1, -1},
         }};
+        std::vector<DungeonTile> rewardTiles;
+        rewardTiles.reserve(static_cast<std::size_t>(count));
         for (int i = 0; i < count; ++i) {
             const DungeonTile offset = ChestOffsets[static_cast<std::size_t>(i % static_cast<int>(ChestOffsets.size()))];
-            const DungeonTile tile = dungeonEventOffsetTile(event.rewardTile, offset.x, offset.y);
-            const bool alreadyPresent = std::any_of(chestNodes_.begin(), chestNodes_.end(), [tile](const ChestNode& node) {
-                return sameDungeonTile(node.tile, tile);
-            });
-            const bool chestSpawned = ensureDungeonEventChest(event, tile, request.chestKind);
-            spawned = alreadyPresent || chestSpawned || spawned;
+            rewardTiles.push_back(dungeonEventOffsetTile(event.rewardTile, offset.x, offset.y));
         }
+        spawned = scheduleDungeonEventChestReveal(event, std::move(rewardTiles), request.chestKind);
         break;
     }
-    case DungeonEventRewardKind::ObjectDrop: {
-        const ObjectDefinition* object = objectCatalog_.registry.findById(request.objectId);
+    case DungeonEventRewardKind::ObjectDrop:
+    case DungeonEventRewardKind::RareObjectDrop: {
+        std::string_view objectId = request.objectId;
+        if (request.kind == DungeonEventRewardKind::RareObjectDrop) {
+            if (event.resolvedRewardObjectId.empty()) {
+                const int depthRank = currentStageIsRoguelike()
+                    ? roguelikeDepthRankForWorldPosition(center)
+                    : lootDepthRankForWorldPosition(
+                        tileMap_,
+                        dungeonLayout_,
+                        currentStageId_,
+                        center);
+                const ObjectDefinition* selectedObject = selectWeightedObjectLoot(
+                    LootChestKind::Rare,
+                    depthRank,
+                    rng,
+                    "DungeonEventRareReward",
+                    LootSourceKind::Chest);
+                if (selectedObject == nullptr) {
+                    break;
+                }
+                event.resolvedRewardObjectId = selectedObject->id;
+            }
+            objectId = event.resolvedRewardObjectId;
+        }
+
+        const ObjectDefinition* object = objectCatalog_.registry.findById(objectId);
         if (object == nullptr) {
             break;
         }
@@ -7234,19 +7863,19 @@ bool Game::spawnDungeonEventReward(DungeonEventInstance& event, const DungeonEve
         }
         if (objectExcludedFromDungeonDrops(object->id) ||
             (currentStageIsRoguelike() && !roguelikeObjectAllowed(*object))) {
-            logError("[warning] DungeonEventReward: object_id=\"" + request.objectId + "\" is not allowed for this dungeon; reward skipped");
+            logError("[warning] DungeonEventReward: object_id=\"" + std::string(objectId) + "\" is not allowed for this dungeon; reward skipped");
             break;
         }
 
         const Vec2 target = safeLootLandingPosition(center, rng);
-        if (inventory_.canAddObjectItem(objectCatalog_, request.objectId)) {
+        if (inventory_.canAddObjectItem(objectCatalog_, objectId)) {
             InventoryAddResult addResult;
-            if (inventory_.addObjectItem(objectCatalog_, request.objectId, &addResult)) {
+            if (inventory_.addObjectItem(objectCatalog_, objectId, &addResult)) {
                 spawned = true;
                 ++runStats_.acquiredItems;
                 ++runStats_.acquiredObjectItems;
                 recordRewardObjectAcquisitionNotice(
-                    request.objectId,
+                    objectId,
                     addResult.instanceId,
                     addResult.kind == InventoryAddKind::Instance && !addResult.instanceId.empty(),
                     player_.position);
@@ -7256,7 +7885,7 @@ bool Game::spawnDungeonEventReward(DungeonEventInstance& event, const DungeonEve
             pushDungeonLog("リュックがいっぱいのため、お礼を床に置いた", "dungeon_event_reward_full:" + event.id);
             spawned = worldDrops_.spawnObjectDrop(
                 objectCatalog_,
-                request.objectId,
+                objectId,
                 target,
                 runStats_.elapsedSeconds,
                 makeWorldLootJumpMotion(center, rng));
@@ -7287,23 +7916,20 @@ bool Game::spawnDungeonEventReward(DungeonEventInstance& event, const DungeonEve
 
     if (spawned) {
         event.rewardSpawned = true;
-        if (request.kind == DungeonEventRewardKind::ChestDrop ||
-            request.kind == DungeonEventRewardKind::MultiChestDrop) {
-            requestDungeonRewardChestFocus(tileWorldCenter(event.rewardTile));
-        } else if (spawnedWorldDrop) {
+        if (spawnedWorldDrop) {
             event.spawnedEntityIds.push_back("world_drop");
         }
     }
     return spawned;
 }
 
-void Game::completeDungeonEvent(DungeonEventInstance& event, std::optional<DungeonEventRewardRequest> reward)
+bool Game::completeDungeonEvent(DungeonEventInstance& event, std::optional<DungeonEventRewardRequest> reward)
 {
     if (event.completed) {
-        return;
+        return true;
     }
-    if (reward) {
-        spawnDungeonEventReward(event, *reward);
+    if (reward && !event.rewardSpawned && !spawnDungeonEventReward(event, *reward)) {
+        return false;
     }
     if (dungeonEventKindIsWitch(event.kind)) {
         event.objectiveResolved = true;
@@ -7313,6 +7939,7 @@ void Game::completeDungeonEvent(DungeonEventInstance& event, std::optional<Dunge
     pushDungeonLog(
         std::string("完了: ") + dungeonEventKindDisplayName(event.kind),
         "dungeon_event_complete:" + std::string(dungeonEventKindId(event.kind)));
+    return true;
 }
 
 bool Game::ensureDungeonEventChest(DungeonEventInstance& event, DungeonTile tile, LootChestKind chestKind)
@@ -7341,7 +7968,59 @@ bool Game::ensureDungeonEventChest(DungeonEventInstance& event, DungeonTile tile
     return true;
 }
 
-void Game::requestDungeonRewardChestFocus(Vec2 focusWorldPos)
+bool Game::scheduleDungeonEventChestReveal(
+    DungeonEventInstance& event,
+    std::vector<DungeonTile> tiles,
+    LootChestKind chestKind)
+{
+    if (tiles.empty()) {
+        return false;
+    }
+
+    std::vector<DungeonTile> pendingTiles;
+    pendingTiles.reserve(tiles.size());
+    bool hasExistingChest = false;
+    for (const DungeonTile tile : tiles) {
+        const bool alreadyPresent = std::any_of(chestNodes_.begin(), chestNodes_.end(), [tile](const ChestNode& node) {
+            return dungeonEventSameTile(node.tile, tile);
+        });
+        if (alreadyPresent) {
+            ensureDungeonEventChest(event, tile, chestKind);
+            hasExistingChest = true;
+        } else {
+            pendingTiles.push_back(tile);
+        }
+    }
+    if (pendingTiles.empty()) {
+        return hasExistingChest;
+    }
+
+    const std::string eventId = event.id;
+    const auto revealChests = [this, eventId, pendingTiles, chestKind]() {
+        DungeonEventInstance* targetEvent = dungeonEvents_.findById(eventId);
+        if (targetEvent == nullptr) {
+            return false;
+        }
+        bool appeared = false;
+        for (const DungeonTile tile : pendingTiles) {
+            appeared = ensureDungeonEventChest(*targetEvent, tile, chestKind) || appeared;
+        }
+        if (appeared) {
+            playAudioSe(AudioSeDiscovery);
+        }
+        return appeared;
+    };
+
+    const Vec2 focusWorldPos = tileWorldCenter(pendingTiles.front());
+    if (requestDungeonRewardChestFocus(focusWorldPos, [revealChests]() {
+            revealChests();
+        })) {
+        return true;
+    }
+    return revealChests() || hasExistingChest;
+}
+
+bool Game::requestDungeonRewardChestFocus(Vec2 focusWorldPos, std::function<void()> onChestAppear)
 {
     DungeonFocusRequest request;
     request.eventKind = "reward_chest";
@@ -7349,7 +8028,9 @@ void Game::requestDungeonRewardChestFocus(Vec2 focusWorldPos)
     request.holdSecondsIfNoDialogue = DungeonRewardFocusHoldSeconds;
     request.moveSeconds = DungeonRewardFocusMoveSeconds;
     request.returnSeconds = DungeonRewardFocusMoveSeconds;
-    requestDungeonFocus(std::move(request));
+    request.holdActionDelaySeconds = DungeonRewardChestAppearDelaySeconds;
+    request.onHoldAction = std::move(onChestAppear);
+    return requestDungeonFocus(std::move(request));
 }
 
 bool Game::debugRequestDungeonEventPlacement(DungeonEventKind kind)
@@ -7548,7 +8229,7 @@ std::string Game::dungeonFocusDebugText() const
         dungeonFocus_.focusWorldPos.x,
         dungeonFocus_.focusWorldPos.y,
         dungeonFocus_.elapsed,
-        dungeonFocus_.phase == DungeonFocusPhase::Hold ? dungeonFocus_.holdSeconds : dungeonFocus_.duration,
+        dungeonFocus_.duration,
         dungeonFocus_.discoveryStoryEventId.empty() ? "-" : dungeonFocus_.discoveryStoryEventId.c_str());
     return buffer;
 }
@@ -7617,8 +8298,10 @@ bool Game::requestDungeonFocus(DungeonFocusRequest request)
     dungeonFocus_.holdSeconds = holdSeconds;
     dungeonFocus_.moveSeconds = moveSeconds;
     dungeonFocus_.returnSeconds = returnSeconds;
+    dungeonFocus_.holdActionDelaySeconds = std::max(0.0f, request.holdActionDelaySeconds);
     dungeonFocus_.discoveryStoryEventId = std::move(storyEventId);
     dungeonFocus_.discoveryDialogue = std::move(focusDialogue);
+    dungeonFocus_.onHoldAction = std::move(request.onHoldAction);
     dungeonFocus_.onComplete = std::move(request.onComplete);
     dungeonFocus_.allowDuringBossEncounter = request.allowDuringBossEncounter;
     dungeonFocus_.debugStoryReplay = request.debugStoryReplay;
@@ -7639,7 +8322,10 @@ bool Game::updateDungeonFocus(float dt)
     const auto beginHold = [this]() {
         dungeonFocus_.phase = DungeonFocusPhase::Hold;
         dungeonFocus_.elapsed = 0.0f;
-        dungeonFocus_.duration = dungeonFocus_.holdSeconds;
+        dungeonFocus_.duration = dungeonFocus_.holdSeconds +
+            (dungeonFocus_.onHoldAction
+                ? dungeonFocus_.holdActionDelaySeconds
+                : 0.0f);
         camera_.setPosition(dungeonFocus_.focusWorldPos);
         logInfo(
             "[dungeon_focus] state=Hold kind=" +
@@ -7710,7 +8396,13 @@ bool Game::updateDungeonFocus(float dt)
     case DungeonFocusPhase::Hold:
         camera_.setPosition(dungeonFocus_.focusWorldPos);
         dungeonFocus_.elapsed += safeDt;
-        if (dungeonFocus_.elapsed >= dungeonFocus_.holdSeconds) {
+        if (dungeonFocus_.onHoldAction &&
+            dungeonFocus_.elapsed >= dungeonFocus_.holdActionDelaySeconds) {
+            std::function<void()> action = std::move(dungeonFocus_.onHoldAction);
+            dungeonFocus_.onHoldAction = {};
+            action();
+        }
+        if (dungeonFocus_.elapsed >= dungeonFocus_.duration) {
             beginReturn();
         }
         return true;
@@ -7989,25 +8681,10 @@ void Game::configureBossSpawnPointFromRoguelikeBigHole()
     if (!roguelikeBigHole_.active || roguelikeBigHole_.unlocked) {
         return;
     }
-    if (dungeonLayout_.mainPathPoints.size() >= 2) {
-        const int areaStartMeters = std::max(0, astralRun_.currentDepthMeters);
-        const int areaEndMeters = std::max(areaStartMeters + 1, astralRun_.nextHoleDepthMeters);
-        const int areaLengthMeters = std::max(
-            1,
-            areaEndMeters - areaStartMeters);
-        const float bossRouteDistance = static_cast<float>(std::max(
-            0,
-            areaLengthMeters - RoguelikeGateBossDistanceBeforeHoleMeters));
-        bossSpawnPoint_ = tileWorldCenter(roundDungeonTile(pointAtDungeonPathDistanceTiles(
-            dungeonLayout_.mainPathPoints,
-            bossRouteDistance)));
-    } else {
-        Vec2 direction = normalize(roguelikeBigHole_.position - tileWorldCenter(dungeonLayout_.startTile));
-        if (lengthSquared(direction) <= 0.0001f) {
-            direction = {0.0f, -1.0f};
-        }
-        bossSpawnPoint_ = roguelikeBigHole_.position - direction * static_cast<float>(BossOffsetTiles * balance::TileSize);
-    }
+    bossSpawnPoint_ = tileWorldCenter(predictRoguelikeBossSpawnTile(
+        dungeonLayout_,
+        astralRun_.currentDepthMeters,
+        astralRun_.nextHoleDepthMeters));
     hasBossSpawnPoint_ = true;
 }
 
@@ -8024,14 +8701,10 @@ void Game::initializeRoguelikeBigHoleFromLayout()
 
     roguelikeBigHole_.active = true;
     roguelikeBigHole_.unlocked = false;
-    const int areaStartMeters = std::max(0, astralRun_.currentDepthMeters);
-    const int areaEndMeters = std::max(areaStartMeters + 1, astralRun_.nextHoleDepthMeters);
-    const int areaLengthMeters = std::max(1, areaEndMeters - areaStartMeters);
-    roguelikeBigHole_.tile = dungeonLayout_.mainPathPoints.size() >= 2
-        ? roundDungeonTile(pointAtDungeonPathDistanceTiles(
-            dungeonLayout_.mainPathPoints,
-            static_cast<float>(areaLengthMeters)))
-        : dungeonLayout_.goalTile;
+    roguelikeBigHole_.tile = predictRoguelikeBigHoleTile(
+        dungeonLayout_,
+        astralRun_.currentDepthMeters,
+        astralRun_.nextHoleDepthMeters);
     roguelikeBigHole_.position = tileWorldCenter(roguelikeBigHole_.tile);
     roguelikeBigHole_.depthMeters = std::min(RoguelikeCompletionDepthMeters, std::max(
         RoguelikeMetersPerArea,
@@ -8543,6 +9216,70 @@ void Game::updateWarpPoints(float dt)
     }
 }
 
+void Game::resetDungeonRouteDeviation()
+{
+    dungeonRouteDeviation_ = DungeonRouteDeviationState{};
+}
+
+void Game::updateDungeonRouteDeviation(float dt)
+{
+    if (dungeonLayout_.mainPathPoints.size() < 2) {
+        resetDungeonRouteDeviation();
+        return;
+    }
+
+    const bool playerMoved =
+        dungeonRouteDeviation_.hasPreviousPlayerPosition &&
+        distanceSquared(player_.position, dungeonRouteDeviation_.previousPlayerPosition) >
+            DungeonRouteDeviationMovementEpsilon * DungeonRouteDeviationMovementEpsilon;
+    dungeonRouteDeviation_.previousPlayerPosition = player_.position;
+    dungeonRouteDeviation_.hasPreviousPlayerPosition = true;
+
+    const Vec2 playerTilePosition{
+        static_cast<float>(tileMap_.worldToTile(player_.position.x)),
+        static_cast<float>(tileMap_.worldToTile(player_.position.y)),
+    };
+    const DungeonLayoutMetrics routeMetrics =
+        calculateDungeonLayoutMetrics(dungeonLayout_, playerTilePosition);
+
+    if (dungeonRouteDeviation_.offMainRoute) {
+        if (routeMetrics.distanceFromMainPath <= DungeonRouteDeviationExitDistanceTiles) {
+            resetDungeonRouteDeviation();
+            return;
+        }
+    } else {
+        if (routeMetrics.distanceFromMainPath < DungeonRouteDeviationEnterDistanceTiles) {
+            return;
+        }
+        dungeonRouteDeviation_.offMainRoute = true;
+    }
+
+    const SpecialRoomMetrics roomMetrics =
+        calculateSpecialRoomMetrics(dungeonLayout_, playerTilePosition);
+    if (roomMetrics.currentRoomType != SpecialRoomType::None ||
+        routeMetrics.distanceFromMainPath < DungeonRouteDeviationNoticeDistanceTiles) {
+        dungeonRouteDeviation_.movingSecondsBeyondNoticeDistance = 0.0f;
+        return;
+    }
+
+    if (dungeonRouteDeviation_.noticeShownForCurrentExcursion) {
+        return;
+    }
+
+    if (playerMoved) {
+        dungeonRouteDeviation_.movingSecondsBeyondNoticeDistance += std::max(0.0f, dt);
+    }
+    if (dungeonRouteDeviation_.movingSecondsBeyondNoticeDistance <
+        DungeonRouteDeviationNoticeMovingSeconds) {
+        return;
+    }
+
+    pushImportantDungeonNotice(
+        std::string(DungeonRouteDeviationNotice),
+        std::string(DungeonRouteDeviationNoticeMergeKey));
+    dungeonRouteDeviation_.noticeShownForCurrentExcursion = true;
+}
+
 void Game::initializeMoonFragmentNodesFromWarpPoints()
 {
     moonFragmentNodes_.clear();
@@ -8557,10 +9294,16 @@ void Game::initializeMoonFragmentNodesFromWarpPoints()
     std::uniform_real_distribution<float> buriedRadiusDistribution(2.5f, 4.5f);
 
     PlacementReservations reservations;
-    reserveLayoutAnchors(reservations, dungeonLayout_);
-    for (const WarpPoint& point : warpPoints_) {
-        reservations.reserve(point.tilePosition, WarpReservationRadiusTiles);
-    }
+    reserveDungeonPlacementAnchors(
+        reservations,
+        dungeonLayout_,
+        warpPoints_,
+        warpPointsEnabled_,
+        currentStageIsRoguelike(),
+        currentStageId_,
+        currentStageDefinition().bossEnemyId,
+        astralRun_.currentDepthMeters,
+        astralRun_.nextHoleDepthMeters);
     const auto nodeRadius = [](PlacementVisibility visibility) {
         return visibility == PlacementVisibility::Exposed ? ExposedPlacementReservationRadiusTiles : 0;
     };
@@ -8634,10 +9377,16 @@ void Game::initializeRewardNodesFromLayout()
         : firstAvailableObjectId(objectCatalog_);
 
     PlacementReservations reservations;
-    reserveLayoutAnchors(reservations, dungeonLayout_);
-    for (const WarpPoint& point : warpPoints_) {
-        reservations.reserve(point.tilePosition, WarpReservationRadiusTiles);
-    }
+    reserveDungeonPlacementAnchors(
+        reservations,
+        dungeonLayout_,
+        warpPoints_,
+        warpPointsEnabled_,
+        currentStageIsRoguelike(),
+        currentStageId_,
+        currentStageDefinition().bossEnemyId,
+        astralRun_.currentDepthMeters,
+        astralRun_.nextHoleDepthMeters);
     const auto nodeRadius = [](PlacementVisibility visibility) {
         return visibility == PlacementVisibility::Exposed ? ExposedPlacementReservationRadiusTiles : 0;
     };
@@ -9182,10 +9931,16 @@ void Game::initializeChestNodesFromLayout()
     std::uniform_int_distribution<int> signDist(0, 1);
 
     PlacementReservations reservations;
-    reserveLayoutAnchors(reservations, dungeonLayout_);
-    for (const WarpPoint& point : warpPoints_) {
-        reservations.reserve(point.tilePosition, WarpReservationRadiusTiles);
-    }
+    reserveDungeonPlacementAnchors(
+        reservations,
+        dungeonLayout_,
+        warpPoints_,
+        warpPointsEnabled_,
+        currentStageIsRoguelike(),
+        currentStageId_,
+        currentStageDefinition().bossEnemyId,
+        astralRun_.currentDepthMeters,
+        astralRun_.nextHoleDepthMeters);
     const auto nodeRadius = [](PlacementVisibility visibility) {
         return visibility == PlacementVisibility::Exposed ? ExposedPlacementReservationRadiusTiles : 0;
     };
@@ -9581,15 +10336,13 @@ std::optional<std::string> Game::firstRoguelikeAllowedObjectId() const
     return std::nullopt;
 }
 
-bool Game::spawnWeightedObjectLoot(
+const ObjectDefinition* Game::selectWeightedObjectLoot(
     LootChestKind chestKind,
     int depthRank,
-    Vec2 center,
     std::mt19937& rng,
     std::string_view sourceLabel,
-    bool launchFromCenter,
     LootSourceKind sourceKind,
-    std::string_view requiredTag)
+    std::string_view requiredTag) const
 {
     const auto sourceWeightMultiplier = [sourceKind](const ObjectDefinition& object) {
         constexpr std::string_view RecoveryCategory = "\xE5\x9B\x9E\xE5\xBE\xA9";
@@ -9632,19 +10385,6 @@ bool Game::spawnWeightedObjectLoot(
             return tag == requiredTag;
         });
     };
-    const auto spawnObject = [&](const ObjectDefinition* object) {
-        if (object == nullptr) {
-            return false;
-        }
-        const Vec2 target = safeLootLandingPosition(center, rng);
-        return worldDrops_.spawnObjectDrop(
-            objectCatalog_,
-            object->id,
-            target,
-            runStats_.elapsedSeconds,
-            launchFromCenter ? makeWorldLootJumpMotion(center, rng) : WorldDropSpawnMotion{});
-    };
-
     const bool appleUseTutorialPending =
         encyclopedia_.objectStage(TutorialAppleObjectId, false) == EncyclopediaStage::Undiscovered;
     if (currentStageIsRoguelike()) {
@@ -9712,13 +10452,13 @@ bool Game::spawnWeightedObjectLoot(
                 message += " tag=\"" + std::string(requiredTag) + "\"";
             }
             logError(message);
-            return false;
+            return nullptr;
         }
 
         const std::optional<std::size_t> selectedCategory = selectWeightedIndex(categoryWeights, rng);
         if (!selectedCategory || *selectedCategory >= categorySpecs.size()) {
             logError("[warning] " + std::string(sourceLabel) + ": failed Roguelike category weighted selection");
-            return false;
+            return nullptr;
         }
 
         const std::string_view selectedCategoryName = categorySpecs[*selectedCategory]->category;
@@ -9736,9 +10476,9 @@ bool Game::spawnWeightedObjectLoot(
         const std::optional<std::size_t> selected = selectWeightedIndex(weights, rng);
         if (!selected || *selected >= candidates.size()) {
             logError("[warning] " + std::string(sourceLabel) + ": failed Roguelike Objects weighted selection");
-            return false;
+            return nullptr;
         }
-        return spawnObject(candidates[*selected]);
+        return candidates[*selected];
     }
 
     std::vector<const ObjectDefinition*> candidates;
@@ -9776,16 +10516,44 @@ bool Game::spawnWeightedObjectLoot(
             message += " tag=\"" + std::string(requiredTag) + "\"";
         }
         logError(message);
-        return false;
+        return nullptr;
     }
 
     const std::optional<std::size_t> selected = selectWeightedIndex(weights, rng);
     if (!selected || *selected >= candidates.size()) {
         logError("[warning] " + std::string(sourceLabel) + ": failed Objects weighted selection");
+        return nullptr;
+    }
+    return candidates[*selected];
+}
+
+bool Game::spawnWeightedObjectLoot(
+    LootChestKind chestKind,
+    int depthRank,
+    Vec2 center,
+    std::mt19937& rng,
+    std::string_view sourceLabel,
+    bool launchFromCenter,
+    LootSourceKind sourceKind,
+    std::string_view requiredTag)
+{
+    const ObjectDefinition* object = selectWeightedObjectLoot(
+        chestKind,
+        depthRank,
+        rng,
+        sourceLabel,
+        sourceKind,
+        requiredTag);
+    if (object == nullptr) {
         return false;
     }
-    const ObjectDefinition* object = candidates[*selected];
-    return spawnObject(object);
+    const Vec2 target = safeLootLandingPosition(center, rng);
+    return worldDrops_.spawnObjectDrop(
+        objectCatalog_,
+        object->id,
+        target,
+        runStats_.elapsedSeconds,
+        launchFromCenter ? makeWorldLootJumpMotion(center, rng) : WorldDropSpawnMotion{});
 }
 
 Vec2 Game::safeLootLandingPosition(Vec2 center, std::mt19937& rng)
@@ -10252,10 +11020,16 @@ void Game::initializeCrateNodesFromLayout()
     const std::vector<FloorCavernAnchor> floorAnchors = collectFloorCavernAnchors(dungeonLayout_);
 
     PlacementReservations reservations;
-    reserveLayoutAnchors(reservations, dungeonLayout_);
-    for (const WarpPoint& point : warpPoints_) {
-        reservations.reserve(point.tilePosition, WarpReservationRadiusTiles);
-    }
+    reserveDungeonPlacementAnchors(
+        reservations,
+        dungeonLayout_,
+        warpPoints_,
+        warpPointsEnabled_,
+        currentStageIsRoguelike(),
+        currentStageId_,
+        currentStageDefinition().bossEnemyId,
+        astralRun_.currentDepthMeters,
+        astralRun_.nextHoleDepthMeters);
     const auto nodeRadius = [](PlacementVisibility visibility) {
         return visibility == PlacementVisibility::Exposed ? ExposedPlacementReservationRadiusTiles : 0;
     };
@@ -11471,43 +12245,11 @@ int Game::spawnedEnemyNodeCount() const
 
 void Game::configureBossSpawnPointFromWarp(Vec2 warpPosition)
 {
-    if (dungeonLayout_.mainPathPoints.size() >= 2) {
-        const Vec2 warpTilePosition{
-            static_cast<float>(tileMap_.worldToTile(warpPosition.x)),
-            static_cast<float>(tileMap_.worldToTile(warpPosition.y)),
-        };
-        const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(dungeonLayout_, warpTilePosition);
-        const float pathLength = pathLengthTiles(dungeonLayout_.mainPathPoints);
-        if (pathLength > 0.0001f) {
-            const float baseDistance = metrics.pathProgress * pathLength;
-            const float minDistanceFromWarp = static_cast<float>(BossOffsetTiles);
-            const float minUpwardDeltaTiles = 4.0f;
-            Vec2 bossTilePoint = pointAtPathProgress(
-                dungeonLayout_.mainPathPoints,
-                clamp((baseDistance + minDistanceFromWarp) / pathLength, metrics.pathProgress, 1.0f));
-            for (float distanceAlongPath = baseDistance + minDistanceFromWarp;
-                distanceAlongPath <= pathLength + 0.001f;
-                distanceAlongPath += 2.0f) {
-                const Vec2 candidate = pointAtPathProgress(
-                    dungeonLayout_.mainPathPoints,
-                    clamp(distanceAlongPath / pathLength, metrics.pathProgress, 1.0f));
-                if (length(candidate - warpTilePosition) >= minDistanceFromWarp &&
-                    candidate.y <= warpTilePosition.y - minUpwardDeltaTiles) {
-                    bossTilePoint = candidate;
-                    break;
-                }
-            }
-            bossSpawnPoint_ = tileWorldCenter(roundDungeonTile(bossTilePoint));
-            hasBossSpawnPoint_ = true;
-            return;
-        }
-    }
-
-    Vec2 direction = normalize(warpPosition - tileWorldCenter(dungeonLayout_.startTile));
-    if (lengthSquared(direction) <= 0.0001f) {
-        direction = {0.0f, -1.0f};
-    }
-    bossSpawnPoint_ = warpPosition + direction * static_cast<float>(BossOffsetTiles * balance::TileSize);
+    const DungeonTile warpTile{
+        tileMap_.worldToTile(warpPosition.x),
+        tileMap_.worldToTile(warpPosition.y),
+    };
+    bossSpawnPoint_ = predictBossSpawnPointFromWarp(dungeonLayout_, warpPosition, warpTile);
     hasBossSpawnPoint_ = true;
 }
 
@@ -11550,6 +12292,42 @@ void Game::carveBossArenaAroundSpawnPoint()
         !usesOuterShellBossIntroPosition(currentStageId_, currentStageDefinition().bossEnemyId)) {
         carvePatch(normalBossStoryPlayerPosition(), 1);
     }
+
+    const auto tileInsideBossArena = [center, arena](DungeonTile tile) {
+        const float nx = static_cast<float>(tile.x - center.x) / static_cast<float>(arena.radiusX);
+        const float ny = static_cast<float>(tile.y - center.y) / static_cast<float>(arena.radiusY);
+        return nx * nx + ny * ny <= 1.0f;
+    };
+    rewardNodes_.erase(
+        std::remove_if(rewardNodes_.begin(), rewardNodes_.end(), [&](const RewardNode& node) {
+            return !node.collected && tileInsideBossArena(node.tile);
+        }),
+        rewardNodes_.end());
+    moneyNodes_.erase(
+        std::remove_if(moneyNodes_.begin(), moneyNodes_.end(), [&](const MoneyNode& node) {
+            return !node.collected && tileInsideBossArena(node.tile);
+        }),
+        moneyNodes_.end());
+    moonFragmentNodes_.erase(
+        std::remove_if(moonFragmentNodes_.begin(), moonFragmentNodes_.end(), [&](const MoonFragmentNode& node) {
+            return !node.collected && tileInsideBossArena(node.tile);
+        }),
+        moonFragmentNodes_.end());
+    chestNodes_.erase(
+        std::remove_if(chestNodes_.begin(), chestNodes_.end(), [&](const ChestNode& node) {
+            return !node.opened && tileInsideBossArena(node.tile);
+        }),
+        chestNodes_.end());
+    crateNodes_.erase(
+        std::remove_if(crateNodes_.begin(), crateNodes_.end(), [&](const CrateNode& node) {
+            return !node.destroyed && tileInsideBossArena(node.tile);
+        }),
+        crateNodes_.end());
+    enemyNodes_.erase(
+        std::remove_if(enemyNodes_.begin(), enemyNodes_.end(), [&](const EnemyNode& node) {
+            return !node.spawned && tileInsideBossArena(node.tile);
+        }),
+        enemyNodes_.end());
 }
 
 void Game::prepareBossEncounterAreaFromWarp(Vec2 warpPosition)
@@ -12593,6 +13371,7 @@ void Game::restoreRetrySnapshot()
     crateNodes_ = retrySnapshot_.crateNodes;
     enemyNodes_ = retrySnapshot_.enemyNodes;
     pendingBuriedEnemySpawns_.clear();
+    closeDungeonEventItemRequestUi();
     dungeonEvents_.setInstances(retrySnapshot_.dungeonEventInstances);
     enemies_ = retrySnapshot_.enemies;
     enemies_.clearTemporaryState();
@@ -12734,6 +13513,7 @@ bool Game::restoreDebugRoguelikeRunSnapshot()
     crateNodes_ = dungeon.crateNodes;
     enemyNodes_ = dungeon.enemyNodes;
     pendingBuriedEnemySpawns_.clear();
+    closeDungeonEventItemRequestUi();
     dungeonEvents_.setInstances(dungeon.dungeonEventInstances);
     enemies_ = dungeon.enemies;
     enemies_.clearTemporaryState();
@@ -13057,18 +13837,24 @@ void Game::renderRingEquipFx(Renderer& renderer) const
     }
 }
 
-void Game::pushDungeonLog(std::string message, std::string mergeKey)
+void Game::pushDungeonNotice(
+    std::vector<DungeonLogEntry>& notices,
+    std::string message,
+    std::string mergeKey,
+    float lifetime,
+    float mergeSeconds,
+    int maxVisible)
 {
     if (message.empty()) {
         return;
     }
 
     if (!mergeKey.empty()) {
-        for (DungeonLogEntry& entry : dungeonLogs_) {
-            if (entry.mergeKey == mergeKey && entry.count == 0 && entry.age <= DungeonLogMergeSeconds) {
+        for (DungeonLogEntry& entry : notices) {
+            if (entry.mergeKey == mergeKey && entry.count == 0 && entry.age <= mergeSeconds) {
                 entry.message = std::move(message);
                 entry.age = 0.0f;
-                entry.lifetime = DungeonLogLifetime;
+                entry.lifetime = lifetime;
                 return;
             }
         }
@@ -13077,11 +13863,34 @@ void Game::pushDungeonLog(std::string message, std::string mergeKey)
     DungeonLogEntry entry;
     entry.message = std::move(message);
     entry.mergeKey = std::move(mergeKey);
-    entry.lifetime = DungeonLogLifetime;
-    dungeonLogs_.push_back(std::move(entry));
-    while (static_cast<int>(dungeonLogs_.size()) > DungeonLogMaxVisible) {
-        dungeonLogs_.erase(dungeonLogs_.begin());
+    entry.lifetime = lifetime;
+    notices.push_back(std::move(entry));
+    const int noticeLimit = std::max(1, maxVisible);
+    while (static_cast<int>(notices.size()) > noticeLimit) {
+        notices.erase(notices.begin());
     }
+}
+
+void Game::pushDungeonLog(std::string message, std::string mergeKey)
+{
+    pushDungeonNotice(
+        dungeonLogs_,
+        std::move(message),
+        std::move(mergeKey),
+        DungeonLogLifetime,
+        DungeonLogMergeSeconds,
+        DungeonLogMaxVisible);
+}
+
+void Game::pushImportantDungeonNotice(std::string message, std::string mergeKey)
+{
+    pushDungeonNotice(
+        importantDungeonNotices_,
+        std::move(message),
+        std::move(mergeKey),
+        ImportantDungeonNoticeLifetime,
+        ImportantDungeonNoticeMergeSeconds,
+        ImportantDungeonNoticeMaxVisible);
 }
 
 void Game::pushCountedDungeonLog(std::string label, int amount, std::string suffix, std::string mergeKey)
@@ -13115,14 +13924,42 @@ void Game::pushCountedDungeonLog(std::string label, int amount, std::string suff
 
 void Game::updateDungeonLogs(float dt)
 {
-    for (DungeonLogEntry& entry : dungeonLogs_) {
-        entry.age += dt;
+    const auto updateEntries = [dt](std::vector<DungeonLogEntry>& entries) {
+        for (DungeonLogEntry& entry : entries) {
+            entry.age += dt;
+        }
+        entries.erase(
+            std::remove_if(entries.begin(), entries.end(), [](const DungeonLogEntry& entry) {
+                return entry.age >= entry.lifetime;
+            }),
+            entries.end());
+    };
+    updateEntries(dungeonLogs_);
+    updateEntries(importantDungeonNotices_);
+}
+
+void Game::handleRingItemAddedEvents()
+{
+    const std::vector<RingItemAddedEvent> events = spellRing_.consumeItemAddedEvents();
+    const bool dungeonContext =
+        mode_ == ScreenMode::Playing ||
+        ((mode_ == ScreenMode::PauseMenu ||
+             mode_ == ScreenMode::Inventory ||
+             mode_ == ScreenMode::Ring) &&
+            pauseReturnMode_ == ScreenMode::Playing) ||
+        (mode_ == ScreenMode::LevelUp && levelUpReturnMode_ == ScreenMode::Playing);
+    if (!dungeonContext) {
+        return;
     }
-    dungeonLogs_.erase(
-        std::remove_if(dungeonLogs_.begin(), dungeonLogs_.end(), [](const DungeonLogEntry& entry) {
-            return entry.age >= entry.lifetime;
-        }),
-        dungeonLogs_.end());
+
+    for (const RingItemAddedEvent& event : events) {
+        if (!event.overweight) {
+            continue;
+        }
+        pushImportantDungeonNotice(
+            std::string(ringDisplayName(event.ringIndex, unlockedRingCount())) + " が重量オーバーだ！",
+            "ring_overweight:" + std::to_string(event.ringIndex));
+    }
 }
 
 void Game::appendPickupLogs(const std::vector<WorldDropPickupEvent>& pickupEvents)
@@ -13285,7 +14122,7 @@ void Game::handleRingItemBreakEvents(std::vector<EffectDiscoveryEvent>* discover
                 }
             }
         }
-        pushDungeonLog(message, mergeKey);
+        pushImportantDungeonNotice(message, mergeKey);
     }
 }
 

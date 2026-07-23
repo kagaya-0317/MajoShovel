@@ -15,6 +15,7 @@
 #include "game/RingItemVisual.hpp"
 #include "game/TerrainDigRules.hpp"
 #include "game/WorldDropSystem.hpp"
+#include "game/WorldIconRenderer.hpp"
 #include "game/WetGroundSystem.hpp"
 #include "data/StageWeight.hpp"
 #include <algorithm>
@@ -52,7 +53,6 @@ constexpr std::string_view StardustMoleEnemyId = "stardust_mole";
 constexpr std::string_view StardustMolePatternId = "stardust_mole";
 constexpr std::string_view JunkCrabEnemyId = "junk_crab";
 constexpr std::string_view JunkCrabPatternId = "junk_crab";
-constexpr std::string_view JunkCrabProjectileId = "junk_chunk";
 constexpr std::string_view AstragnaEnemyId = "astragna";
 constexpr std::string_view AstragnaPatternId = "astragna";
 constexpr std::string_view StarVeinDragonEnemyId = "star_vein_dragon";
@@ -80,24 +80,37 @@ constexpr float StardustMoleRecoverSeconds = 0.30f;
 constexpr float StardustMoleEmergeDistance = 124.0f;
 constexpr float StardustMoleEmergeMinPlayerDistance = 78.0f;
 constexpr int BossChargeTerrainDamage = 10000;
-constexpr float JunkCrabRingGuardMinSeconds = 0.85f;
-constexpr float JunkCrabRingGuardMaxSeconds = 1.45f;
 constexpr float JunkCrabOrbitAngularSpeed = 2.35f;
 constexpr float JunkCrabOrbitRadiusMultiplier = 1.85f;
 constexpr float JunkCrabDebrisRadius = 8.5f;
-constexpr int JunkCrabDebrisHp = 2;
-constexpr int JunkCrabToppleThreshold = 100;
-constexpr float JunkCrabToppledSeconds = 2.70f;
-constexpr float JunkCrabRecoverSeconds = 0.55f;
-constexpr float JunkCrabGuardMoveSpeed = 54.0f;
+constexpr float JunkCrabDebrisImageMaxSize = 30.0f;
+constexpr int JunkCrabDebrisMinCount = 8;
+constexpr int JunkCrabDebrisHp = 40;
+constexpr float JunkCrabGuardRespawnMinSeconds = 300.0f / 60.0f;
+constexpr float JunkCrabGuardRespawnMaxSeconds = 420.0f / 60.0f;
+constexpr float JunkCrabGuardMoveSpeed = 18.0f;
 constexpr float JunkCrabClawRange = 62.0f;
-constexpr float JunkCrabClawWindupSeconds = 0.42f;
-constexpr float JunkCrabClawStrikeSeconds = 0.28f;
+constexpr float JunkCrabClawWindupSeconds = JunkCrabAttackImpactSeconds;
+constexpr float JunkCrabClawStrikeSeconds = JunkCrabAttackFollowThroughSeconds;
 constexpr float JunkCrabClawArcDegrees = 115.0f;
-constexpr float JunkCrabThrowWindupSeconds = 0.48f;
-constexpr float JunkCrabThrowBurstSeconds = 0.38f;
-constexpr int JunkCrabThrowCount = 3;
-constexpr float JunkCrabThrowSpreadDegrees = 24.0f;
+constexpr float JunkCrabDebrisSpinMinDegrees = 60.0f;
+constexpr float JunkCrabDebrisSpinMaxDegrees = 120.0f;
+constexpr float JunkCrabDebrisVolleyDelaySeconds = 12.0f;
+constexpr float JunkCrabDebrisVolleyLaunchIntervalSeconds = 12.0f / 60.0f;
+constexpr float JunkCrabDebrisVolleySpeed = 380.0f;
+constexpr float JunkCrabDebrisVolleyLifetimeSeconds = 2.60f;
+constexpr float JunkCrabDebrisReturnSpeed = 430.0f;
+constexpr float JunkCrabDebrisReturnHitDistance = 16.0f;
+constexpr float JunkCrabDebrisBounceMinSpeed = 170.0f;
+constexpr float JunkCrabDebrisBounceMaxSpeed = 240.0f;
+constexpr float JunkCrabDebrisBounceGravity = 520.0f;
+constexpr float JunkCrabDebrisFadeSeconds = 0.55f;
+constexpr std::array<WorldIconId, 4> JunkCrabDebrisIconCycle{{
+    WorldIconId::JunkCrabDebrisCan,
+    WorldIconId::JunkCrabDebrisGear,
+    WorldIconId::JunkCrabDebrisBattery,
+    WorldIconId::JunkCrabDebrisPipe,
+}};
 constexpr float AstragnaRotationSpeed = 0.08f;
 constexpr float AstragnaCoreDiameterTiles = 10.0f;
 constexpr float AstragnaShellThicknessTiles = 5.0f;
@@ -120,6 +133,10 @@ constexpr float AstragnaRepairIntervalSeconds = 1.35f;
 constexpr float AstragnaRepairPlayerSafeRadius = 72.0f;
 constexpr float AstragnaPlayerPushPadding = 1.5f;
 constexpr std::string_view AstragnaLaserProjectileId = "astragna_laser_bolt";
+constexpr std::string_view AstragnaGuardianStarImagePath = "assets/enemies/astragna_guardian_star.png";
+constexpr std::string_view AstragnaWallOrnamentImagePath = "assets/enemies/astragna_wall_ornament.png";
+constexpr std::string_view AstragnaDroneImagePath = "assets/enemies/astragna_drone.png";
+constexpr float AstragnaWallOrnamentSourceOuterRadiusUv = 0.49f;
 constexpr float AstragnaEmitterSpawnRangeTiles = 6.5f;
 constexpr float AstragnaEmitterOrbitGapTiles = 1.25f;
 constexpr float AstragnaEmitterAngleOffsetRadians = 22.0f * Pi / 180.0f;
@@ -3040,7 +3057,7 @@ void drawEnemyHpBar(Renderer& renderer, const Enemy& enemy, Vec2 drawPosition, f
 enum class BossWeakPointKind {
     None,
     StardustMoleCrystal,
-    JunkCrabBelly,
+    JunkCrabHead,
 };
 
 struct BossWeakPointSpec {
@@ -3057,6 +3074,17 @@ struct BossDamageAdjustment {
     std::string_view effectId;
 };
 
+struct RingContactDamageResult {
+    std::string_view damageType = "none";
+    int damageDealt = 0;
+    bool criticalHit = false;
+    bool sleepingBonusApplied = false;
+    bool nonlethalHit = false;
+    bool frontGuarded = false;
+    bool weakPointHit = false;
+    std::string_view bossEffectId;
+};
+
 bool stardustMoleWeakPointExposed(const Enemy& enemy)
 {
     return enemy.active &&
@@ -3070,11 +3098,17 @@ bool stardustMoleWeakPointExposed(const Enemy& enemy)
 
 bool junkCrabWeakPointExposed(const Enemy& enemy)
 {
+    const JunkCrabBossRuntime& crab = enemy.bossAction.junkCrab;
     return enemy.active &&
         enemy.isBoss &&
         enemy.bossAction.enabled &&
         enemy.bossAction.pattern == JunkCrabPatternId &&
-        enemy.bossAction.junkCrab.phase == JunkCrabPhase::Toppled &&
+        std::none_of(
+            crab.debris.begin(),
+            crab.debris.end(),
+            [](const JunkCrabDebrisRuntime& debris) {
+                return debris.state == JunkCrabDebrisState::Orbiting;
+            }) &&
         !enemy.bossAction.hidden &&
         !enemy.bossAction.invulnerable &&
         enemy.spawnTimer <= 0.0f &&
@@ -3110,11 +3144,11 @@ BossWeakPointSpec bossWeakPointFor(
     if (junkCrabWeakPointExposed(enemy)) {
         const float radius = effectiveEnemyRadius(enemy);
         BossWeakPointSpec spec{
-            .kind = BossWeakPointKind::JunkCrabBelly,
+            .kind = BossWeakPointKind::JunkCrabHead,
             .exposed = true,
-            .center = hitboxCenter,
-            .radius = std::max(10.0f, radius * 0.64f),
-            .effectId = "junk_belly",
+            .center = hitboxCenter + facingVector(enemy.facingAngle) * (radius * 0.72f),
+            .radius = std::max(10.0f, radius * 0.46f),
+            .effectId = "junk_head",
         };
         applyCustomBossWeakPoint(spec, enemy, hitboxCatalog, centerOffset);
         return spec;
@@ -3223,6 +3257,96 @@ BossDamageAdjustment adjustBossIncomingDamage(
         bossWeakPointHit(weakPoint, item, itemHitbox));
 }
 
+RingContactDamageResult computeRingContactDamageAgainstEnemy(
+    const Enemy& enemy,
+    const SpellRingItem& item,
+    const ObjectDefinition* hitObject,
+    const RingItemHitboxSpec& itemHitbox,
+    const Player& player,
+    const SpellRingSystem& spellRing,
+    const ObjectCatalog& objectCatalog,
+    const HitboxCatalog* hitboxCatalog,
+    const EnemyPlacementCatalog* placementCatalog,
+    std::mt19937& rng,
+    std::vector<EffectDiscoveryEvent>* discoveryEvents,
+    const EncyclopediaSystem* encyclopedia,
+    bool applyNonlethalCap)
+{
+    RingContactDamageResult result;
+    result.damageType = item.damageType;
+    if (item.magicAuraTimer > 0.0f && !item.magicAuraDamageType.empty()) {
+        result.damageType = item.magicAuraDamageType;
+    }
+
+    const double ringOutputMultiplier = spellRing.ringOutputMultiplierForRing(item.ringIndex);
+    const int speedBonus = static_cast<int>(
+        item.damageMotionSpeed *
+        0.25f *
+        static_cast<float>(
+            spellRing.speedDamageMultiplier() *
+            spellRing.ringDamageSpeedMultiplierForRing(item.ringIndex)));
+    const int modifiedDamage = static_cast<int>(
+        player.status.applyModifiers(
+            ModifierStat::Attack,
+            static_cast<double>(item.damage) *
+                damageTypeMultiplier(result.damageType) *
+                item.slashDamageMultiplier *
+                spellRing.effectivePowerMultiplier()));
+    const int rawDamage = static_cast<int>(
+        std::ceil(static_cast<double>(modifiedDamage + speedBonus) * ringOutputMultiplier));
+    int adjustedDamage = rawDamage;
+    const CriticalDamageSpec criticalSpec = collectCriticalDamageSpec(item, hitObject, spellRing, objectCatalog);
+    if (rawDamage > 0 && criticalRollSucceeds(criticalSpec.chancePercent, rng)) {
+        result.criticalHit = true;
+        adjustedDamage = static_cast<int>(
+            std::ceil(static_cast<double>(adjustedDamage) * criticalSpec.damageMultiplier));
+        recordCriticalEffectDiscoveries(discoveryEvents, encyclopedia, criticalSpec.sources, enemy.position);
+    }
+
+    const double sleepingBonusMultiplier = sleepingBonusDamageMultiplierFor(hitObject);
+    result.sleepingBonusApplied = adjustedDamage > 0 &&
+        sleepingBonusMultiplier > 1.0 &&
+        enemy.status.hasState("status_sleep");
+    if (result.sleepingBonusApplied) {
+        adjustedDamage = static_cast<int>(
+            std::ceil(static_cast<double>(adjustedDamage) * sleepingBonusMultiplier));
+    }
+
+    if (isPhysicalDamageType(result.damageType) && hasBehavior(enemy, "physical_resist")) {
+        adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * enemy.physicalDamageMultiplier));
+    }
+    if (isPhysicalDamageType(result.damageType) && hasBehavior(enemy, "magic_body")) {
+        adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * enemy.magicBodyPhysicalMultiplier));
+    } else if (result.damageType == "magic" && hasBehavior(enemy, "magic_body")) {
+        adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * enemy.magicBodyMagicMultiplier));
+    }
+
+    result.frontGuarded = hasBehavior(enemy, "front_guard") &&
+        enemy.frontGuardDamageMultiplier < 0.999f &&
+        frontGuardApplies(enemy, item.worldPosition, enemy.frontGuardArcDegrees);
+    if (result.frontGuarded) {
+        adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * enemy.frontGuardDamageMultiplier));
+    }
+
+    const BossDamageAdjustment bossDamage = adjustBossIncomingDamage(
+        enemy,
+        adjustedDamage,
+        item,
+        itemHitbox,
+        hitboxCatalog,
+        placementCatalog);
+    result.weakPointHit = bossDamage.weakPointHit;
+    result.bossEffectId = bossDamage.effectId;
+    adjustedDamage = bossDamage.damage;
+
+    result.nonlethalHit = applyNonlethalCap && nonlethalHitApplies(hitObject);
+    result.damageDealt = applyDefenseModifier(enemy.status, adjustedDamage);
+    if (result.nonlethalHit) {
+        result.damageDealt = clampNonlethalDamage(enemy, result.damageDealt);
+    }
+    return result;
+}
+
 std::uint32_t mixBossWeakPointHintSeed(std::uint32_t value)
 {
     value ^= value >> 16;
@@ -3316,13 +3440,33 @@ bool junkCrabDebrisShouldRender(const Enemy& enemy)
     return enemy.active &&
         enemy.bossAction.enabled &&
         enemy.bossAction.pattern == JunkCrabPatternId &&
-        !enemy.bossAction.hidden &&
-        enemy.bossAction.junkCrab.phase != JunkCrabPhase::Toppled;
+        !enemy.bossAction.hidden;
+}
+
+bool junkCrabDebrisVisible(const JunkCrabDebrisRuntime& debris)
+{
+    return debris.state != JunkCrabDebrisState::Inactive && debris.alpha > 0.001f;
 }
 
 Vec2 junkCrabDebrisPosition(const Enemy& enemy, const JunkCrabDebrisRuntime& debris)
 {
-    return enemy.position + fromAngle(enemy.bossAction.junkCrab.orbitAngle + debris.baseAngle) * debris.radius;
+    if (debris.state == JunkCrabDebrisState::Orbiting) {
+        return enemy.position + fromAngle(debris.angle) * debris.radius;
+    }
+    return debris.position + Vec2{0.0f, -std::max(0.0f, debris.altitude)};
+}
+
+Vec2 junkCrabDebrisShadowPosition(const Enemy& enemy, const JunkCrabDebrisRuntime& debris)
+{
+    if (debris.state == JunkCrabDebrisState::Orbiting) {
+        return enemy.position + fromAngle(debris.angle) * debris.radius;
+    }
+    return debris.position;
+}
+
+WorldIconId junkCrabDebrisIconForIndex(int index)
+{
+    return JunkCrabDebrisIconCycle[static_cast<std::size_t>(index) % JunkCrabDebrisIconCycle.size()];
 }
 
 void drawJunkCrabDebris(Renderer& renderer, const Enemy& enemy)
@@ -3331,26 +3475,50 @@ void drawJunkCrabDebris(Renderer& renderer, const Enemy& enemy)
         return;
     }
 
-    const Color fillColors[JunkCrabMaxDebris]{
+    static constexpr std::array<Color, 6> FillColors{{
         {156, 142, 122, 230},
         {118, 128, 138, 230},
         {182, 142, 84, 230},
         {104, 94, 128, 230},
         {194, 168, 88, 230},
         {132, 118, 100, 230},
-    };
+    }};
     for (int i = 0; i < JunkCrabMaxDebris; ++i) {
         const JunkCrabDebrisRuntime& debris = enemy.bossAction.junkCrab.debris[static_cast<std::size_t>(i)];
-        if (!debris.active) {
+        if (!junkCrabDebrisVisible(debris)) {
             continue;
         }
         const Vec2 position = junkCrabDebrisPosition(enemy, debris);
-        const float pulse = 1.0f + 0.08f * std::sin(enemy.bossAction.junkCrab.orbitAngle * 2.0f + debris.baseAngle);
+        const Vec2 shadowPosition = junkCrabDebrisShadowPosition(enemy, debris);
+        const float pulse = debris.state == JunkCrabDebrisState::Orbiting
+            ? 1.0f + 0.08f * std::sin(enemy.behaviorTimer * 5.0f + debris.angle)
+            : 1.0f;
+        const float shadowFade = 1.0f - clamp(std::max(0.0f, debris.altitude) / 96.0f, 0.0f, 1.0f);
+        const float shadowAlpha = debris.alpha * shadowFade;
+        const float shadowScale = 0.88f + 0.12f * shadowFade;
+        const float shadowRadius = JunkCrabDebrisRadius * pulse * shadowScale;
+        renderer.fillEllipse(
+            shadowPosition + Vec2{0.0f, shadowRadius * 0.62f},
+            {shadowRadius * 0.95f, shadowRadius * 0.34f},
+            scaleColorAlpha({0, 0, 0, 92}, shadowAlpha));
+        WorldIconDrawOptions options;
+        options.filter = TextureFilter::Linear;
+        options.scaleMultiplier = pulse;
+        options.rotationDegrees = debris.visualAngle * 180.0f / Pi;
+        options.tint = scaleColorAlpha({255, 255, 255, 255}, debris.alpha);
+        if (drawWorldIcon(
+                renderer,
+                junkCrabDebrisIconForIndex(debris.iconIndex),
+                position,
+                {JunkCrabDebrisImageMaxSize, JunkCrabDebrisImageMaxSize},
+                options)) {
+            continue;
+        }
+
         const float radius = JunkCrabDebrisRadius * pulse;
-        renderer.fillCircle(position, radius, fillColors[static_cast<std::size_t>(i)]);
-        renderer.drawCircle(position, radius + 2.0f, {34, 28, 24, 210});
-        const Vec2 axle = fromAngle(enemy.bossAction.junkCrab.orbitAngle * 1.7f + debris.baseAngle) * (radius * 0.65f);
-        renderer.drawLine(position - axle, position + axle, {255, 232, 168, 150});
+        const Color fill = scaleColorAlpha(FillColors[static_cast<std::size_t>(i) % FillColors.size()], debris.alpha);
+        renderer.fillCircle(position, radius, fill);
+        renderer.drawCircle(position, radius + 2.0f, scaleColorAlpha({34, 28, 24, 210}, debris.alpha));
     }
 }
 
@@ -4119,9 +4287,11 @@ bool isJunkCrabBossAction(const Enemy& enemy)
     return enemy.bossAction.enabled && enemy.bossAction.pattern == JunkCrabPatternId;
 }
 
-bool isJunkCrabToppled(const Enemy& enemy)
+float junkCrabPhaseSeconds(const Enemy& enemy, std::string_view key, float fallbackSeconds)
 {
-    return isJunkCrabBossAction(enemy) && enemy.bossAction.junkCrab.phase == JunkCrabPhase::Toppled;
+    return static_cast<float>(std::max(
+        0.05,
+        behaviorParamDouble(enemy, "boss_sequence", key, fallbackSeconds)));
 }
 
 bool junkCrabHasActiveDebris(const Enemy& enemy)
@@ -4133,28 +4303,31 @@ bool junkCrabHasActiveDebris(const Enemy& enemy)
         enemy.bossAction.junkCrab.debris.begin(),
         enemy.bossAction.junkCrab.debris.end(),
         [](const JunkCrabDebrisRuntime& debris) {
-            return debris.active;
+            return debris.state != JunkCrabDebrisState::Inactive;
+        });
+}
+
+bool junkCrabHasOrbitingDebris(const Enemy& enemy)
+{
+    if (!isJunkCrabBossAction(enemy)) {
+        return false;
+    }
+    return std::any_of(
+        enemy.bossAction.junkCrab.debris.begin(),
+        enemy.bossAction.junkCrab.debris.end(),
+        [](const JunkCrabDebrisRuntime& debris) {
+            return debris.state == JunkCrabDebrisState::Orbiting;
         });
 }
 
 int junkCrabDebrisCount(const Enemy& enemy)
 {
-    return std::clamp(
-        behaviorParamInt(enemy, "boss_sequence", "debris", 5),
-        1,
-        JunkCrabMaxDebris);
-}
-
-int junkCrabToppleThreshold(const Enemy& enemy)
-{
-    return std::max(20, behaviorParamInt(enemy, "boss_sequence", "topple", JunkCrabToppleThreshold));
-}
-
-float junkCrabPhaseSeconds(const Enemy& enemy, std::string_view key, float fallbackSeconds)
-{
-    return static_cast<float>(std::max(
-        0.05,
-        behaviorParamDouble(enemy, "boss_sequence", key, fallbackSeconds)));
+    const float hpRatio = enemy.maxHp > 0
+        ? clamp(static_cast<float>(enemy.hp) / static_cast<float>(enemy.maxHp), 0.0f, 1.0f)
+        : 1.0f;
+    const int countRange = JunkCrabMaxDebris - JunkCrabDebrisMinCount;
+    const int scaledCount = JunkCrabDebrisMinCount + static_cast<int>(std::lround((1.0f - hpRatio) * static_cast<float>(countRange)));
+    return std::clamp(scaledCount, JunkCrabDebrisMinCount, JunkCrabMaxDebris);
 }
 
 float junkCrabOrbitRadius(const Enemy& enemy, const EnemyPlacementCatalog* placementCatalog)
@@ -4165,52 +4338,99 @@ float junkCrabOrbitRadius(const Enemy& enemy, const EnemyPlacementCatalog* place
         radius * JunkCrabOrbitRadiusMultiplier);
 }
 
-void clearJunkCrabDebris(Enemy& enemy)
+float randomJunkCrabGuardRespawnDelay(const Enemy& enemy, std::mt19937& rng)
 {
-    for (JunkCrabDebrisRuntime& debris : enemy.bossAction.junkCrab.debris) {
-        debris = {};
-    }
+    const float minSeconds = static_cast<float>(std::max(
+        0.0,
+        behaviorParamDouble(enemy, "boss_sequence", "guardRespawnMinSeconds", JunkCrabGuardRespawnMinSeconds)));
+    const float maxSeconds = static_cast<float>(std::max(
+        static_cast<double>(minSeconds),
+        behaviorParamDouble(enemy, "boss_sequence", "guardRespawnMaxSeconds", JunkCrabGuardRespawnMaxSeconds)));
+    std::uniform_real_distribution<float> dist(minSeconds, maxSeconds);
+    return dist(rng);
 }
 
-void initializeJunkCrabDebris(Enemy& enemy, const EnemyPlacementCatalog* placementCatalog)
+float randomJunkCrabDebrisSpin(std::mt19937& rng)
+{
+    std::uniform_real_distribution<float> speedDist(JunkCrabDebrisSpinMinDegrees, JunkCrabDebrisSpinMaxDegrees);
+    std::bernoulli_distribution signDist(0.5);
+    const float sign = signDist(rng) ? 1.0f : -1.0f;
+    return sign * speedDist(rng) * Pi / 180.0f;
+}
+
+void scheduleJunkCrabGuardRespawnIfNeeded(Enemy& enemy, std::mt19937& rng)
+{
+    JunkCrabBossRuntime& crab = enemy.bossAction.junkCrab;
+    if (crab.guardRespawnDelaySeconds > 0.0f) {
+        return;
+    }
+    crab.guardRespawnTimer = 0.0f;
+    crab.guardRespawnDelaySeconds = randomJunkCrabGuardRespawnDelay(enemy, rng);
+}
+
+void initializeJunkCrabDebris(Enemy& enemy, std::mt19937& rng, const EnemyPlacementCatalog* placementCatalog)
 {
     JunkCrabBossRuntime& crab = enemy.bossAction.junkCrab;
     const int count = junkCrabDebrisCount(enemy);
     const float orbitRadius = junkCrabOrbitRadius(enemy, placementCatalog);
+    const int debrisHp = std::max(JunkCrabDebrisHp, behaviorParamInt(enemy, "boss_sequence", "debrisHp", JunkCrabDebrisHp));
+    std::uniform_real_distribution<float> angleDist(0.0f, 2.0f * Pi);
     for (int i = 0; i < JunkCrabMaxDebris; ++i) {
         JunkCrabDebrisRuntime& debris = crab.debris[static_cast<std::size_t>(i)];
         if (i >= count) {
             debris = {};
             continue;
         }
-        debris.active = true;
-        debris.baseAngle = static_cast<float>(i) / static_cast<float>(count) * 2.0f * Pi;
+        debris = {};
+        debris.state = JunkCrabDebrisState::Orbiting;
+        debris.angle = static_cast<float>(i) / static_cast<float>(count) * 2.0f * Pi;
         debris.radius = orbitRadius + (i % 2 == 0 ? 0.0f : 6.0f);
-        debris.hp = std::max(1, behaviorParamInt(enemy, "boss_sequence", "debrisHp", JunkCrabDebrisHp));
+        debris.orbitAngularSpeed = static_cast<float>(std::max(
+            0.0,
+            behaviorParamDouble(enemy, "boss_sequence", "orbitSpeed", JunkCrabOrbitAngularSpeed)));
+        debris.position = junkCrabDebrisPosition(enemy, debris);
+        debris.visualAngle = angleDist(rng);
+        debris.visualAngularSpeed = randomJunkCrabDebrisSpin(rng);
+        debris.alpha = 1.0f;
+        debris.hp = debrisHp;
+        debris.maxHp = debrisHp;
+        debris.iconIndex = i;
     }
+    crab.debrisVolleyTimer = 0.0f;
+    crab.debrisVolleyLaunchTimer = 0.0f;
+    crab.guardRespawnTimer = 0.0f;
+    crab.guardRespawnDelaySeconds = 0.0f;
 }
 
 void enterJunkCrabPhase(
     Enemy& enemy,
     JunkCrabPhase phase,
-    std::vector<EnemyEvent>& events,
-    const EnemyPlacementCatalog* placementCatalog)
+    std::vector<EnemyEvent>& events)
 {
     JunkCrabBossRuntime& crab = enemy.bossAction.junkCrab;
+    const bool startsAttackAnimation =
+        phase == JunkCrabPhase::ClawWindup ||
+        phase == JunkCrabPhase::DebrisVolleyWindup;
+    const bool continuesAttackAnimation = phase == JunkCrabPhase::ClawStrike;
     crab.phase = phase;
     crab.timer = 0.0f;
-    crab.throwBurstIndex = 0;
     crab.actionFired = false;
+    if (phase == JunkCrabPhase::DebrisVolley) {
+        crab.debrisVolleyLaunchTimer = 0.0f;
+    }
+    if (startsAttackAnimation) {
+        crab.attackAnimationSeconds = 0.0f;
+        crab.appliedAttackMotionOffset = {};
+    } else if (!continuesAttackAnimation) {
+        crab.attackAnimationSeconds = 0.0f;
+        crab.appliedAttackMotionOffset = {};
+    }
     enemy.bossAction.hidden = false;
     enemy.bossAction.invulnerable = false;
     enemy.velocity = {};
 
     switch (phase) {
     case JunkCrabPhase::RingGuard:
-        if (!junkCrabHasActiveDebris(enemy)) {
-            initializeJunkCrabDebris(enemy, placementCatalog);
-        }
-        events.push_back(makeEnemyEventAt(EnemyEventType::BossImpact, enemy, enemy.position, "junk_ring"));
         break;
     case JunkCrabPhase::ClawWindup:
         events.push_back(makeEnemyEvent(EnemyEventType::Attack, enemy, "junk_claw_windup"));
@@ -4218,105 +4438,22 @@ void enterJunkCrabPhase(
     case JunkCrabPhase::ClawStrike:
         events.push_back(makeEnemyEventAt(EnemyEventType::BossImpact, enemy, enemy.position, "junk_claw"));
         break;
-    case JunkCrabPhase::ThrowWindup:
+    case JunkCrabPhase::DebrisVolleyWindup:
         events.push_back(makeEnemyEvent(EnemyEventType::Attack, enemy, "junk_throw_windup"));
         break;
-    case JunkCrabPhase::ThrowBurst:
-        events.push_back(makeEnemyEvent(EnemyEventType::Shoot, enemy, "junk_throw"));
-        break;
-    case JunkCrabPhase::Toppled:
-        crab.toppleMeter = 0;
-        clearJunkCrabDebris(enemy);
-        events.push_back(makeEnemyEventAt(EnemyEventType::BossImpact, enemy, enemy.position, "junk_topple"));
-        break;
-    case JunkCrabPhase::Recover:
-        events.push_back(makeEnemyEventAt(EnemyEventType::BossImpact, enemy, enemy.position, "junk_recover"));
+    case JunkCrabPhase::DebrisVolley:
         break;
     case JunkCrabPhase::None:
         break;
     }
 }
 
-bool addJunkCrabToppleMeter(
-    Enemy& enemy,
-    int amount,
-    std::vector<EnemyEvent>& events,
-    const EnemyPlacementCatalog* placementCatalog)
+void beginJunkCrabDebrisFade(JunkCrabDebrisRuntime& debris)
 {
-    if (!isJunkCrabBossAction(enemy) || amount <= 0) {
-        return false;
-    }
-    JunkCrabBossRuntime& crab = enemy.bossAction.junkCrab;
-    if (crab.phase == JunkCrabPhase::Toppled || crab.phase == JunkCrabPhase::Recover) {
-        return false;
-    }
-
-    const int threshold = junkCrabToppleThreshold(enemy);
-    crab.toppleMeter = std::clamp(crab.toppleMeter + amount, 0, threshold);
-    if (crab.toppleMeter < threshold) {
-        return false;
-    }
-
-    enterJunkCrabPhase(enemy, JunkCrabPhase::Toppled, events, placementCatalog);
-    return true;
-}
-
-bool objectHasAnyTag(const ObjectDefinition* object, std::initializer_list<std::string_view> tags)
-{
-    if (object == nullptr) {
-        return false;
-    }
-    return std::any_of(object->tags.begin(), object->tags.end(), [tags](const std::string& value) {
-        return std::any_of(tags.begin(), tags.end(), [&value](std::string_view tag) {
-            return equalsIgnoreCaseAscii(value, tag);
-        });
-    });
-}
-
-int junkCrabToppleGainForRingHit(
-    const SpellRingItem& item,
-    const ObjectDefinition* object,
-    std::string_view damageType,
-    int damageDealt)
-{
-    int gain = damageDealt > 0 ? std::clamp(damageDealt * 2, 2, 14) : 0;
-    if (item.hasCapturedBehavior("heavy_guard")) {
-        gain += 22;
-    }
-    if (item.weight >= 3.0f) {
-        gain += 18;
-    } else if (item.weight >= 2.0f) {
-        gain += 12;
-    } else if (item.weight >= 1.2f) {
-        gain += 6;
-    }
-    if (isPhysicalDamageType(damageType)) {
-        gain += 4;
-    }
-    if (objectHasAnyTag(object, {"shield", "guard", "heavy", "metal", "stone"})) {
-        gain += 12;
-    }
-    if (object != nullptr &&
-        (effectSpecsContain(object->orbitEffects, "guard") ||
-            effectSpecsContain(object->orbitEffects, "guard_projectile") ||
-            effectSpecsContain(object->orbitEffects, "guard_large") ||
-            effectSpecsContain(object->orbitEffects, "reflect_physical") ||
-            effectSpecsContain(object->orbitEffects, "reflect_physical_chance"))) {
-        gain += 14;
-    }
-    return gain;
-}
-
-int junkCrabToppleGainForProjectile(const Projectile& projectile, int damageDealt)
-{
-    int gain = damageDealt > 0 ? std::clamp(damageDealt * 3, 3, 24) : 0;
-    if (projectile.projectileId == JunkCrabProjectileId) {
-        gain += 48;
-    }
-    if (projectile.radius >= 6.0f || projectile.damage >= 2) {
-        gain += 16;
-    }
-    return gain;
+    debris.state = JunkCrabDebrisState::Fading;
+    debris.timer = 0.0f;
+    debris.lifetime = JunkCrabDebrisFadeSeconds;
+    debris.alpha = 1.0f;
 }
 
 bool tryHitJunkCrabDebris(
@@ -4324,32 +4461,64 @@ bool tryHitJunkCrabDebris(
     SpellRingItem& item,
     const ObjectDefinition* object,
     const RingItemHitboxSpec& itemHitbox,
+    const Player& player,
     SpellRingSystem& spellRing,
+    const ObjectCatalog& objectCatalog,
+    const HitboxCatalog* hitboxCatalog,
+    const EnemyPlacementCatalog* placementCatalog,
     std::vector<EnemyEvent>& events,
     std::vector<RingImpactSoundEvent>& impactSoundEvents,
-    const EnemyPlacementCatalog* placementCatalog)
+    std::mt19937& rng,
+    std::vector<EffectDiscoveryEvent>* discoveryEvents,
+    const EncyclopediaSystem* encyclopedia)
 {
-    if (!isJunkCrabBossAction(enemy) ||
-        enemy.bossAction.junkCrab.phase == JunkCrabPhase::Toppled ||
-        enemy.bossAction.junkCrab.phase == JunkCrabPhase::Recover) {
+    if (!isJunkCrabBossAction(enemy)) {
         return false;
     }
 
     JunkCrabBossRuntime& crab = enemy.bossAction.junkCrab;
     for (JunkCrabDebrisRuntime& debris : crab.debris) {
-        if (!debris.active) {
+        if (debris.state != JunkCrabDebrisState::Orbiting || debris.hp <= 0) {
             continue;
+        }
+        if (debris.maxHp < JunkCrabDebrisHp) {
+            debris.maxHp = JunkCrabDebrisHp;
+            debris.hp = std::max(debris.hp, debris.maxHp);
         }
         const Vec2 debrisPosition = junkCrabDebrisPosition(enemy, debris);
         if (!ringItemHitboxOverlapsCircle(item, itemHitbox, debrisPosition, JunkCrabDebrisRadius)) {
             continue;
         }
 
-        const int hitPower = std::max(1, item.damage + static_cast<int>(std::ceil(item.weight)));
-        debris.hp -= hitPower;
-        const bool broken = debris.hp <= 0;
+        const RingContactDamageResult damage = computeRingContactDamageAgainstEnemy(
+            enemy,
+            item,
+            object,
+            itemHitbox,
+            player,
+            spellRing,
+            objectCatalog,
+            hitboxCatalog,
+            placementCatalog,
+            rng,
+            discoveryEvents,
+            encyclopedia,
+            false);
+        const int damageDealt = std::max(0, damage.damageDealt);
+        debris.hp -= damageDealt;
+        const bool broken = debris.hp <= 0 && damageDealt > 0;
         if (broken) {
-            debris.active = false;
+            debris.position = debrisPosition;
+            debris.velocity = safeDirection(enemy.position - debrisPosition, facingVector(enemy.facingAngle)) *
+                static_cast<float>(std::max(
+                    1.0,
+                    behaviorParamDouble(enemy, "boss_sequence", "debrisReturnSpeed", JunkCrabDebrisReturnSpeed)));
+            debris.state = JunkCrabDebrisState::ReturningToBoss;
+            debris.timer = 0.0f;
+            debris.lifetime = 0.0f;
+            debris.altitude = 0.0f;
+            debris.verticalVelocity = 0.0f;
+            debris.alpha = 1.0f;
         }
 
         item.actionFlashTimer = SpellRingItemActionFlashSeconds;
@@ -4360,34 +4529,160 @@ bool tryHitJunkCrabDebris(
             item,
             object,
             enemy,
-            RingImpactResult::Hit,
+            broken ? RingImpactResult::Break : RingImpactResult::Hit,
             debrisPosition,
-            static_cast<float>(std::max(1, hitPower))));
-        events.push_back(makeEnemyEventAt(
-            EnemyEventType::BossImpact,
+            static_cast<float>(damageDealt)));
+        EnemyEvent event = makeEnemyEvent(
+            EnemyEventType::AttackHit,
             enemy,
-            debrisPosition,
-            broken ? "junk_debris_break" : "junk_debris_hit"));
-
-        int gain = junkCrabToppleGainForRingHit(item, object, item.damageType, hitPower);
-        if (broken) {
-            gain += 16;
-        }
-        if (!junkCrabHasActiveDebris(enemy)) {
-            gain += junkCrabToppleThreshold(enemy);
-        }
-        addJunkCrabToppleMeter(enemy, gain, events, placementCatalog);
+            broken ? "junk_debris_break" : "junk_debris_hit",
+            damageDealt,
+            damage.criticalHit);
+        event.position = debrisPosition;
+        event.ringItemImpact = true;
+        events.push_back(std::move(event));
         return true;
     }
     return false;
 }
 
-bool playerWithinJunkCrabClaw(const Enemy& enemy, const Player& player)
+void bounceJunkCrabDebrisAway(Enemy& enemy, JunkCrabDebrisRuntime& debris, std::mt19937& rng)
+{
+    std::uniform_real_distribution<float> sideDist(-0.65f, 0.65f);
+    std::uniform_real_distribution<float> speedDist(JunkCrabDebrisBounceMinSpeed, JunkCrabDebrisBounceMaxSpeed);
+    std::uniform_real_distribution<float> verticalDist(150.0f, 215.0f);
+    const Vec2 away = safeDirection(debris.position - enemy.position, fromAngle(debris.angle));
+    const Vec2 tangent{-away.y, away.x};
+    const Vec2 direction = safeDirection(away + tangent * sideDist(rng), away);
+    debris.state = JunkCrabDebrisState::BouncingAway;
+    debris.velocity = direction * speedDist(rng);
+    debris.timer = 0.0f;
+    debris.lifetime = 0.0f;
+    debris.altitude = 8.0f;
+    debris.verticalVelocity = verticalDist(rng);
+    debris.alpha = 1.0f;
+}
+
+void updateJunkCrabDebrisMotion(
+    Enemy& enemy,
+    Player& player,
+    TileMap& map,
+    float dt,
+    std::vector<EnemyEvent>& events,
+    std::mt19937& rng)
+{
+    if (!isJunkCrabBossAction(enemy) || dt <= 0.0f) {
+        return;
+    }
+
+    JunkCrabBossRuntime& crab = enemy.bossAction.junkCrab;
+    const float orbitSpeed = static_cast<float>(std::max(
+        0.0,
+        behaviorParamDouble(enemy, "boss_sequence", "orbitSpeed", JunkCrabOrbitAngularSpeed)));
+    const float returnSpeed = static_cast<float>(std::max(
+        1.0,
+        behaviorParamDouble(enemy, "boss_sequence", "debrisReturnSpeed", JunkCrabDebrisReturnSpeed)));
+    const float volleyLifetime = static_cast<float>(std::max(
+        0.1,
+        behaviorParamDouble(enemy, "boss_sequence", "debrisVolleyLifetime", JunkCrabDebrisVolleyLifetimeSeconds)));
+    const float playerRadius = player.effectiveRadius(balance::PlayerRadius);
+
+    for (JunkCrabDebrisRuntime& debris : crab.debris) {
+        if (debris.state == JunkCrabDebrisState::Inactive) {
+            continue;
+        }
+        debris.visualAngle += debris.visualAngularSpeed * dt;
+
+        switch (debris.state) {
+        case JunkCrabDebrisState::Orbiting:
+            debris.orbitAngularSpeed = orbitSpeed;
+            debris.angle = wrapAngle(debris.angle + debris.orbitAngularSpeed * dt);
+            debris.position = junkCrabDebrisPosition(enemy, debris);
+            break;
+        case JunkCrabDebrisState::ReturningToBoss: {
+            debris.timer += dt;
+            const Vec2 toBoss = enemy.position - debris.position;
+            const float distanceToBoss = length(toBoss);
+            if (distanceToBoss <= JunkCrabDebrisReturnHitDistance) {
+                debris.position = enemy.position;
+                bounceJunkCrabDebrisAway(enemy, debris, rng);
+                events.push_back(makeEnemyEventAt(EnemyEventType::BossImpact, enemy, enemy.position, "junk_debris_return"));
+                break;
+            }
+            const Vec2 direction = safeDirection(toBoss, facingVector(enemy.facingAngle));
+            const float stepDistance = returnSpeed * dt;
+            debris.velocity = direction * returnSpeed;
+            debris.position += direction * std::min(distanceToBoss, stepDistance);
+            break;
+        }
+        case JunkCrabDebrisState::BouncingAway:
+            debris.timer += dt;
+            debris.position += debris.velocity * dt;
+            debris.velocity = debris.velocity * std::max(0.0f, 1.0f - dt * 0.55f);
+            debris.altitude += debris.verticalVelocity * dt;
+            debris.verticalVelocity -= JunkCrabDebrisBounceGravity * dt;
+            if (debris.altitude <= 0.0f && debris.verticalVelocity <= 0.0f) {
+                debris.altitude = 0.0f;
+                beginJunkCrabDebrisFade(debris);
+            }
+            break;
+        case JunkCrabDebrisState::Fading:
+            debris.timer += dt;
+            debris.position += debris.velocity * dt;
+            debris.velocity = debris.velocity * std::max(0.0f, 1.0f - dt * 3.0f);
+            debris.alpha = 1.0f - clamp(debris.timer / std::max(0.001f, debris.lifetime), 0.0f, 1.0f);
+            if (debris.timer >= debris.lifetime) {
+                debris = {};
+            }
+            break;
+        case JunkCrabDebrisState::VolleyProjectile: {
+            debris.timer += dt;
+            debris.position += debris.velocity * dt;
+            const bool hitPlayer = circlesOverlap(debris.position, JunkCrabDebrisRadius, player.position, playerRadius);
+            if (hitPlayer) {
+                const int damage = applyDefenseModifier(
+                    player.status,
+                    std::max(1, behaviorParamInt(enemy, "boss_sequence", "debrisVolleyDamage", std::max(1, enemy.contactAttackPower))));
+                player.applyDamage(
+                    damage,
+                    DamageCause{
+                        .source = DamageSource::SlimeAttack,
+                        .actorName = enemyDisplayName(enemy),
+                    });
+                player.applyKnockback(debris.velocity, 155.0f, 0.14f);
+                events.push_back(makeEnemyEvent(EnemyEventType::AttackHit, enemy, "junk_throw", damage));
+                beginJunkCrabDebrisFade(debris);
+                break;
+            }
+            if (debris.timer >= volleyLifetime || map.isCircleBlocked(debris.position, JunkCrabDebrisRadius)) {
+                beginJunkCrabDebrisFade(debris);
+            }
+            break;
+        }
+        case JunkCrabDebrisState::Inactive:
+            break;
+        }
+    }
+}
+
+float junkCrabClawReachDistance(
+    const Enemy& enemy,
+    const Player& player,
+    const EnemyPlacementCatalog* placementCatalog)
+{
+    const float bodyRadius = enemyPassageRadius(enemy, placementCatalog);
+    const float playerRadius = player.effectiveRadius(balance::PlayerRadius);
+    return bodyRadius + playerRadius + JunkCrabClawRange;
+}
+
+bool playerWithinJunkCrabClaw(
+    const Enemy& enemy,
+    const Player& player,
+    const EnemyPlacementCatalog* placementCatalog)
 {
     const Vec2 toPlayer = player.position - enemy.position;
     const float distanceToPlayer = length(toPlayer);
-    const float playerRadius = player.effectiveRadius(balance::PlayerRadius);
-    if (distanceToPlayer > effectiveEnemyRadius(enemy) + JunkCrabClawRange + playerRadius) {
+    if (distanceToPlayer > junkCrabClawReachDistance(enemy, player, placementCatalog)) {
         return false;
     }
     if (distanceToPlayer <= 0.0001f) {
@@ -4405,9 +4700,14 @@ void pushPlayerFromJunkCrab(Player& player, TileMap& map, Vec2 direction, float 
     }
 }
 
-void resolveJunkCrabClawStrike(Enemy& enemy, Player& player, TileMap& map, std::vector<EnemyEvent>& events)
+void resolveJunkCrabClawStrike(
+    Enemy& enemy,
+    Player& player,
+    TileMap& map,
+    std::vector<EnemyEvent>& events,
+    const EnemyPlacementCatalog* placementCatalog)
 {
-    if (!playerWithinJunkCrabClaw(enemy, player)) {
+    if (!playerWithinJunkCrabClaw(enemy, player, placementCatalog)) {
         return;
     }
     const double baseAttackPower = static_cast<double>(std::max(1, enemy.contactAttackPower + 1)) * 1.5;
@@ -4426,40 +4726,50 @@ void resolveJunkCrabClawStrike(Enemy& enemy, Player& player, TileMap& map, std::
     events.push_back(makeEnemyEvent(EnemyEventType::AttackHit, enemy, "junk_claw", damage));
 }
 
-void fireJunkCrabThrowBurst(Enemy& enemy, Player& player, ProjectileSystem& projectiles, std::vector<EnemyEvent>& events)
+int nearestOrbitingJunkCrabDebrisIndex(const Enemy& enemy, Vec2 target)
 {
-    const int count = std::max(1, behaviorParamInt(enemy, "boss_sequence", "throwCount", JunkCrabThrowCount));
-    const float spreadDegrees = static_cast<float>(std::max(
-        0.0,
-        behaviorParamDouble(enemy, "boss_sequence", "throwSpread", JunkCrabThrowSpreadDegrees)));
-    const std::string projectileId = behaviorParamString(enemy, "boss_sequence", "throwProjectile", JunkCrabProjectileId);
-    const Vec2 baseDirection = safeDirection(player.position - enemy.position, facingVector(enemy.facingAngle));
-    const float baseAngle = std::atan2(baseDirection.y, baseDirection.x);
-    const float startOffset = count > 1 ? -spreadDegrees * 0.5f : 0.0f;
-    const float stepDegrees = count > 1 ? spreadDegrees / static_cast<float>(count - 1) : 0.0f;
-
-    ProjectileSpawnTuning tuning;
-    tuning.speedMultiplier = static_cast<float>(std::max(
-        0.1,
-        behaviorParamDouble(enemy, "boss_sequence", "throwSpeedMultiplier", 1.0)));
-    tuning.damageOverride = behaviorParamInt(enemy, "boss_sequence", "throwDamage", std::max(1, enemy.contactAttackPower));
-    tuning.damageMultiplier = std::max(0.0, enemy.status.multiplierFor(ModifierStat::Attack));
-    tuning.radiusScale = static_cast<float>(std::max(
-        0.1,
-        behaviorParamDouble(enemy, "boss_sequence", "throwRadiusScale", 1.0)));
-
-    static const std::vector<EffectSpec> NoEffects;
-    const ProjectileSpawnMetadata metadata{.sourceActorName = enemyDisplayName(enemy)};
-    bool spawned = false;
-    for (int i = 0; i < count; ++i) {
-        const float angle = baseAngle + (startOffset + stepDegrees * static_cast<float>(i)) * (Pi / 180.0f);
-        const Vec2 direction = fromAngle(angle);
-        const Vec2 origin = enemy.position + direction * (effectiveEnemyRadius(enemy) + JunkCrabDebrisRadius + 8.0f);
-        spawned = projectiles.spawn(projectileId, origin, direction, ProjectileOwnerType::Enemy, NoEffects, tuning, metadata) || spawned;
+    const JunkCrabBossRuntime& crab = enemy.bossAction.junkCrab;
+    int bestIndex = -1;
+    float bestDistanceSq = std::numeric_limits<float>::max();
+    for (int i = 0; i < JunkCrabMaxDebris; ++i) {
+        const JunkCrabDebrisRuntime& debris = crab.debris[static_cast<std::size_t>(i)];
+        if (debris.state != JunkCrabDebrisState::Orbiting) {
+            continue;
+        }
+        const Vec2 position = junkCrabDebrisPosition(enemy, debris);
+        const float distanceSq = distanceSquared(position, target);
+        if (distanceSq < bestDistanceSq) {
+            bestDistanceSq = distanceSq;
+            bestIndex = i;
+        }
     }
-    if (spawned) {
-        events.push_back(makeEnemyEvent(EnemyEventType::Shoot, enemy, "junk_throw"));
+    return bestIndex;
+}
+
+bool launchNearestJunkCrabDebrisAtPlayer(Enemy& enemy, const Player& player, std::vector<EnemyEvent>& events)
+{
+    JunkCrabBossRuntime& crab = enemy.bossAction.junkCrab;
+    const int debrisIndex = nearestOrbitingJunkCrabDebrisIndex(enemy, player.position);
+    if (debrisIndex < 0) {
+        return false;
     }
+
+    JunkCrabDebrisRuntime& debris = crab.debris[static_cast<std::size_t>(debrisIndex)];
+    const Vec2 startPosition = junkCrabDebrisPosition(enemy, debris);
+    const Vec2 direction = safeDirection(player.position - startPosition, facingVector(enemy.facingAngle));
+    const float speed = static_cast<float>(std::max(
+        1.0,
+        behaviorParamDouble(enemy, "boss_sequence", "debrisVolleySpeed", JunkCrabDebrisVolleySpeed)));
+    debris.state = JunkCrabDebrisState::VolleyProjectile;
+    debris.position = startPosition;
+    debris.velocity = direction * speed;
+    debris.timer = 0.0f;
+    debris.lifetime = 0.0f;
+    debris.altitude = 0.0f;
+    debris.verticalVelocity = 0.0f;
+    debris.alpha = 1.0f;
+    events.push_back(makeEnemyEventAt(EnemyEventType::Shoot, enemy, startPosition, "junk_throw"));
+    return true;
 }
 
 void moveJunkCrabGuard(
@@ -4471,13 +4781,14 @@ void moveJunkCrabGuard(
 {
     const Vec2 toPlayer = player.position - enemy.position;
     const float distanceToPlayer = length(toPlayer);
-    if (distanceToPlayer <= effectiveEnemyRadius(enemy) + JunkCrabClawRange * 0.55f) {
+    if (distanceToPlayer <= junkCrabClawReachDistance(enemy, player, placementCatalog)) {
         return;
     }
     const Vec2 direction = safeDirection(toPlayer, facingVector(enemy.facingAngle));
-    const float speed = static_cast<float>(std::max(
+    const float speed = static_cast<float>(std::clamp(
+        behaviorParamDouble(enemy, "boss_sequence", "guardMoveSpeed", JunkCrabGuardMoveSpeed),
         0.0,
-        behaviorParamDouble(enemy, "boss_sequence", "guardMoveSpeed", JunkCrabGuardMoveSpeed)));
+        static_cast<double>(JunkCrabGuardMoveSpeed)));
     if (tryMoveCircle(map, enemy.position, enemyPassageRadius(enemy, placementCatalog), direction * (speed * std::max(0.0f, dt)))) {
         enemy.velocity = direction * speed;
     } else {
@@ -4486,13 +4797,34 @@ void moveJunkCrabGuard(
     enemy.facingAngle = std::atan2(direction.y, direction.x);
 }
 
+void advanceJunkCrabAttackBodyMotion(
+    Enemy& enemy,
+    TileMap& map,
+    const EnemyPlacementCatalog* placementCatalog)
+{
+    JunkCrabBossRuntime& crab = enemy.bossAction.junkCrab;
+    if (junkCrabAttackAnimationKind(crab.phase) != JunkCrabAttackAnimationKind::Claw) {
+        return;
+    }
+
+    const Vec2 targetOffset = junkCrabAttackForwardMotionOffset(enemy, crab.attackAnimationSeconds);
+    const Vec2 delta = targetOffset - crab.appliedAttackMotionOffset;
+    if (lengthSquared(delta) <= 0.0001f) {
+        return;
+    }
+
+    const Vec2 previousPosition = enemy.position;
+    tryMoveCircle(map, enemy.position, enemyPassageRadius(enemy, placementCatalog), delta);
+    crab.appliedAttackMotionOffset += enemy.position - previousPosition;
+}
+
 bool updateJunkCrabBossActionSequence(
     Enemy& enemy,
     Player& player,
     TileMap& map,
-    ProjectileSystem& projectiles,
     float dt,
     std::vector<EnemyEvent>& events,
+    std::mt19937& rng,
     const EnemyPlacementCatalog* placementCatalog)
 {
     if (!isJunkCrabBossAction(enemy)) {
@@ -4501,80 +4833,114 @@ bool updateJunkCrabBossActionSequence(
 
     JunkCrabBossRuntime& crab = enemy.bossAction.junkCrab;
     if (crab.phase == JunkCrabPhase::None) {
-        enterJunkCrabPhase(enemy, JunkCrabPhase::RingGuard, events, placementCatalog);
-        return true;
+        enterJunkCrabPhase(enemy, JunkCrabPhase::RingGuard, events);
     }
 
     const float safeDt = std::max(0.0f, dt);
     crab.timer += safeDt;
-    crab.orbitAngle += safeDt * static_cast<float>(std::max(
-        0.0,
-        behaviorParamDouble(enemy, "boss_sequence", "orbitSpeed", JunkCrabOrbitAngularSpeed)));
+    const JunkCrabAttackAnimationKind attackAnimationKind = junkCrabAttackAnimationKind(crab.phase);
+    if (attackAnimationKind != JunkCrabAttackAnimationKind::None) {
+        const float animationCap = attackAnimationKind == JunkCrabAttackAnimationKind::DebrisVolley
+            ? JunkCrabDebrisVolleyWindupSeconds
+            : JunkCrabAttackTotalSeconds;
+        crab.attackAnimationSeconds = std::min(
+            animationCap,
+            crab.attackAnimationSeconds + safeDt);
+    }
+    updateJunkCrabDebrisMotion(enemy, player, map, safeDt, events, rng);
+    const bool activeDebris = junkCrabHasActiveDebris(enemy);
+    if (activeDebris) {
+        crab.guardRespawnTimer = 0.0f;
+        crab.guardRespawnDelaySeconds = 0.0f;
+    } else {
+        scheduleJunkCrabGuardRespawnIfNeeded(enemy, rng);
+        crab.guardRespawnTimer += safeDt;
+    }
 
     const Vec2 toPlayer = player.position - enemy.position;
-    if (lengthSquared(toPlayer) > 0.0001f) {
+    const bool facingCanTrack =
+        crab.phase == JunkCrabPhase::RingGuard ||
+        crab.phase == JunkCrabPhase::DebrisVolleyWindup ||
+        (attackAnimationKind == JunkCrabAttackAnimationKind::Claw &&
+            !junkCrabAttackLocksFacing(crab.phase, crab.attackAnimationSeconds));
+    if (facingCanTrack &&
+        lengthSquared(toPlayer) > 0.0001f) {
         enemy.facingAngle = std::atan2(toPlayer.y, toPlayer.x);
     }
 
     switch (crab.phase) {
     case JunkCrabPhase::RingGuard: {
         moveJunkCrabGuard(enemy, player, map, safeDt, placementCatalog);
-        const float distanceToPlayer = length(player.position - enemy.position);
-        if (distanceToPlayer <= effectiveEnemyRadius(enemy) + JunkCrabClawRange) {
-            enterJunkCrabPhase(enemy, JunkCrabPhase::ClawWindup, events, placementCatalog);
-            return true;
+        if (!activeDebris) {
+            if (crab.guardRespawnTimer >= crab.guardRespawnDelaySeconds) {
+                initializeJunkCrabDebris(enemy, rng, placementCatalog);
+                events.push_back(makeEnemyEventAt(EnemyEventType::BossImpact, enemy, enemy.position, "junk_ring"));
+                return true;
+            }
+        } else if (junkCrabHasOrbitingDebris(enemy)) {
+            crab.debrisVolleyTimer += safeDt;
+            const float volleyDelay = junkCrabPhaseSeconds(enemy, "debrisVolleyDelay", JunkCrabDebrisVolleyDelaySeconds);
+            if (crab.debrisVolleyTimer >= volleyDelay) {
+                enterJunkCrabPhase(enemy, JunkCrabPhase::DebrisVolleyWindup, events);
+                return true;
+            }
         }
-        const float guardSeconds = static_cast<float>(std::clamp(
-            behaviorParamDouble(enemy, "boss_sequence", "guardSeconds", JunkCrabRingGuardMinSeconds),
-            static_cast<double>(JunkCrabRingGuardMinSeconds),
-            static_cast<double>(JunkCrabRingGuardMaxSeconds)));
-        if (crab.timer >= guardSeconds) {
-            enterJunkCrabPhase(enemy, JunkCrabPhase::ThrowWindup, events, placementCatalog);
+
+        const float distanceToPlayer = length(player.position - enemy.position);
+        if (distanceToPlayer <= junkCrabClawReachDistance(enemy, player, placementCatalog)) {
+            enterJunkCrabPhase(enemy, JunkCrabPhase::ClawWindup, events);
+            return true;
         }
         return true;
     }
     case JunkCrabPhase::ClawWindup:
         enemy.velocity = {};
+        advanceJunkCrabAttackBodyMotion(enemy, map, placementCatalog);
         if (crab.timer >= junkCrabPhaseSeconds(enemy, "clawWindup", JunkCrabClawWindupSeconds)) {
-            enterJunkCrabPhase(enemy, JunkCrabPhase::ClawStrike, events, placementCatalog);
+            enterJunkCrabPhase(enemy, JunkCrabPhase::ClawStrike, events);
         }
         return true;
     case JunkCrabPhase::ClawStrike:
         enemy.velocity = {};
+        advanceJunkCrabAttackBodyMotion(enemy, map, placementCatalog);
         if (!crab.actionFired) {
             crab.actionFired = true;
-            resolveJunkCrabClawStrike(enemy, player, map, events);
+            resolveJunkCrabClawStrike(enemy, player, map, events, placementCatalog);
         }
         if (crab.timer >= junkCrabPhaseSeconds(enemy, "clawStrike", JunkCrabClawStrikeSeconds)) {
-            enterJunkCrabPhase(enemy, JunkCrabPhase::RingGuard, events, placementCatalog);
+            enterJunkCrabPhase(enemy, JunkCrabPhase::RingGuard, events);
         }
         return true;
-    case JunkCrabPhase::ThrowWindup:
+    case JunkCrabPhase::DebrisVolleyWindup:
         enemy.velocity = {};
-        if (crab.timer >= junkCrabPhaseSeconds(enemy, "throwWindup", JunkCrabThrowWindupSeconds)) {
-            enterJunkCrabPhase(enemy, JunkCrabPhase::ThrowBurst, events, placementCatalog);
+        if (!junkCrabHasOrbitingDebris(enemy)) {
+            enterJunkCrabPhase(enemy, JunkCrabPhase::RingGuard, events);
+            return true;
+        }
+        if (crab.timer >= junkCrabPhaseSeconds(enemy, "debrisVolleyWindup", JunkCrabDebrisVolleyWindupSeconds)) {
+            enterJunkCrabPhase(enemy, JunkCrabPhase::DebrisVolley, events);
         }
         return true;
-    case JunkCrabPhase::ThrowBurst:
+    case JunkCrabPhase::DebrisVolley:
         enemy.velocity = {};
-        if (!crab.actionFired) {
-            crab.actionFired = true;
-            fireJunkCrabThrowBurst(enemy, player, projectiles, events);
+        if (!junkCrabHasOrbitingDebris(enemy)) {
+            enterJunkCrabPhase(enemy, JunkCrabPhase::RingGuard, events);
+            return true;
         }
-        if (crab.timer >= junkCrabPhaseSeconds(enemy, "throwBurst", JunkCrabThrowBurstSeconds)) {
-            enterJunkCrabPhase(enemy, JunkCrabPhase::RingGuard, events, placementCatalog);
-        }
-        return true;
-    case JunkCrabPhase::Toppled:
-        enemy.velocity = {};
-        if (crab.timer >= junkCrabPhaseSeconds(enemy, "toppledSeconds", JunkCrabToppledSeconds)) {
-            enterJunkCrabPhase(enemy, JunkCrabPhase::Recover, events, placementCatalog);
-        }
-        return true;
-    case JunkCrabPhase::Recover:
-        enemy.velocity = {};
-        if (crab.timer >= junkCrabPhaseSeconds(enemy, "recoverSeconds", JunkCrabRecoverSeconds)) {
-            enterJunkCrabPhase(enemy, JunkCrabPhase::RingGuard, events, placementCatalog);
+        crab.debrisVolleyLaunchTimer -= safeDt;
+        while (crab.debrisVolleyLaunchTimer <= 0.0f) {
+            if (!launchNearestJunkCrabDebrisAtPlayer(enemy, player, events)) {
+                enterJunkCrabPhase(enemy, JunkCrabPhase::RingGuard, events);
+                return true;
+            }
+            crab.debrisVolleyLaunchTimer += junkCrabPhaseSeconds(
+                enemy,
+                "debrisVolleyInterval",
+                JunkCrabDebrisVolleyLaunchIntervalSeconds);
+            if (!junkCrabHasOrbitingDebris(enemy)) {
+                enterJunkCrabPhase(enemy, JunkCrabPhase::RingGuard, events);
+                return true;
+            }
         }
         return true;
     case JunkCrabPhase::None:
@@ -5796,6 +6162,88 @@ TerrainTileNeighbors astragnaShellTileNeighbors(const AstragnaBossRuntime& astra
     };
 }
 
+Vec2 astragnaWallOrnamentTexCoord(const Enemy& enemy, Vec2 worldPosition, float outerRadius)
+{
+    const Vec2 delta = worldPosition - enemy.position;
+    const float rotation = enemy.bossAction.astragna.rotationAngle;
+    const float c = std::cos(rotation);
+    const float s = std::sin(rotation);
+    const Vec2 local{
+        delta.x * c + delta.y * s,
+        -delta.x * s + delta.y * c,
+    };
+    const float radius = std::max(1.0f, outerRadius);
+    return {
+        0.5f + (local.x / radius) * AstragnaWallOrnamentSourceOuterRadiusUv,
+        0.5f + (local.y / radius) * AstragnaWallOrnamentSourceOuterRadiusUv,
+    };
+}
+
+void drawAstragnaWallOrnament(Renderer& renderer, const Enemy& enemy, bool downed)
+{
+    const ImageHandle handle = renderer.acquireImage(AstragnaWallOrnamentImagePath, TextureFilter::Linear);
+    if (!handle.valid()) {
+        return;
+    }
+
+    const AstragnaBossRuntime& astragna = enemy.bossAction.astragna;
+    const AstragnaShellConfig shellConfig = astragnaShellConfig(enemy);
+    const Color tint = downed ? Color{220, 246, 255, 172} : Color{255, 255, 255, 212};
+    constexpr std::array<int, 6> QuadIndices{{0, 1, 2, 0, 2, 3}};
+    const int blockCount = std::clamp(astragna.shellBlockCount, 0, AstragnaMaxShellBlocks);
+    for (int i = 0; i < blockCount; ++i) {
+        const AstragnaShellBlockRuntime& block = astragna.shellBlocks[static_cast<std::size_t>(i)];
+        if (!block.active || block.hp <= 0 || block.maxHp <= 0) {
+            continue;
+        }
+        const std::array<Vec2, 4> corners = astragnaShellBlockCorners(enemy, block);
+        const std::array<ImageTriangleVertex, 4> vertices{{
+            {corners[0], astragnaWallOrnamentTexCoord(enemy, corners[0], shellConfig.outerRadius)},
+            {corners[1], astragnaWallOrnamentTexCoord(enemy, corners[1], shellConfig.outerRadius)},
+            {corners[2], astragnaWallOrnamentTexCoord(enemy, corners[2], shellConfig.outerRadius)},
+            {corners[3], astragnaWallOrnamentTexCoord(enemy, corners[3], shellConfig.outerRadius)},
+        }};
+        renderer.drawImageTriangleList(handle, vertices.data(), vertices.size(), QuadIndices.data(), QuadIndices.size(), tint);
+    }
+}
+
+float astragnaDronePulse(float timer, Vec2 position)
+{
+    const float phase = timer * 5.4f + position.x * 0.017f + position.y * 0.011f;
+    return 0.5f + 0.5f * std::sin(phase);
+}
+
+void drawAstragnaDrone(Renderer& renderer, Vec2 position, float radius, float hpRatio, float timer, float alphaScale)
+{
+    const float pulse = astragnaDronePulse(timer, position);
+    const float hover = std::sin(timer * 4.1f + position.x * 0.009f) * 1.6f;
+    const Vec2 drawPosition = position + Vec2{0.0f, hover};
+    const unsigned char glowAlpha = static_cast<unsigned char>(std::lround((52.0f + 92.0f * pulse) * alphaScale));
+    const unsigned char coreAlpha = static_cast<unsigned char>(std::lround((112.0f + 96.0f * pulse) * alphaScale));
+
+    renderer.fillSoftCircle(drawPosition, radius * (1.65f + 0.28f * pulse), {82, 230, 255, glowAlpha});
+    renderer.drawSoftRing(drawPosition, radius * (1.02f + 0.04f * pulse), 2.0f + pulse * 1.8f, {190, 250, 255, coreAlpha});
+
+    ImageDrawOptions options;
+    options.tint = {255, 255, 255, static_cast<unsigned char>(std::lround(245.0f * alphaScale))};
+    const float spriteDiameter = radius * (4.15f + 0.10f * std::sin(timer * 4.1f));
+    const bool drewImage = renderer.drawImage(
+        AstragnaDroneImagePath,
+        drawPosition,
+        {spriteDiameter, spriteDiameter},
+        options,
+        TextureFilter::Linear);
+    if (!drewImage) {
+        renderer.fillCircle(drawPosition, radius, {108, 222, 255, options.tint.a});
+        renderer.drawCircle(drawPosition, radius + 3.0f, {234, 252, 255, 190});
+    }
+
+    const float clampedHp = clamp(hpRatio, 0.0f, 1.0f);
+    if (clampedHp < 0.98f) {
+        renderer.drawCircle(drawPosition, std::max(2.0f, radius * (1.25f + 0.18f * (1.0f - clampedHp))), {255, 128, 166, 210});
+    }
+}
+
 void drawAstragnaEmitterSector(
     Renderer& renderer,
     Vec2 origin,
@@ -5885,32 +6333,27 @@ void drawAstragnaEmitterBody(Renderer& renderer, const Enemy& enemy, const Astra
     }
 
     const float hpRatio = emitter.maxHp > 0 ? clamp(static_cast<float>(emitter.hp) / static_cast<float>(emitter.maxHp), 0.0f, 1.0f) : 1.0f;
-    const bool flame = emitter.attack == AstragnaEmitterAttack::FlameSweep;
-    const Color fill = flame ? Color{255, 116, 48, 230} : Color{114, 228, 255, 230};
-    const Color ring = flame ? Color{255, 224, 98, 205} : Color{234, 252, 255, 205};
-    const float pulse = 1.0f + 0.08f * std::sin(enemy.behaviorTimer * (flame ? 8.0f : 11.0f));
-    renderer.fillCircle(emitter.position, emitter.radius * pulse, fill);
-    renderer.drawCircle(emitter.position, emitter.radius + 3.0f, ring);
-    renderer.drawCircle(emitter.position, std::max(2.0f, emitter.radius * hpRatio), {255, 246, 178, 180});
-    const Vec2 aim = fromAngle(emitter.baseDirectionAngle) * (emitter.radius + 7.0f);
-    renderer.drawLine(emitter.position - aim * 0.35f, emitter.position + aim, {255, 255, 255, 170});
+    drawAstragnaDrone(renderer, emitter.position, emitter.radius, hpRatio, enemy.behaviorTimer, 1.0f);
 }
 
 void drawAstragnaCore(Renderer& renderer, const Enemy& enemy, bool downed)
 {
     const float coreRadius = std::max(8.0f, astragnaParamFloat(enemy, "guardianRadius", astragnaCoreRadius(enemy)));
-    EnemyImageDrawOptions imageOptions = enemyImageOptionsFor(enemy);
-    imageOptions.allowUpscale = true;
-    Vec2 baseDrawSize{};
-    bool drewCoreImage = false;
-    if (enemyImageDrawSize(renderer, enemy, imageOptions, baseDrawSize)) {
-        const float baseDiameter = std::max(1.0f, std::max(baseDrawSize.x, baseDrawSize.y));
-        imageOptions.scaleMultiplier *= std::max(0.05f, (coreRadius * 2.0f) / baseDiameter);
-        drewCoreImage = drawEnemyImage(renderer, enemy, enemy.position, enemy.behaviorTimer, imageOptions, nullptr);
-    }
+    const float starPulse = 1.0f + 0.035f * std::sin(enemy.behaviorTimer * 4.7f);
+    const unsigned char auraAlpha = downed ? 112 : 72;
+    renderer.fillSoftCircle(enemy.position, coreRadius * (0.62f + 0.05f * starPulse), {255, 198, 72, auraAlpha});
+
+    ImageDrawOptions options;
+    options.tint = {255, 255, 255, static_cast<unsigned char>(downed ? 255 : 238)};
+    const float starDiameter = coreRadius * (2.03f + 0.04f * starPulse);
+    const bool drewCoreImage = renderer.drawImage(
+        AstragnaGuardianStarImagePath,
+        enemy.position,
+        {starDiameter, starDiameter},
+        options,
+        TextureFilter::Linear);
 
     if (!drewCoreImage) {
-        const float starPulse = 1.0f + 0.04f * std::sin(enemy.behaviorTimer * 4.7f);
         const unsigned char starFillAlpha = downed ? 220 : 164;
         const unsigned char starRingAlpha = downed ? 190 : 108;
         renderer.fillCircle(enemy.position, coreRadius * starPulse, {255, 238, 152, starFillAlpha});
@@ -5949,12 +6392,21 @@ void drawAstragnaBoss(Renderer& renderer, const TileMap& map, const Enemy& enemy
             drawShellTile(corners, block, {118, 92, 148, 62});
             continue;
         }
-        const float hpRatio = block.maxHp > 0 ? clamp(static_cast<float>(block.hp) / static_cast<float>(block.maxHp), 0.0f, 1.0f) : 1.0f;
         const Color tileTint = downed
             ? Color{156, 220, 255, 222}
             : Color{188, 168, 222, 238};
         drawShellTile(corners, block, tileTint);
+    }
+
+    drawAstragnaWallOrnament(renderer, enemy, downed);
+
+    for (const AstragnaShellBlockRuntime& block : astragna.shellBlocks) {
+        if (!block.active || block.hp <= 0 || block.maxHp <= 0) {
+            continue;
+        }
+        const float hpRatio = block.maxHp > 0 ? clamp(static_cast<float>(block.hp) / static_cast<float>(block.maxHp), 0.0f, 1.0f) : 1.0f;
         if (hpRatio < 0.98f) {
+            const std::array<Vec2, 4> corners = astragnaShellBlockCorners(enemy, block);
             renderer.fillTriangleList(
                 corners.data(),
                 corners.size(),
@@ -5976,12 +6428,7 @@ void drawAstragnaBoss(Renderer& renderer, const TileMap& map, const Enemy& enemy
         }
         const Vec2 position = astragnaSealPartPosition(enemy, part);
         const float hpRatio = part.maxHp > 0 ? clamp(static_cast<float>(part.hp) / static_cast<float>(part.maxHp), 0.0f, 1.0f) : 1.0f;
-        renderer.drawLine(enemy.position, position, {126, 214, 255, 92});
-        renderer.fillCircle(position, part.radius, {108, 222, 255, 224});
-        renderer.drawCircle(position, part.radius + 3.0f, {234, 252, 255, 190});
-        if (hpRatio < 0.98f) {
-            renderer.drawCircle(position, part.radius * hpRatio, {255, 128, 166, 190});
-        }
+        drawAstragnaDrone(renderer, position, part.radius, hpRatio, enemy.behaviorTimer + part.localAngle, 0.92f);
     }
 
     for (const AstragnaSealEmitterRuntime& emitter : astragna.sealEmitters) {
@@ -8076,7 +8523,7 @@ bool EnemySystem::updateBossActionSequence(Enemy& enemy, Player& player, TileMap
         return false;
     }
     if (enemy.bossAction.pattern == JunkCrabPatternId) {
-        return updateJunkCrabBossActionSequence(enemy, player, map, projectiles, dt, events_, placementCatalog_);
+        return updateJunkCrabBossActionSequence(enemy, player, map, dt, events_, rng_, placementCatalog_);
     }
     if (enemy.bossAction.pattern == AstragnaPatternId) {
         return updateAstragnaBossActionSequence(enemy, player, map, projectiles, dt, events_);
@@ -9671,7 +10118,6 @@ void EnemySystem::update(
             !enemy.bossAction.hidden &&
             enemy.bossAction.phase != BossActionPhase::Submerge &&
             enemy.bossAction.phase != BossActionPhase::Stun &&
-            !isJunkCrabToppled(enemy) &&
             !isAstragnaBossAction(enemy);
         const Vec2 enemyHitboxOffset = enemyVisualOffset(enemy, placementCatalog_);
         const bool touchedPlayerBeforeResolve = contactEnabled &&
@@ -9814,10 +10260,16 @@ void EnemySystem::update(
                     item,
                     hitObject,
                     itemHitbox,
+                    player,
                     spellRing,
+                    objectCatalog,
+                    hitboxCatalog_,
+                    placementCatalog_,
                     events_,
                     impactSoundEvents_,
-                    placementCatalog_)) {
+                    rng_,
+                    discoveryEvents,
+                    encyclopedia)) {
                 item.recordEnemyHit(enemy.id, totalTime);
                 continue;
             }
@@ -9885,70 +10337,28 @@ void EnemySystem::update(
             const FlameBurstHitSpec flameBurstSpec = collectFlameBurstHitSpec(hitObject);
             const BounceGroundedHitSpec bounceGroundedSpec = collectBounceGroundedHitSpec(hitObject);
             const ShockWetHitSpec shockWetSpec = collectShockWetHitSpec(hitObject);
-            std::string_view contactDamageType = item.damageType;
-            if (item.magicAuraTimer > 0.0f && !item.magicAuraDamageType.empty()) {
-                contactDamageType = item.magicAuraDamageType;
-            }
-            const double ringOutputMultiplier = spellRing.ringOutputMultiplierForRing(item.ringIndex);
-            const int speedBonus = static_cast<int>(
-                item.damageMotionSpeed *
-                0.25f *
-                static_cast<float>(
-                    spellRing.speedDamageMultiplier() *
-                    spellRing.ringDamageSpeedMultiplierForRing(item.ringIndex)));
-            const int modifiedDamage = static_cast<int>(
-                player.status.applyModifiers(
-                    ModifierStat::Attack,
-                    static_cast<double>(item.damage) *
-                        damageTypeMultiplier(contactDamageType) *
-                        item.slashDamageMultiplier *
-                        spellRing.effectivePowerMultiplier()));
-            const int rawDamage = static_cast<int>(
-                std::ceil(static_cast<double>(modifiedDamage + speedBonus) * ringOutputMultiplier));
-            int adjustedDamage = rawDamage;
-            const CriticalDamageSpec criticalSpec = collectCriticalDamageSpec(item, hitObject, spellRing, objectCatalog);
-            bool criticalHit = false;
-            if (rawDamage > 0 && criticalRollSucceeds(criticalSpec.chancePercent, rng_)) {
-                criticalHit = true;
-                adjustedDamage = static_cast<int>(
-                    std::ceil(static_cast<double>(adjustedDamage) * criticalSpec.damageMultiplier));
-                recordCriticalEffectDiscoveries(discoveryEvents, encyclopedia, criticalSpec.sources, enemy.position);
-            }
-            const double sleepingBonusMultiplier = sleepingBonusDamageMultiplierFor(hitObject);
-            const bool sleepingBonusApplied = adjustedDamage > 0 &&
-                sleepingBonusMultiplier > 1.0 &&
-                enemy.status.hasState("status_sleep");
-            if (sleepingBonusApplied) {
-                adjustedDamage = static_cast<int>(
-                    std::ceil(static_cast<double>(adjustedDamage) * sleepingBonusMultiplier));
-            }
-            if (isPhysicalDamageType(contactDamageType) && hasBehavior(enemy, "physical_resist")) {
-                adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * enemy.physicalDamageMultiplier));
-            }
-            if (isPhysicalDamageType(contactDamageType) && hasBehavior(enemy, "magic_body")) {
-                adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * enemy.magicBodyPhysicalMultiplier));
-            } else if (contactDamageType == "magic" && hasBehavior(enemy, "magic_body")) {
-                adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * enemy.magicBodyMagicMultiplier));
-            }
-            const bool frontGuarded = hasBehavior(enemy, "front_guard") &&
-                enemy.frontGuardDamageMultiplier < 0.999f &&
-                frontGuardApplies(enemy, item.worldPosition, enemy.frontGuardArcDegrees);
-            if (frontGuarded) {
-                adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * enemy.frontGuardDamageMultiplier));
-            }
-            const BossDamageAdjustment bossDamage = adjustBossIncomingDamage(
+            const RingContactDamageResult damageResult = computeRingContactDamageAgainstEnemy(
                 enemy,
-                adjustedDamage,
                 item,
+                hitObject,
                 itemHitbox,
+                player,
+                spellRing,
+                objectCatalog,
                 hitboxCatalog_,
-                placementCatalog_);
-            adjustedDamage = bossDamage.damage;
-            const bool nonlethalHit = nonlethalHitApplies(hitObject);
-            int damageDealt = applyDefenseModifier(enemy.status, adjustedDamage);
-            if (nonlethalHit) {
-                damageDealt = clampNonlethalDamage(enemy, damageDealt);
-            }
+                placementCatalog_,
+                rng_,
+                discoveryEvents,
+                encyclopedia,
+                true);
+            const std::string_view contactDamageType = damageResult.damageType;
+            const bool frontGuarded = damageResult.frontGuarded;
+            const bool sleepingBonusApplied = damageResult.sleepingBonusApplied;
+            const bool nonlethalHit = damageResult.nonlethalHit;
+            const bool criticalHit = damageResult.criticalHit;
+            const std::string_view bossEffectId = damageResult.bossEffectId;
+            const bool weakPointHit = damageResult.weakPointHit;
+            const int damageDealt = damageResult.damageDealt;
             impactSoundEvents_.push_back(makeEnemyRingImpactSoundEvent(
                 item,
                 hitObject,
@@ -9958,11 +10368,6 @@ void EnemySystem::update(
                 static_cast<float>(std::max(0, damageDealt))));
             applyEnemyDamageTyped(enemy, damageDealt, contactDamageType);
             revealEnemyHpBar(enemy, damageDealt);
-            addJunkCrabToppleMeter(
-                enemy,
-                junkCrabToppleGainForRingHit(item, hitObject, contactDamageType, damageDealt),
-                events_,
-                placementCatalog_);
             if (damageDealt > 0) {
                 item.actionFlashTimer = SpellRingItemActionFlashSeconds;
             }
@@ -10082,8 +10487,8 @@ void EnemySystem::update(
             if (hitEffectId.empty()) {
                 hitEffectId = visualEffectIdFor(item.addedEffects);
             }
-            if (!bossDamage.effectId.empty()) {
-                hitEffectId = std::string(bossDamage.effectId);
+            if (!bossEffectId.empty()) {
+                hitEffectId = std::string(bossEffectId);
             }
             if (hitEffectId.empty() && !contactDamageType.empty() && contactDamageType != "none") {
                 hitEffectId = std::string(contactDamageType);
@@ -10143,7 +10548,7 @@ void EnemySystem::update(
             enemy.hitFlash = 0.12f;
             EnemyEvent attackHitEvent = makeEnemyEvent(EnemyEventType::AttackHit, enemy, hitEffectId, damageDealt, criticalHit);
             attackHitEvent.ringItemImpact = true;
-            attackHitEvent.weakPointHit = bossDamage.weakPointHit;
+            attackHitEvent.weakPointHit = weakPointHit;
             events_.push_back(std::move(attackHitEvent));
             if (enemy.hp <= 0) {
                 processEnemyDeath(enemy, item.worldPosition);
@@ -10460,11 +10865,6 @@ bool EnemySystem::hitByPlayerProjectile(
         applyEnemyDamageTyped(enemy, adjustedDamage, projectile.damageType);
         revealEnemyHpBar(enemy, adjustedDamage);
         enemy.hitFlash = 0.12f;
-        addJunkCrabToppleMeter(
-            enemy,
-            junkCrabToppleGainForProjectile(projectile, adjustedDamage),
-            events_,
-            placementCatalog_);
 
         if (!projectile.effects.empty()) {
             EffectContext context;

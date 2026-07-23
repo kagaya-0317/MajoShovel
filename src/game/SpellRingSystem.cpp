@@ -2587,6 +2587,7 @@ bool SpellRingSystem::addItemToRing(int ringIndex, SpellRingItem item, SpellRing
         .instanceId = item.instanceId,
     };
     ringItems.push_back(std::move(item));
+    recordItemAddedEvent(ringIndex);
     if (outResult != nullptr) {
         *outResult = result;
     }
@@ -2718,6 +2719,7 @@ bool SpellRingSystem::addObjectItemAtAngle(const ItemData& item, float localAngl
         .instanceId = ringItem.instanceId,
     };
     activeItems().push_back(std::move(ringItem));
+    recordItemAddedEvent(activeRingIndex_);
     if (outResult != nullptr) {
         *outResult = result;
     }
@@ -2754,6 +2756,7 @@ bool SpellRingSystem::addObjectItemAtAngle(
         .instanceId = ringItem.instanceId,
     };
     activeItems().push_back(std::move(ringItem));
+    recordItemAddedEvent(activeRingIndex_);
     if (outResult != nullptr) {
         *outResult = result;
     }
@@ -2812,6 +2815,13 @@ std::vector<RingItemBreakEvent> SpellRingSystem::consumeItemBreakEvents()
 {
     std::vector<RingItemBreakEvent> events = std::move(itemBreakEvents_);
     itemBreakEvents_.clear();
+    return events;
+}
+
+std::vector<RingItemAddedEvent> SpellRingSystem::consumeItemAddedEvents()
+{
+    std::vector<RingItemAddedEvent> events = std::move(itemAddedEvents_);
+    itemAddedEvents_.clear();
     return events;
 }
 
@@ -3465,6 +3475,19 @@ float SpellRingSystem::maxEquippedWeightForRing(int ringIndex) const
 float SpellRingSystem::overweightEquipLimitForRing(int ringIndex) const
 {
     return maxEquippedWeightForRing(ringIndex) * OverweightEquipLimitRatio;
+}
+
+void SpellRingSystem::recordItemAddedEvent(int ringIndex)
+{
+    constexpr float WeightComparisonEpsilon = 0.0001f;
+    const float totalWeight = totalEquippedWeightForRing(ringIndex);
+    const float weightLimit = maxEquippedWeightForRing(ringIndex);
+    itemAddedEvents_.push_back(RingItemAddedEvent{
+        .ringIndex = ringIndex,
+        .totalWeight = totalWeight,
+        .weightLimit = weightLimit,
+        .overweight = totalWeight > weightLimit + WeightComparisonEpsilon,
+    });
 }
 
 int SpellRingSystem::maxItemCount() const

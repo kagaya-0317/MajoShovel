@@ -460,6 +460,9 @@ std::string serializedDungeonEventParams(const Game::DungeonEventInstance& event
     if (!event.deliveredObjectId.empty()) {
         parts.push_back("delivered=" + event.deliveredObjectId);
     }
+    if (!event.resolvedRewardObjectId.empty()) {
+        parts.push_back("resolvedReward=" + event.resolvedRewardObjectId);
+    }
     parts.push_back("guideTarget=" + std::to_string(event.guideTargetWarpPointIndex));
     parts.push_back("guideRemaining=" + std::to_string(event.guideRemainingSeconds));
     if (!event.nestHoles.empty()) {
@@ -550,6 +553,8 @@ void applyDungeonEventParams(Game::DungeonEventInstance& event, std::string_view
             event.requestKey = std::string(value);
         } else if (key == "delivered") {
             event.deliveredObjectId = std::string(value);
+        } else if (key == "resolvedReward") {
+            event.resolvedRewardObjectId = std::string(value);
         } else if (key == "guideTarget") {
             try {
                 event.guideTargetWarpPointIndex = std::stoi(std::string(value));

@@ -4,4 +4,14 @@
 @once dungeon_discovery_seen_heavy_rock_witch
 
 @say player ルネ
-大きな岩……動くかな。
+お？
+
+@say witch 魔女
+た、助けて〜！
+岩が重くて動けない〜！
+
+@say player ルネ
+大変だ！急ごう！
+
+@say chicory チコリ
+ちこり！

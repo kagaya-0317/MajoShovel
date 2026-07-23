@@ -14,6 +14,7 @@
 #include <iomanip>
 #include <iterator>
 #include <limits>
+#include <span>
 #include <sstream>
 #include <unordered_set>
 #include <utility>
@@ -77,11 +78,15 @@ constexpr float EnemyHitboxMinRadius = 1.0f;
 constexpr float EnemyHitboxMaxRadius = 256.0f;
 constexpr float EnemyShadowOffsetStep = 1.0f;
 constexpr float EnemyShadowScaleStep = 0.05f;
-constexpr float EnemyShadowPreviewScale = 4.0f;
 constexpr float EnemyShadowPreviewDirectionSeconds = 0.5f;
 constexpr float EnemyPlacementOffsetStep = 1.0f;
 constexpr float EnemyPlacementRadiusStep = 1.0f;
-constexpr float EnemyPlacementPreviewScale = 4.0f;
+constexpr float EnemyEditorPreviewMaxScale = 4.0f;
+constexpr float EnemyEditorPreviewMinScale = 0.2f;
+constexpr float EnemyEditorPreviewPadding = 28.0f;
+constexpr float EnemyEditorShadowOffsetYRatio = 0.02f;
+constexpr float EnemyEditorShadowRadiusXRatio = 0.24f;
+constexpr float EnemyEditorShadowRadiusYRatio = 0.10f;
 constexpr int HitboxEditUndoLimit = 100;
 constexpr std::array<std::string_view, 4> EnemyEditorFallbackBossIds{{
     "stardust_mole",
@@ -2538,6 +2543,210 @@ Enemy makeEnemyHitboxPreviewEnemy(const EnemyDefinition& definition, const Runti
     return enemy;
 }
 
+struct EditorPreviewBounds {
+    bool valid = false;
+    Vec2 min{};
+    Vec2 max{};
+};
+
+void includeEditorPreviewPoint(EditorPreviewBounds& bounds, Vec2 point)
+{
+    if (!std::isfinite(point.x) || !std::isfinite(point.y)) {
+        return;
+    }
+    if (!bounds.valid) {
+        bounds.valid = true;
+        bounds.min = point;
+        bounds.max = point;
+        return;
+    }
+    bounds.min.x = std::min(bounds.min.x, point.x);
+    bounds.min.y = std::min(bounds.min.y, point.y);
+    bounds.max.x = std::max(bounds.max.x, point.x);
+    bounds.max.y = std::max(bounds.max.y, point.y);
+}
+
+void includeEditorPreviewCircle(EditorPreviewBounds& bounds, Vec2 center, float radius)
+{
+    if (!std::isfinite(radius) || radius < 0.0f) {
+        return;
+    }
+    includeEditorPreviewPoint(bounds, center - Vec2{radius, radius});
+    includeEditorPreviewPoint(bounds, center + Vec2{radius, radius});
+}
+
+void includeEditorPreviewBox(EditorPreviewBounds& bounds, Vec2 center, Vec2 size)
+{
+    if (!std::isfinite(size.x) || !std::isfinite(size.y) || size.x <= 0.0f || size.y <= 0.0f) {
+        return;
+    }
+    includeEditorPreviewPoint(bounds, center - size * 0.5f);
+    includeEditorPreviewPoint(bounds, center + size * 0.5f);
+}
+
+struct EditorPreviewTransform {
+    Vec2 screenOrigin{};
+    float scale = EnemyEditorPreviewMaxScale;
+
+    Vec2 worldToScreen(Vec2 world) const
+    {
+        return screenOrigin + world * scale;
+    }
+
+    Vec2 screenDeltaToWorld(Vec2 delta) const
+    {
+        return delta / std::max(EnemyEditorPreviewMinScale, scale);
+    }
+};
+
+EditorPreviewTransform makeEditorPreviewTransform(UiRect preview, const EditorPreviewBounds& bounds)
+{
+    EditorPreviewTransform transform;
+    transform.scale = EnemyEditorPreviewMaxScale;
+    if (bounds.valid) {
+        const Vec2 logicalHalfSize{
+            std::max(1.0f, std::max(std::abs(bounds.min.x), std::abs(bounds.max.x))),
+            std::max(1.0f, std::max(std::abs(bounds.min.y), std::abs(bounds.max.y))),
+        };
+        const Vec2 availableHalfSize{
+            std::max(1.0f, preview.size.x * 0.5f - EnemyEditorPreviewPadding),
+            std::max(1.0f, preview.size.y * 0.5f - EnemyEditorPreviewPadding),
+        };
+        transform.scale = std::min(
+            EnemyEditorPreviewMaxScale,
+            std::min(availableHalfSize.x / logicalHalfSize.x, availableHalfSize.y / logicalHalfSize.y));
+        transform.scale = clamp(transform.scale, EnemyEditorPreviewMinScale, EnemyEditorPreviewMaxScale);
+    }
+    transform.screenOrigin = preview.pos + preview.size * 0.5f;
+    return transform;
+}
+
+Vec2 enemyEditorVisualLogicalSizeFor(const EnemyDefinition& definition, const RuntimeBalance& balance)
+{
+    const float radius = enemyHitboxDefaultRadiusFor(definition, balance);
+    const float halfExtent = enemyHitboxDefinitionIsBoss(definition)
+        ? std::max(112.0f, radius * 2.0f)
+        : std::max(24.0f, radius * 2.0f);
+    return {halfExtent * 2.0f, halfExtent * 2.0f};
+}
+
+float enemyEditorVisualLogicalBaseSizeFor(const EnemyDefinition& definition, const RuntimeBalance& balance)
+{
+    const Vec2 size = enemyEditorVisualLogicalSizeFor(definition, balance);
+    return std::max(size.x, size.y);
+}
+
+HitCircle clampEnemyHitboxEditorCircle(HitCircle circle);
+
+void includeEditorPreviewCircles(EditorPreviewBounds& bounds, std::span<const HitCircle> circles, Vec2 baseOffset = {})
+{
+    for (const HitCircle& rawCircle : circles) {
+        const HitCircle circle = clampEnemyHitboxEditorCircle(rawCircle);
+        includeEditorPreviewCircle(bounds, baseOffset + circle.offset, circle.radius);
+    }
+}
+
+EditorPreviewTransform makeHitboxEditorPreviewTransform(
+    UiRect preview,
+    const RuntimeBalance& balance,
+    std::span<const HitCircle> circles,
+    const EnemyDefinition* enemy,
+    const ObjectDefinition* object,
+    bool player)
+{
+    EditorPreviewBounds bounds;
+    includeEditorPreviewCircles(bounds, circles);
+    if (enemy != nullptr) {
+        includeEditorPreviewBox(bounds, {}, enemyEditorVisualLogicalSizeFor(*enemy, balance));
+    } else if (object != nullptr) {
+        includeEditorPreviewBox(bounds, {}, {96.0f, 96.0f});
+    } else if (player) {
+        const float playerDrawSize = PlayerSpriteDrawSize * 1.35f / EnemyEditorPreviewMaxScale;
+        includeEditorPreviewBox(bounds, {}, {playerDrawSize, playerDrawSize});
+    }
+    includeEditorPreviewCircle(bounds, {}, 1.0f);
+    return makeEditorPreviewTransform(preview, bounds);
+}
+
+EditorPreviewTransform makeEnemyPlacementPreviewTransform(
+    UiRect preview,
+    const EnemyDefinition& definition,
+    const RuntimeBalance& balance,
+    Vec2 visualOffset,
+    float passageRadius,
+    std::span<const HitCircle> hitboxCircles)
+{
+    EditorPreviewBounds bounds;
+    includeEditorPreviewCircle(bounds, {}, std::max(1.0f, passageRadius));
+    includeEditorPreviewBox(bounds, visualOffset, enemyEditorVisualLogicalSizeFor(definition, balance));
+    includeEditorPreviewCircles(bounds, hitboxCircles, visualOffset);
+    includeEditorPreviewCircle(bounds, visualOffset, 1.0f);
+    return makeEditorPreviewTransform(preview, bounds);
+}
+
+void includeEditorPreviewShadow(
+    EditorPreviewBounds& bounds,
+    Vec2 anchor,
+    float visualBaseSize,
+    Vec2 shadowScale)
+{
+    if (!std::isfinite(visualBaseSize) || visualBaseSize <= 0.0f) {
+        return;
+    }
+    const Vec2 safeShadowScale{
+        std::max(0.01f, std::isfinite(shadowScale.x) ? shadowScale.x : 1.0f),
+        std::max(0.01f, std::isfinite(shadowScale.y) ? shadowScale.y : 1.0f),
+    };
+    const Vec2 shadowCenter = anchor + Vec2{0.0f, visualBaseSize * EnemyEditorShadowOffsetYRatio};
+    const Vec2 shadowSize{
+        visualBaseSize * EnemyEditorShadowRadiusXRatio * safeShadowScale.x * 2.0f,
+        visualBaseSize * EnemyEditorShadowRadiusYRatio * safeShadowScale.y * 2.0f,
+    };
+    includeEditorPreviewBox(bounds, shadowCenter, shadowSize);
+}
+
+EditorPreviewTransform makeEnemyShadowPreviewTransform(
+    UiRect preview,
+    const EnemyDefinition& definition,
+    const RuntimeBalance& balance,
+    EnemyShadowSpec spec)
+{
+    spec = sanitizeEnemyShadowSpec(spec);
+    EditorPreviewBounds bounds;
+    const Vec2 visualSize = enemyEditorVisualLogicalSizeFor(definition, balance);
+    includeEditorPreviewBox(bounds, {}, visualSize);
+    includeEditorPreviewShadow(
+        bounds,
+        spec.offset,
+        std::max(visualSize.x, visualSize.y),
+        spec.scale);
+    includeEditorPreviewCircle(bounds, {}, 1.0f);
+    return makeEditorPreviewTransform(preview, bounds);
+}
+
+bool enemyEditorShadowContainsPoint(
+    Vec2 point,
+    Vec2 screenAnchor,
+    float logicalBaseSize,
+    Vec2 shadowScale,
+    float previewScale)
+{
+    if (!std::isfinite(logicalBaseSize) || logicalBaseSize <= 0.0f || !std::isfinite(previewScale) || previewScale <= 0.0f) {
+        return false;
+    }
+    const EnemyShadowSpec spec = sanitizeEnemyShadowSpec({.offset = {}, .scale = shadowScale});
+    const Vec2 center = screenAnchor + Vec2{0.0f, logicalBaseSize * EnemyEditorShadowOffsetYRatio * previewScale};
+    const Vec2 radius{
+        std::max(18.0f, logicalBaseSize * EnemyEditorShadowRadiusXRatio * spec.scale.x * previewScale + 10.0f),
+        std::max(18.0f, logicalBaseSize * EnemyEditorShadowRadiusYRatio * spec.scale.y * previewScale + 10.0f),
+    };
+    const Vec2 delta = point - center;
+    const float normalized =
+        (delta.x * delta.x) / (radius.x * radius.x) +
+        (delta.y * delta.y) / (radius.y * radius.y);
+    return normalized <= 1.0f;
+}
+
 HitboxProfile fallbackHitboxProfileFor(const EnemyDefinition& definition, const RuntimeBalance& balance)
 {
     return singleCircleHitbox(std::max(EnemyHitboxMinRadius, enemyHitboxDefaultRadiusFor(definition, balance)));
@@ -2554,8 +2763,8 @@ HitboxProfile fallbackBossWeakPointProfileFor(
         circle.offset = hitboxDirectionVector(direction) * (-radius * 0.52f);
         circle.radius = std::max(7.0f, radius * 0.42f);
     } else if (definition.id == "junk_crab") {
-        circle.offset = {};
-        circle.radius = std::max(10.0f, radius * 0.64f);
+        circle.offset = hitboxDirectionVector(direction) * (radius * 0.72f);
+        circle.radius = std::max(10.0f, radius * 0.46f);
     } else {
         circle.offset = {};
         circle.radius = std::max(10.0f, radius * 0.50f);
@@ -5321,17 +5530,31 @@ void Game::updateEnemyHitboxEditScreen(const Input& input, UiContext& ui)
         : (hitboxEditTab_ == HitboxEditTab::Objects
             ? selectedObjectDefinition() != nullptr
             : selectedEnemyDefinition() != nullptr);
-    const float previewScale = 4.0f;
-    const Vec2 previewCenter = layout.preview.pos + layout.preview.size * 0.5f;
     std::vector<HitCircle> circles = selectedSubjectCircles();
+    const EnemyDefinition* previewEnemyDefinition = hitboxEditTab_ == HitboxEditTab::Enemies
+        ? selectedEnemyDefinition()
+        : nullptr;
+    const ObjectDefinition* previewObjectDefinition = hitboxEditTab_ == HitboxEditTab::Objects
+        ? selectedObjectDefinition()
+        : nullptr;
+    const bool previewPlayer = hitboxEditTab_ == HitboxEditTab::Player && hasSubject;
+    const EditorPreviewTransform previewTransform = hasSubject
+        ? makeHitboxEditorPreviewTransform(
+            layout.preview,
+            balance_,
+            circles,
+            previewEnemyDefinition,
+            previewObjectDefinition,
+            previewPlayer)
+        : makeEditorPreviewTransform(layout.preview, {});
 
     const auto circleAtMouse = [&]() {
         int best = -1;
         float bestDistanceSq = std::numeric_limits<float>::max();
         for (int i = static_cast<int>(circles.size()) - 1; i >= 0; --i) {
             const HitCircle circle = clampEnemyHitboxEditorCircle(circles[static_cast<std::size_t>(i)]);
-            const Vec2 center = previewCenter + circle.offset * previewScale;
-            const float radius = circle.radius * previewScale;
+            const Vec2 center = previewTransform.worldToScreen(circle.offset);
+            const float radius = circle.radius * previewTransform.scale;
             const float distanceSq = distanceSquared(ui.mouse(), center);
             const float pickRadius = radius + 8.0f;
             if (distanceSq <= pickRadius * pickRadius && distanceSq < bestDistanceSq) {
@@ -5354,7 +5577,7 @@ void Game::updateEnemyHitboxEditScreen(const Input& input, UiContext& ui)
         }
     }
     if (enemyHitboxDraggingCircle_ && input.mouseLeftHeld()) {
-        const Vec2 dragOffset = (ui.mouse() - enemyHitboxDragStartMouse_) / previewScale;
+        const Vec2 dragOffset = previewTransform.screenDeltaToWorld(ui.mouse() - enemyHitboxDragStartMouse_);
         if (lengthSquared(dragOffset) > 0.000001f) {
             if (!enemyHitboxDragUndoSnapshotPushed_) {
                 pushHitboxEditUndoSnapshot();
@@ -5535,63 +5758,28 @@ void Game::renderEnemyHitboxEditScreen(Renderer& renderer, double totalSeconds) 
             : (editingObjects ? "アイテムが選択されていません" : "敵が選択されていません");
         renderer.drawText(layout.preview.pos + Vec2{18.0f, 18.0f}, emptyText, {198, 206, 222, 255}, 2);
     } else {
-        const Vec2 previewCenter = layout.preview.pos + layout.preview.size * 0.5f;
         std::vector<HitCircle> circles;
         bool customized = false;
         std::string profileStatus = "fallback";
         std::string title;
         std::string id;
+        bool previewIsWeakPoint = false;
         if (editingPlayer) {
-            const float playerDrawSize = PlayerSpriteDrawSize * 1.35f;
-            const Vec2 playerFootAnchor = previewCenter + Vec2{0.0f, playerDrawSize * (PlayerSpriteAnchorY - 0.5f)};
-            if (renderer.hasPlayerSheet()) {
-                renderer.drawPlayerSprite(
-                    playerSpriteFrameIndex(static_cast<float>(totalSeconds), true),
-                    playerFootAnchor,
-                    playerDrawSize,
-                    false,
-                    {255, 255, 255, 255},
-                    {PlayerSpriteAnchorX, PlayerSpriteAnchorY},
-                    false,
-                    artworkImageDrawOptions());
-            } else {
-                renderer.fillCircle(previewCenter, balance_.playerRadius * 4.0f, {118, 72, 168, 255});
-                renderer.drawLine(previewCenter, previewCenter + Vec2{22.0f, 0.0f}, {235, 210, 255, 255});
-            }
             circles = playerHitboxEditCirclesFor(hitboxes_, balance_);
             customized = playerHitboxHasProfile(hitboxes_);
             profileStatus = customized ? "custom" : "fallback";
             title = "Player";
             id = "player";
         } else if (object != nullptr) {
-            ObjectImageDrawOptions imageOptions;
-            imageOptions.allowUpscale = true;
-            imageOptions.scaleMultiplier = 4.0f;
-            imageOptions.selectedOutlineEnabled = true;
-            imageOptions.selectedOutlineColor = {255, 255, 255, 70};
-            imageOptions.selectedOutlinePx = 2;
-            if (!drawItemImage(renderer, *object, previewCenter, {96.0f, 96.0f}, imageOptions)) {
-                renderer.fillCircle(previewCenter, objectHitboxDefaultRadiusFor(*object) * 4.0f, {92, 102, 120, 255});
-            }
             circles = objectHitboxEditCirclesFor(hitboxes_, *object);
             customized = hitboxes_.objects.find(object->id) != hitboxes_.objects.end();
             profileStatus = customized ? "custom" : "fallback";
             title = objectImageScaleDisplayName(*object);
             id = object->id;
         } else {
-            const Enemy previewEnemy = makeEnemyHitboxPreviewEnemy(*definition, balance_);
             const bool weakPointEditable = enemyHitboxDefinitionIsBoss(*definition);
             const bool editingWeakPoint = enemyHitboxEditingWeakPoint_ && weakPointEditable;
-            EnemyImageDrawOptions imageOptions;
-            imageOptions.allowUpscale = true;
-            imageOptions.scaleMultiplier = 4.0f;
-            imageOptions.directionOverrideEnabled = true;
-            imageOptions.directionOverride = hitboxDirectionVector(enemyHitboxDirection_);
-            Vec2 imageSize{};
-            const bool drewImage = drawEnemyImage(renderer, previewEnemy, previewCenter, static_cast<float>(totalSeconds), imageOptions, &imageSize);
-            if (!drewImage) {
-                renderer.fillCircle(previewCenter, enemyHitboxDefaultRadiusFor(*definition, balance_) * 4.0f, {92, 102, 120, 255});
-            }
+            previewIsWeakPoint = editingWeakPoint;
             circles = editingWeakPoint
                 ? bossWeakPointEditCirclesFor(hitboxes_, *definition, balance_, enemyHitboxDirection_)
                 : enemyHitboxEditCirclesFor(hitboxes_, *definition, balance_, enemyHitboxDirection_);
@@ -5610,17 +5798,74 @@ void Game::renderEnemyHitboxEditScreen(Renderer& renderer, double totalSeconds) 
             title = enemyHitboxDisplayName(*definition);
             id = definition->id;
         }
-        renderer.drawLine({layout.preview.pos.x, previewCenter.y}, {layout.preview.pos.x + layout.preview.size.x, previewCenter.y}, {255, 255, 255, 26});
-        renderer.drawLine({previewCenter.x, layout.preview.pos.y}, {previewCenter.x, layout.preview.pos.y + layout.preview.size.y}, {255, 255, 255, 26});
+
+        const EditorPreviewTransform previewTransform = makeHitboxEditorPreviewTransform(
+            layout.preview,
+            balance_,
+            circles,
+            definition,
+            object,
+            editingPlayer);
+        const Vec2 previewOrigin = previewTransform.worldToScreen({});
+
+        renderer.pushClipRect(layout.preview.pos, layout.preview.size);
+        renderer.drawLine(
+            {layout.preview.pos.x, previewOrigin.y},
+            {layout.preview.pos.x + layout.preview.size.x, previewOrigin.y},
+            {255, 255, 255, 26});
+        renderer.drawLine(
+            {previewOrigin.x, layout.preview.pos.y},
+            {previewOrigin.x, layout.preview.pos.y + layout.preview.size.y},
+            {255, 255, 255, 26});
+
+        if (editingPlayer) {
+            const float playerDrawSize = PlayerSpriteDrawSize * 1.35f * (previewTransform.scale / EnemyEditorPreviewMaxScale);
+            const Vec2 playerFootAnchor = previewOrigin + Vec2{0.0f, playerDrawSize * (PlayerSpriteAnchorY - 0.5f)};
+            if (renderer.hasPlayerSheet()) {
+                renderer.drawPlayerSprite(
+                    playerSpriteFrameIndex(static_cast<float>(totalSeconds), true),
+                    playerFootAnchor,
+                    playerDrawSize,
+                    false,
+                    {255, 255, 255, 255},
+                    {PlayerSpriteAnchorX, PlayerSpriteAnchorY},
+                    false,
+                    artworkImageDrawOptions());
+            } else {
+                renderer.fillCircle(previewOrigin, balance_.playerRadius * previewTransform.scale, {118, 72, 168, 255});
+                renderer.drawLine(previewOrigin, previewOrigin + Vec2{22.0f, 0.0f}, {235, 210, 255, 255});
+            }
+        } else if (object != nullptr) {
+            ObjectImageDrawOptions imageOptions;
+            imageOptions.allowUpscale = true;
+            imageOptions.scaleMultiplier = previewTransform.scale;
+            imageOptions.selectedOutlineEnabled = true;
+            imageOptions.selectedOutlineColor = {255, 255, 255, 70};
+            imageOptions.selectedOutlinePx = 2;
+            if (!drawItemImage(renderer, *object, previewOrigin, {96.0f, 96.0f}, imageOptions)) {
+                renderer.fillCircle(previewOrigin, objectHitboxDefaultRadiusFor(*object) * previewTransform.scale, {92, 102, 120, 255});
+            }
+        } else {
+            Enemy previewEnemy = makeEnemyHitboxPreviewEnemy(*definition, balance_);
+            previewEnemy.facingAngle = std::atan2(hitboxDirectionVector(enemyHitboxDirection_).y, hitboxDirectionVector(enemyHitboxDirection_).x);
+            EnemyImageDrawOptions imageOptions;
+            imageOptions.allowUpscale = true;
+            imageOptions.scaleMultiplier = previewTransform.scale;
+            imageOptions.directionOverrideEnabled = true;
+            imageOptions.directionOverride = hitboxDirectionVector(enemyHitboxDirection_);
+            Vec2 imageSize{};
+            const bool drewImage = drawEnemyImage(renderer, previewEnemy, previewOrigin, static_cast<float>(totalSeconds), imageOptions, &imageSize);
+            if (!drewImage) {
+                renderer.fillCircle(previewOrigin, enemyHitboxDefaultRadiusFor(*definition, balance_) * previewTransform.scale, {92, 102, 120, 255});
+            }
+        }
 
         for (int i = 0; i < static_cast<int>(circles.size()); ++i) {
             const HitCircle circle = clampEnemyHitboxEditorCircle(circles[static_cast<std::size_t>(i)]);
             const bool selected = i == enemyHitboxSelectedCircleIndex_;
-            const Vec2 center = previewCenter + circle.offset * 4.0f;
-            const float radius = circle.radius * 4.0f;
-            const bool weakPointCircle = definition != nullptr &&
-                enemyHitboxEditingWeakPoint_ &&
-                enemyHitboxDefinitionIsBoss(*definition);
+            const Vec2 center = previewTransform.worldToScreen(circle.offset);
+            const float radius = circle.radius * previewTransform.scale;
+            const bool weakPointCircle = definition != nullptr && previewIsWeakPoint;
             const Color fill = weakPointCircle
                 ? (selected ? Color{255, 214, 88, 72} : Color{255, 128, 96, 48})
                 : (selected ? Color{255, 214, 88, 54} : Color{92, 196, 255, 42});
@@ -5634,6 +5879,7 @@ void Game::renderEnemyHitboxEditScreen(Renderer& renderer, double totalSeconds) 
             renderer.drawCircle(center, radius, outline);
             renderer.fillCircle(center, 3.5f, dot);
         }
+        renderer.popClipRect();
 
         const std::string fittedTitle = fittedSingleLineText(renderer, title, layout.detail.size.x - 18.0f, 2);
         renderer.drawText(layout.detail.pos + Vec2{10.0f, 10.0f}, fittedTitle, {232, 236, 245, 255}, 2);
@@ -6168,11 +6414,22 @@ void Game::updateEnemyPlacementEditScreen(const Input& input, UiContext& ui)
         enemyPlacementScrollOffset_ = clamp(enemyPlacementScrollOffset_ + static_cast<float>(wheel) * 38.0f, 0.0f, maxScroll);
     }
 
-    const Vec2 previewCenter = layout.preview.pos + layout.preview.size * 0.5f;
     const Vec2 currentOffset = definition != nullptr
         ? resolvedEnemyVisualOffset(&enemyPlacements_, definition->id, enemyPlacementDirection_)
         : Vec2{};
-    const Vec2 visualCenter = previewCenter + currentOffset * EnemyPlacementPreviewScale;
+    const std::vector<HitCircle> placementCircles = definition != nullptr
+        ? enemyHitboxEditCirclesFor(hitboxes_, *definition, balance_, enemyPlacementDirection_)
+        : std::vector<HitCircle>{};
+    const EditorPreviewTransform previewTransform = definition != nullptr
+        ? makeEnemyPlacementPreviewTransform(
+            layout.preview,
+            *definition,
+            balance_,
+            currentOffset,
+            currentRadius,
+            placementCircles)
+        : makeEditorPreviewTransform(layout.preview, {});
+    const Vec2 visualCenter = previewTransform.worldToScreen(currentOffset);
     constexpr float PickRadius = 58.0f;
     if (input.mouseLeftPressed() && !ui.pointerConsumed() && layout.preview.contains(ui.mouse()) && hasSubject) {
         if (distanceSquared(ui.mouse(), visualCenter) <= PickRadius * PickRadius) {
@@ -6184,7 +6441,7 @@ void Game::updateEnemyPlacementEditScreen(const Input& input, UiContext& ui)
         }
     }
     if (enemyPlacementDragging_ && input.mouseLeftHeld()) {
-        const Vec2 dragOffset = (ui.mouse() - enemyPlacementDragStartMouse_) / EnemyPlacementPreviewScale;
+        const Vec2 dragOffset = previewTransform.screenDeltaToWorld(ui.mouse() - enemyPlacementDragStartMouse_);
         if (lengthSquared(dragOffset) > 0.000001f) {
             if (!enemyPlacementDragUndoSnapshotPushed_) {
                 pushEnemyPlacementEditUndoSnapshot();
@@ -6286,40 +6543,55 @@ void Game::renderEnemyPlacementEditScreen(Renderer& renderer, double totalSecond
     if (definition == nullptr) {
         renderer.drawText(layout.preview.pos + Vec2{18.0f, 18.0f}, "敵が選択されていません", {198, 206, 222, 255}, 2);
     } else {
-        const Vec2 previewCenter = layout.preview.pos + layout.preview.size * 0.5f;
         const float fallbackRadius = enemyHitboxDefaultRadiusFor(*definition, balance_);
         const float passageRadius = enemyPlacementPassageRadiusFor(&enemyPlacements_, definition->id).value_or(fallbackRadius);
         const Vec2 offset = resolvedEnemyVisualOffset(&enemyPlacements_, definition->id, enemyPlacementDirection_);
-        const Vec2 visualCenter = previewCenter + offset * EnemyPlacementPreviewScale;
+        const std::vector<HitCircle> circles = enemyHitboxEditCirclesFor(hitboxes_, *definition, balance_, enemyPlacementDirection_);
+        const EditorPreviewTransform previewTransform = makeEnemyPlacementPreviewTransform(
+            layout.preview,
+            *definition,
+            balance_,
+            offset,
+            passageRadius,
+            circles);
+        const Vec2 originScreen = previewTransform.worldToScreen({});
+        const Vec2 visualCenter = previewTransform.worldToScreen(offset);
         Enemy previewEnemy = makeEnemyHitboxPreviewEnemy(*definition, balance_);
         previewEnemy.facingAngle = std::atan2(hitboxDirectionVector(enemyPlacementDirection_).y, hitboxDirectionVector(enemyPlacementDirection_).x);
 
-        renderer.drawLine({layout.preview.pos.x, previewCenter.y}, {layout.preview.pos.x + layout.preview.size.x, previewCenter.y}, {255, 255, 255, 24});
-        renderer.drawLine({previewCenter.x, layout.preview.pos.y}, {previewCenter.x, layout.preview.pos.y + layout.preview.size.y}, {255, 255, 255, 24});
+        renderer.pushClipRect(layout.preview.pos, layout.preview.size);
+        renderer.drawLine(
+            {layout.preview.pos.x, originScreen.y},
+            {layout.preview.pos.x + layout.preview.size.x, originScreen.y},
+            {255, 255, 255, 24});
+        renderer.drawLine(
+            {originScreen.x, layout.preview.pos.y},
+            {originScreen.x, layout.preview.pos.y + layout.preview.size.y},
+            {255, 255, 255, 24});
 
         EnemyImageDrawOptions imageOptions;
         imageOptions.allowUpscale = true;
-        imageOptions.scaleMultiplier = EnemyPlacementPreviewScale;
+        imageOptions.scaleMultiplier = previewTransform.scale;
         imageOptions.directionOverrideEnabled = true;
         imageOptions.directionOverride = hitboxDirectionVector(enemyPlacementDirection_);
         Vec2 imageSize{};
         if (!drawEnemyImage(renderer, previewEnemy, visualCenter, static_cast<float>(totalSeconds), imageOptions, &imageSize)) {
-            renderer.fillCircle(visualCenter, fallbackRadius * EnemyPlacementPreviewScale, {92, 102, 120, 255});
+            renderer.fillCircle(visualCenter, fallbackRadius * previewTransform.scale, {92, 102, 120, 255});
         }
 
-        const std::vector<HitCircle> circles = enemyHitboxEditCirclesFor(hitboxes_, *definition, balance_, enemyPlacementDirection_);
         for (const HitCircle& rawCircle : circles) {
             const HitCircle circle = clampEnemyHitboxEditorCircle(rawCircle);
-            const Vec2 center = visualCenter + circle.offset * EnemyPlacementPreviewScale;
-            const float radius = circle.radius * EnemyPlacementPreviewScale;
+            const Vec2 center = previewTransform.worldToScreen(offset + circle.offset);
+            const float radius = circle.radius * previewTransform.scale;
             renderer.fillCircle(center, radius, {92, 196, 255, 34});
             renderer.drawCircle(center, radius, {92, 196, 255, 196});
         }
-        renderer.drawLine(previewCenter, visualCenter, {255, 228, 138, 190});
-        renderer.fillCircle(previewCenter, passageRadius * EnemyPlacementPreviewScale, {88, 220, 138, 26});
-        renderer.drawCircle(previewCenter, passageRadius * EnemyPlacementPreviewScale, {116, 244, 166, 240});
-        renderer.fillCircle(previewCenter, 5.0f, {132, 255, 186, 255});
-        renderer.drawCircle(previewCenter, 8.0f, {16, 34, 24, 210});
+        renderer.drawLine(originScreen, visualCenter, {255, 228, 138, 190});
+        renderer.fillCircle(originScreen, passageRadius * previewTransform.scale, {88, 220, 138, 26});
+        renderer.drawCircle(originScreen, passageRadius * previewTransform.scale, {116, 244, 166, 240});
+        renderer.fillCircle(originScreen, 5.0f, {132, 255, 186, 255});
+        renderer.drawCircle(originScreen, 8.0f, {16, 34, 24, 210});
+        renderer.popClipRect();
 
         const bool customRadius = enemyPlacementHasPassageRadius(enemyPlacements_, definition->id);
         const bool customOffset = enemyPlacementHasVisualOffset(enemyPlacements_, definition->id, enemyPlacementDirection_);
@@ -6763,12 +7035,19 @@ void Game::updateEnemyShadowEditScreen(const Input& input, UiContext& ui)
         enemyShadowScrollOffset_ = clamp(enemyShadowScrollOffset_ + static_cast<float>(wheel) * 38.0f, 0.0f, maxScroll);
     }
 
-    const Vec2 previewCenter = layout.preview.pos + layout.preview.size * 0.5f;
+    const EnemyDefinition* definition = selectedEnemyShadowDefinitionForEdit();
     const EnemyShadowSpec currentSpec = selectedEnemyShadowSpecForEdit();
-    const Vec2 shadowCenter = previewCenter + currentSpec.offset * EnemyShadowPreviewScale;
-    const float pickRadius = 42.0f;
+    const EditorPreviewTransform previewTransform = definition != nullptr
+        ? makeEnemyShadowPreviewTransform(layout.preview, *definition, balance_, currentSpec)
+        : makeEditorPreviewTransform(layout.preview, {});
+    const Vec2 shadowAnchor = previewTransform.worldToScreen(currentSpec.offset);
     if (input.mouseLeftPressed() && !ui.pointerConsumed() && layout.preview.contains(ui.mouse()) && hasSubject) {
-        if (distanceSquared(ui.mouse(), shadowCenter) <= pickRadius * pickRadius) {
+        if (enemyEditorShadowContainsPoint(
+                ui.mouse(),
+                shadowAnchor,
+                enemyEditorVisualLogicalBaseSizeFor(*definition, balance_),
+                currentSpec.scale,
+                previewTransform.scale)) {
             enemyShadowDragging_ = true;
             enemyShadowDragUndoSnapshotPushed_ = false;
             enemyShadowDragStartMouse_ = ui.mouse();
@@ -6777,7 +7056,7 @@ void Game::updateEnemyShadowEditScreen(const Input& input, UiContext& ui)
         }
     }
     if (enemyShadowDragging_ && input.mouseLeftHeld()) {
-        const Vec2 dragOffset = (ui.mouse() - enemyShadowDragStartMouse_) / EnemyShadowPreviewScale;
+        const Vec2 dragOffset = previewTransform.screenDeltaToWorld(ui.mouse() - enemyShadowDragStartMouse_);
         if (lengthSquared(dragOffset) > 0.000001f) {
             if (!enemyShadowDragUndoSnapshotPushed_) {
                 pushEnemyShadowEditUndoSnapshot();
@@ -6879,29 +7158,42 @@ void Game::renderEnemyShadowEditScreen(Renderer& renderer, double totalSeconds) 
     if (definition == nullptr) {
         renderer.drawText(layout.preview.pos + Vec2{18.0f, 18.0f}, "敵が選択されていません", {198, 206, 222, 255}, 2);
     } else {
-        const Vec2 previewCenter = layout.preview.pos + layout.preview.size * 0.5f;
         Enemy previewEnemy = makeEnemyHitboxPreviewEnemy(*definition, balance_);
         previewEnemy.facingAngle = enemyShadowPreviewFacingAngle(totalSeconds);
         const EnemyShadowSpec spec = selectedEnemyShadowSpecForEdit();
+        const EditorPreviewTransform previewTransform = makeEnemyShadowPreviewTransform(
+            layout.preview,
+            *definition,
+            balance_,
+            spec);
+        const Vec2 previewOrigin = previewTransform.worldToScreen({});
         EnemyImageDrawOptions imageOptions;
         imageOptions.allowUpscale = true;
-        imageOptions.scaleMultiplier = EnemyShadowPreviewScale;
+        imageOptions.scaleMultiplier = previewTransform.scale;
         Vec2 imageSize{};
         const bool sizeResolved = enemyImageDrawSize(renderer, previewEnemy, imageOptions, imageSize);
         if (!sizeResolved) {
             const float fallbackRadius = enemyHitboxDefaultRadiusFor(*definition, balance_);
-            imageSize = {fallbackRadius * 2.0f * EnemyShadowPreviewScale, fallbackRadius * 2.0f * EnemyShadowPreviewScale};
+            imageSize = {fallbackRadius * 2.0f * previewTransform.scale, fallbackRadius * 2.0f * previewTransform.scale};
         }
         const float baseSize = std::max(1.0f, std::max(imageSize.x, imageSize.y));
-        const Vec2 shadowAnchor = previewCenter + spec.offset * EnemyShadowPreviewScale;
+        const Vec2 shadowAnchor = previewTransform.worldToScreen(spec.offset);
+        renderer.pushClipRect(layout.preview.pos, layout.preview.size);
         renderer.drawActorShadow(shadowAnchor, baseSize, spec.scale, {0, 0, 0, 100});
-        renderer.drawCircle(shadowAnchor + Vec2{0.0f, baseSize * 0.02f}, 5.0f, {255, 228, 138, 255});
-        if (!drawEnemyImage(renderer, previewEnemy, previewCenter, static_cast<float>(totalSeconds), imageOptions, &imageSize)) {
+        renderer.drawCircle(shadowAnchor + Vec2{0.0f, baseSize * EnemyEditorShadowOffsetYRatio}, 5.0f, {255, 228, 138, 255});
+        if (!drawEnemyImage(renderer, previewEnemy, previewOrigin, static_cast<float>(totalSeconds), imageOptions, &imageSize)) {
             const float fallbackRadius = enemyHitboxDefaultRadiusFor(*definition, balance_);
-            renderer.fillCircle(previewCenter, fallbackRadius * EnemyShadowPreviewScale, {92, 102, 120, 255});
+            renderer.fillCircle(previewOrigin, fallbackRadius * previewTransform.scale, {92, 102, 120, 255});
         }
-        renderer.drawLine({layout.preview.pos.x, previewCenter.y}, {layout.preview.pos.x + layout.preview.size.x, previewCenter.y}, {255, 255, 255, 26});
-        renderer.drawLine({previewCenter.x, layout.preview.pos.y}, {previewCenter.x, layout.preview.pos.y + layout.preview.size.y}, {255, 255, 255, 26});
+        renderer.drawLine(
+            {layout.preview.pos.x, previewOrigin.y},
+            {layout.preview.pos.x + layout.preview.size.x, previewOrigin.y},
+            {255, 255, 255, 26});
+        renderer.drawLine(
+            {previewOrigin.x, layout.preview.pos.y},
+            {previewOrigin.x, layout.preview.pos.y + layout.preview.size.y},
+            {255, 255, 255, 26});
+        renderer.popClipRect();
 
         const bool customized = enemyShadows_.enemies.find(definition->id) != enemyShadows_.enemies.end();
         renderer.drawText(layout.detail.pos + Vec2{10.0f, 10.0f}, fittedSingleLineText(renderer, enemyHitboxDisplayName(*definition), layout.detail.size.x - 18.0f, 2), {232, 236, 245, 255}, 2);

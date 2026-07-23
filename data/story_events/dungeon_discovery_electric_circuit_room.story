@@ -4,4 +4,14 @@
 @once dungeon_discovery_seen_electric_circuit_room
 
 @say player ルネ
-ぴりっとした音がする。
+おや？
+
+@say player ルネ
+なんだろう、この部屋…？
+
+@say chicory チコリ
+ちかちか
+
+@say player ルネ
+ビリビリ…電気？
+電気がなにかこの岩と関係あるのかな

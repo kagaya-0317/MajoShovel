@@ -20,8 +20,6 @@
 namespace majo {
 
 namespace {
-constexpr int InventoryColumns = 8;
-constexpr int InventoryRows = 3;
 constexpr int ShortcutHudColumns = 8;
 constexpr float PanelX = 790.0f;
 constexpr float PanelY = 70.0f;
@@ -47,28 +45,11 @@ constexpr float ShortcutHudSelectedPatchWDesign = 116.0f;
 constexpr float ShortcutHudSelectedPatchHDesign = 126.0f;
 constexpr float ShortcutHudSelectedNameGap = 6.0f;
 constexpr float ShortcutHudSelectedNameDownShift = 18.0f;
-constexpr float ScreenX = 44.0f;
-constexpr float ScreenY = 58.0f;
-constexpr float ScreenW = 1192.0f;
-constexpr float ScreenH = 610.0f;
-constexpr float LogicalScreenW = 1280.0f;
-constexpr float LogicalScreenH = 720.0f;
-constexpr float ScreenGridY = ScreenY + 84.0f;
-constexpr float ScreenSlotW = 88.0f;
-constexpr float ScreenSlotH = 76.0f;
-constexpr float ScreenSlotGap = 8.0f;
-constexpr float InventoryObjectImageMaxSize = 48.0f;
 constexpr float SlotDragStartDistanceSq = 36.0f;
 constexpr float GrabbedSlotContentAlpha = 0.42f;
 constexpr float GrabbedFloatingIconLift = 38.0f;
 constexpr float GrabbedFloatingIconBobAmplitude = 4.0f;
 constexpr float GrabbedFloatingIconBobSpeed = 5.4f;
-constexpr float DetailX = ScreenX + 820.0f;
-constexpr float DetailY = ScreenY + 50.0f;
-constexpr float DetailW = 330.0f;
-constexpr float DetailH = 520.0f;
-constexpr float ScreenGridW = static_cast<float>(InventoryColumns) * ScreenSlotW + static_cast<float>(InventoryColumns - 1) * ScreenSlotGap;
-constexpr float ScreenGridX = ScreenX + (DetailX - ScreenX - ScreenGridW) * 0.5f;
 constexpr std::array<Vec2, ShortcutHudColumns> ShortcutHudSlotCenters{{
     {160.0f / ShortcutHudFrameDesignW, 74.0f / ShortcutHudFrameDesignH},
     {278.0f / ShortcutHudFrameDesignW, 74.0f / ShortcutHudFrameDesignH},
@@ -106,12 +87,12 @@ UiRect closeButtonRect()
 
 UiRect inventoryScreenRect()
 {
-    return {{ScreenX, ScreenY}, {ScreenW, ScreenH}};
+    return standardInventoryUiScreenLayout().window;
 }
 
 UiRect inventoryModalBackdropRect()
 {
-    return {{0.0f, 0.0f}, {LogicalScreenW, LogicalScreenH}};
+    return standardInventoryUiScreenLayout().backdrop;
 }
 
 int clampedUnlockedRingCount(int unlockedRingCount)
@@ -136,12 +117,7 @@ UiRect inventoryDiscardConfirmRect()
 
 UiRect inventorySlotRect(int index)
 {
-    const int row = index / InventoryColumns;
-    const int column = index % InventoryColumns;
-    return {{
-        ScreenGridX + static_cast<float>(column) * (ScreenSlotW + ScreenSlotGap),
-        ScreenGridY + static_cast<float>(row) * (ScreenSlotH + ScreenSlotGap)
-    }, {ScreenSlotW, ScreenSlotH}};
+    return inventoryUiScreenSlotRect(standardInventoryUiScreenLayout(), index);
 }
 
 UiRect makeShortcutHudPanelRect(int screenWidth, int screenHeight)
@@ -3029,10 +3005,11 @@ void InventorySystem::render(
     }
 
     UiCancelControlScope cancelScope(cancelState_);
+    const InventoryUiScreenLayout& screenLayout = standardInventoryUiScreenLayout();
     UiWindowScope inventoryWindow(
         renderer,
         "inventory.main",
-        {{ScreenX, ScreenY}, {ScreenW, ScreenH}},
+        screenLayout.window,
         "アイテム",
         "F/Enter 決定  R リングへ  P 保護  G つかむ/置く  T 並び替え  Esc 戻る",
         UiWindowOptions{true, true});
@@ -3054,7 +3031,7 @@ void InventorySystem::render(
 
     for (int i = 0; i < ShortcutSlotCount; ++i) {
         const UiRect rect = inventorySlotRect(i);
-        InventoryUiSlotStyle style{i == selectedShortcutIndex(), false, InventoryObjectImageMaxSize};
+        InventoryUiSlotStyle style{i == selectedShortcutIndex(), false, screenLayout.itemImageMaxSize};
         if (grabbedSlotActive_ && i == grabbedSlotOrigin_) {
             style.contentAlpha = GrabbedSlotContentAlpha;
         }
@@ -3071,7 +3048,7 @@ void InventorySystem::render(
                 renderer,
                 iconCenter,
                 grabbedEntry,
-                InventoryObjectImageMaxSize,
+                screenLayout.itemImageMaxSize,
                 false,
                 false,
                 1.0f);
@@ -3099,10 +3076,9 @@ void InventorySystem::render(
         detailEntry.equipped = isStaffEquipped(detailInstance->instance.instanceId);
     }
 
-    const UiRect detailPanel{{DetailX, DetailY}, {DetailW, DetailH}};
     drawInventoryUiDetailPanel(
         renderer,
-        detailPanel,
+        screenLayout.detailPanel,
         detailEntry,
         catalog,
         encyclopedia,

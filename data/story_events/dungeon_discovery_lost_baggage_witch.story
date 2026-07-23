@@ -4,4 +4,15 @@
 @once dungeon_discovery_seen_lost_baggage_witch
 
 @say player ルネ
-荷物、散らばってる。
+あれ？
+誰かの声が聞こえる…
+
+@say witch 魔女
+え〜ん！見つからないよ〜！
+
+@say player ルネ
+なにか困ってるのかな…
+手伝ってあげにいこう！
+
+@say chicory チコリ
+ちこり！

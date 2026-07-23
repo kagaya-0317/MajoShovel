@@ -354,6 +354,7 @@ public:
         float cavityRadiusTiles = 0.0f;
         std::string requestKey;
         std::string deliveredObjectId;
+        std::string resolvedRewardObjectId;
         int guideTargetWarpPointIndex = -1;
         float guideRemainingSeconds = 0.0f;
         std::vector<std::string> spawnedEntityIds;
@@ -369,6 +370,8 @@ public:
         float holdSecondsIfNoDialogue = 2.0f;
         float moveSeconds = 0.0f;
         float returnSeconds = 0.0f;
+        float holdActionDelaySeconds = 0.0f;
+        std::function<void()> onHoldAction;
         std::function<void()> onComplete;
         bool allowDuringBossEncounter = false;
         bool debugStoryReplay = false;
@@ -755,6 +758,7 @@ private:
         ChestDrop,
         MultiChestDrop,
         ObjectDrop,
+        RareObjectDrop,
         MaterialDrop,
         MoneyDrop,
     };
@@ -768,11 +772,28 @@ private:
         int amount = 1;
     };
 
+    struct DungeonEventItemRequestUiState {
+        bool open = false;
+        std::string eventId;
+        int selection = 0;
+        int confirmSlot = -1;
+        std::string status;
+        UiConfirmDialogState confirm{};
+    };
+
     struct DungeonMinimapCell {
         TileType type = TileType::Empty;
     };
 
     using DungeonMinimapCells = std::unordered_map<std::int64_t, DungeonMinimapCell>;
+
+    struct DungeonRouteDeviationState {
+        Vec2 previousPlayerPosition{};
+        float movingSecondsBeyondNoticeDistance = 0.0f;
+        bool hasPreviousPlayerPosition = false;
+        bool offMainRoute = false;
+        bool noticeShownForCurrentExcursion = false;
+    };
 
     struct RetrySnapshot {
         Vec2 playerPosition{};
@@ -1063,8 +1084,10 @@ private:
         float holdSeconds = 2.0f;
         float moveSeconds = 0.0f;
         float returnSeconds = 0.0f;
+        float holdActionDelaySeconds = 0.0f;
         std::string discoveryStoryEventId;
         DialogueSequence discoveryDialogue;
+        std::function<void()> onHoldAction;
         std::function<void()> onComplete;
         bool allowDuringBossEncounter = false;
         bool debugStoryReplay = false;
@@ -1607,6 +1630,8 @@ private:
     bool updateWarpReturnUi(const Input& input, UiContext& ui);
     bool unlockAllWarpPointsForCurrentDungeon();
     void updateWarpPoints(float dt);
+    void resetDungeonRouteDeviation();
+    void updateDungeonRouteDeviation(float dt);
     void initializeMoonFragmentNodesFromWarpPoints();
     static std::int64_t dungeonMinimapKey(int tx, int ty);
     static DungeonTile dungeonMinimapTileFromKey(std::int64_t key);
@@ -1638,6 +1663,13 @@ private:
     DungeonEventInstance* pointedDungeonEventNpc(Vec2 worldPosition);
     const DungeonEventInstance* pointedDungeonEventNpc(Vec2 worldPosition) const;
     bool updateDungeonEventNpcInteraction(const Input& input, UiContext& ui);
+    bool dungeonEventItemRequestUiActive() const;
+    void openDungeonEventItemRequestUi(DungeonEventInstance& event);
+    void closeDungeonEventItemRequestUi();
+    void updateDungeonEventItemRequestUi(const Input& input, UiContext& ui);
+    void renderDungeonEventItemRequestUi(Renderer& renderer, double totalSeconds) const;
+    bool startDungeonEventWitchRewardDialogue(DungeonEventInstance& event);
+    std::optional<DungeonEventRewardRequest> dungeonEventWitchRewardRequest(DungeonEventKind kind) const;
     std::string dungeonEventNpcPromptText() const;
     bool updateDungeonEventDiscovery(float dt);
     void appendDungeonEventRenderEntries(
@@ -1646,9 +1678,13 @@ private:
         const std::vector<LightSource>& extraLights,
         double totalSeconds) const;
     bool spawnDungeonEventReward(DungeonEventInstance& event, const DungeonEventRewardRequest& request);
-    void completeDungeonEvent(DungeonEventInstance& event, std::optional<DungeonEventRewardRequest> reward);
+    bool completeDungeonEvent(DungeonEventInstance& event, std::optional<DungeonEventRewardRequest> reward);
     bool ensureDungeonEventChest(DungeonEventInstance& event, DungeonTile tile, LootChestKind chestKind);
-    void requestDungeonRewardChestFocus(Vec2 focusWorldPos);
+    bool scheduleDungeonEventChestReveal(
+        DungeonEventInstance& event,
+        std::vector<DungeonTile> tiles,
+        LootChestKind chestKind);
+    bool requestDungeonRewardChestFocus(Vec2 focusWorldPos, std::function<void()> onChestAppear);
     void applyDungeonEventCavity(const DungeonEventInstance& event);
     bool debugRequestDungeonEventPlacement(DungeonEventKind kind);
     bool debugPlaceDungeonEvent(DungeonEventKind kind);
@@ -1741,6 +1777,13 @@ private:
         bool launchFromCenter = false,
         LootSourceKind sourceKind = LootSourceKind::Chest,
         std::string_view requiredTag = {});
+    const ObjectDefinition* selectWeightedObjectLoot(
+        LootChestKind chestKind,
+        int depthRank,
+        std::mt19937& rng,
+        std::string_view sourceLabel,
+        LootSourceKind sourceKind = LootSourceKind::Chest,
+        std::string_view requiredTag = {}) const;
     bool roguelikeObjectAllowed(std::string_view objectId) const;
     bool roguelikeObjectAllowed(const ObjectDefinition& object) const;
     std::optional<std::string> firstRoguelikeAllowedObjectId() const;
@@ -2079,9 +2122,18 @@ private:
     bool startDebugStoryTestPresentation(std::string_view id, std::function<void()> onComplete);
     bool startStoryEventForTrigger(std::string_view trigger);
     void maybeStartOpeningBaseIntroEvent();
+    void pushDungeonNotice(
+        std::vector<DungeonLogEntry>& notices,
+        std::string message,
+        std::string mergeKey,
+        float lifetime,
+        float mergeSeconds,
+        int maxVisible);
     void pushDungeonLog(std::string message, std::string mergeKey = {});
+    void pushImportantDungeonNotice(std::string message, std::string mergeKey = {});
     void pushCountedDungeonLog(std::string label, int amount, std::string suffix, std::string mergeKey);
     void updateDungeonLogs(float dt);
+    void handleRingItemAddedEvents();
     void appendPickupLogs(const std::vector<WorldDropPickupEvent>& pickupEvents);
     void handleRingItemBreakEvents(std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr);
     void recordCapturedMonsterRingBreak(std::string_view objectId);
@@ -2137,6 +2189,7 @@ private:
     void renderDungeonMapOverlay(Renderer& renderer, const std::vector<LightSource>& itemLights) const;
     void renderDungeonStatusHud(Renderer& renderer) const;
     void renderDungeonLogs(Renderer& renderer) const;
+    void renderImportantDungeonNotices(Renderer& renderer) const;
     void renderDungeonControlHelp(Renderer& renderer) const;
     void renderWarpReturnUi(Renderer& renderer) const;
     void renderRoguelikeBigHoleUi(Renderer& renderer) const;
@@ -2151,6 +2204,7 @@ private:
     void renderDebugOverlay(Renderer& renderer, const Time& time);
     void renderAutoSimulationIntentOverlay(Renderer& renderer) const;
     void beginDungeonRingIntro();
+    void startDungeonRingIntroTimer();
     void updateDungeonRingIntro(float dt);
     bool dungeonRingIntroActive() const;
     float dungeonRingIntroProgress() const;
@@ -2559,6 +2613,7 @@ private:
     std::string optionsStatus_;
     UiTabsState operationSettingsTabs_{};
     UiSelectableTableState operationSettingsTable_{};
+    UiCommandMenuState operationSettingsCommandMenu_{};
     UiConfirmDialogState operationSettingsConflictConfirm_{};
     UiConfirmDialogState operationSettingsResetAllConfirm_{};
     InputRemapCapture operationSettingsCapture_{};
@@ -2636,6 +2691,8 @@ private:
     DungeonTile introTutorialSecondChestTile_{};
     DungeonTile introTutorialExitTile_{};
     std::vector<DungeonLogEntry> dungeonLogs_;
+    std::vector<DungeonLogEntry> importantDungeonNotices_;
+    DungeonRouteDeviationState dungeonRouteDeviation_{};
     WorldBuildJob worldBuildJob_;
     std::array<FootstepDustPuff, 10> playerFootstepDustPuffs_{};
     std::vector<RingEquipFx> ringEquipFx_;
@@ -2717,6 +2774,8 @@ private:
     float dungeonEventDiscoveryCooldown_ = 0.0f;
     std::optional<DungeonEventKind> pendingDebugDungeonEventPlacement_;
     std::string hoveredDungeonEventNpcId_;
+    DungeonEventItemRequestUiState dungeonEventItemRequestUi_{};
+    mutable UiCancelControlState dungeonEventItemRequestCancelState_{};
     int hoveredChestNodeIndex_ = -1;
     int spawnedWarpPointCount_ = 0;
     Vec2 bossSpawnPoint_{};

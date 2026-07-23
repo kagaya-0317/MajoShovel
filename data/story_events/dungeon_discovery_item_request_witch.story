@@ -4,4 +4,14 @@
 @once dungeon_discovery_seen_item_request_witch
 
 @say player ルネ
-あの人、何か探してる？
+あれ？
+
+@say witch 魔女
+うーん、困ったわ…
+
+@say player ルネ
+なんか困ってそうな人がいるぞ
+話を聞いてみよう
+
+@say chicory チコリ
+ちかちか！

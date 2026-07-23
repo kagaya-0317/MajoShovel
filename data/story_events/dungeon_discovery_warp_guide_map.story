@@ -4,4 +4,18 @@
 @once dungeon_discovery_seen_warp_guide_map
 
 @say player ルネ
-地図みたいなのが落ちてる。
+なんじゃこりは？
+
+@say player ルネ
+地図…みたいな？
+
+@say chicory チコリ
+ちこ？
+
+@wait small
+
+# ※調べると
+
+@narration
+次のワープポイントの方向が
+マップに記された！

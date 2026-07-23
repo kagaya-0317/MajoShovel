@@ -4,4 +4,14 @@
 @once dungeon_discovery_seen_buried_witch
 
 @say player ルネ
-誰かいる？
+あれ？
+なんかこっちから、誰かいる気配が…
+
+@say witch 魔女
+だれかここから出して〜！
+
+@say player ルネ
+大変だ！出してあげないと！
+
+@say chicory チコリ
+ちかちか！

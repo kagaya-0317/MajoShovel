@@ -52,6 +52,14 @@ struct EnemyImageDebugInfo {
     const Enemy& enemy,
     float animationTimeSeconds,
     const EnemyImageDrawOptions& options = {});
+[[nodiscard]] Vec2 junkCrabAttackForwardMotionOffset(
+    const Enemy& enemy,
+    float animationTimeSeconds,
+    const EnemyImageDrawOptions& options = {});
+[[nodiscard]] Vec2 junkCrabAttackChargeShakeOffset(
+    const Enemy& enemy,
+    float animationTimeSeconds,
+    const EnemyImageDrawOptions& options = {});
 [[nodiscard]] bool enemyImageDrawSize(
     Renderer& renderer,
     const Enemy& enemy,

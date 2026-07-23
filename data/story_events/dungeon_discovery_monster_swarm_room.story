@@ -4,4 +4,13 @@
 @once dungeon_discovery_seen_monster_swarm_room
 
 @say player ルネ
-あそこ、ざわざわしてる。
+な、なんか危険な香りがする！
+
+@say chicory チコリ
+ちかちか！
+
+@say player ルネ
+え？危険なところにはお宝があるかもって？
+
+@say player ルネ
+でも、お宝より怖いが勝つよ〜

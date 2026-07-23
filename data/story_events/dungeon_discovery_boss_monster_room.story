@@ -4,4 +4,10 @@
 @once dungeon_discovery_seen_boss_monster_room
 
 @say player ルネ
-……空気が重い。
+なんか強そうなのがいる！！
+
+@say chicory チコリ
+ちこり！
+
+@say player ルネ
+きっと、みんなの親分ってかんじだね

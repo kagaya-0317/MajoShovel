@@ -337,6 +337,11 @@ SDL_FRect pixelSnappedRect(SDL_FRect rect)
     return {left, top, width, height};
 }
 
+bool solidMaskCanUseSourceTexture(Color color)
+{
+    return color.r == 0 && color.g == 0 && color.b == 0;
+}
+
 SDL_Texture* createAlphaMaskTexture(
     SDL_Renderer* renderer,
     int width,
@@ -2512,10 +2517,13 @@ bool Renderer::drawImageRegion(ImageHandle handle, RectF sourceRect, Vec2 center
     if (options.outlineEnabled && options.outlinePx > 0) {
         Color outline = transformColor(options.outlineColor);
         if (outline.a > 0) {
-            const bool outlineReady = ensureCachedImageOutlineReady(*entry);
-            SDL_Texture* outlineTexture = outlineReady && entry->texture.outlineTexture != nullptr
-                ? entry->texture.outlineTexture
-                : entry->texture.texture;
+            SDL_Texture* outlineTexture = entry->texture.texture;
+            if (!solidMaskCanUseSourceTexture(outline)) {
+                const bool outlineReady = ensureCachedImageOutlineReady(*entry);
+                outlineTexture = outlineReady && entry->texture.outlineTexture != nullptr
+                    ? entry->texture.outlineTexture
+                    : entry->texture.texture;
+            }
             // Keep outline thickness fixed in screen pixels, independent from world scale.
             const int radiusPx = std::max(1, options.outlinePx);
             SDL_SetTextureColorMod(outlineTexture, outline.r, outline.g, outline.b);

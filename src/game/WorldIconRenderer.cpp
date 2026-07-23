@@ -14,7 +14,7 @@ constexpr std::string_view WorldIconExtension = ".png";
 constexpr int MoneyMediumThreshold = 50;
 constexpr int MoneyLargeThreshold = 150;
 
-constexpr std::array<WorldIconDefinition, 35> WorldIconDefinitions{{
+constexpr std::array<WorldIconDefinition, 39> WorldIconDefinitions{{
     {WorldIconId::MoneySmall, "money_small", "お金 小額", 1},
     {WorldIconId::MoneyMedium, "money_medium", "お金 中額", 2},
     {WorldIconId::MoneyLarge, "money_large", "お金 高額", 3},
@@ -50,8 +50,12 @@ constexpr std::array<WorldIconDefinition, 35> WorldIconDefinitions{{
     {WorldIconId::UiRing0, "ui_ring_0", "リング0", 33},
     {WorldIconId::UiRing8, "ui_ring_8", "リング8", 34},
     {WorldIconId::UiRingC, "ui_ring_c", "リングC", 35},
+    {WorldIconId::JunkCrabDebrisCan, "junk_crab_debris_can", "ジャンクラブ ガラクタ缶", 36},
+    {WorldIconId::JunkCrabDebrisGear, "junk_crab_debris_gear", "ジャンクラブ ガラクタ歯車", 37},
+    {WorldIconId::JunkCrabDebrisBattery, "junk_crab_debris_battery", "ジャンクラブ ガラクタ電池", 38},
+    {WorldIconId::JunkCrabDebrisPipe, "junk_crab_debris_pipe", "ジャンクラブ ガラクタパイプ", 39},
 }};
-static_assert(WorldIconDefinitions.size() == static_cast<std::size_t>(WorldIconId::UiRingC) + 1);
+static_assert(WorldIconDefinitions.size() == static_cast<std::size_t>(WorldIconId::JunkCrabDebrisPipe) + 1);
 
 const std::unordered_map<std::string, float>* gWorldIconScaleOverrides = nullptr;
 constexpr std::size_t WorldIconFilterCount = 2;

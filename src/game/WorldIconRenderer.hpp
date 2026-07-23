@@ -49,6 +49,10 @@ enum class WorldIconId {
     UiRing0,
     UiRing8,
     UiRingC,
+    JunkCrabDebrisCan,
+    JunkCrabDebrisGear,
+    JunkCrabDebrisBattery,
+    JunkCrabDebrisPipe,
 };
 
 struct WorldIconDefinition {

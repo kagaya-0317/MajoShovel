@@ -22,11 +22,19 @@ constexpr float DefaultEnemyBossSpriteScale = 1.35f;
 constexpr std::string_view StardustMoleEnemyId = "stardust_mole";
 constexpr std::string_view StardustMoleSpritePath = "assets/enemies/boss_1.png";
 constexpr int StardustMoleSpriteColumns = 6;
-constexpr int StardustMoleSpriteRows = 8;
+constexpr int StardustMoleSpriteRows = 6;
 constexpr int StardustMoleSpriteFramesPerAnimation = 6;
 constexpr float StardustMoleSpriteFrameDurationSeconds = 24.0f / EnemyAnimationFps;
 constexpr float StardustMoleChargeSpriteFrameDurationSeconds = 8.0f / EnemyAnimationFps;
 constexpr float StardustMoleSpriteScale = 0.84f;
+constexpr std::string_view JunkCrabEnemyId = "junk_crab";
+constexpr std::string_view JunkCrabSpritePath = "assets/enemies/boss_2.png";
+constexpr int JunkCrabSpriteColumns = 6;
+constexpr int JunkCrabSpriteRows = 9;
+constexpr int JunkCrabSpriteFramesPerAnimation = 6;
+constexpr float JunkCrabSpriteFrameDurationSeconds = 12.0f / EnemyAnimationFps;
+constexpr float JunkCrabSpriteScale = 0.72f;
+constexpr int EnemySpriteMaxAnimationFrames = 8;
 constexpr float EnemyImageScaleMin = 0.05f;
 constexpr float EnemyImageScaleMax = 8.0f;
 constexpr float EnemyImageStretchMin = 0.05f;
@@ -40,8 +48,13 @@ struct EnemySpriteSheetSpec {
     float frameDurationSeconds = DefaultEnemySpriteFrameDurationSeconds;
     float scale = DefaultEnemySpriteScale;
     float bossScale = DefaultEnemyBossSpriteScale;
+    bool mirrorRightFromLeft = false;
     std::array<int, EnemySpriteDirectionCount> idleRows{{0, 1, 2, 3}};
     std::array<int, EnemySpriteDirectionCount> walkRows{{0, 1, 2, 3}};
+    std::array<int, EnemySpriteDirectionCount> attackRows{{0, 1, 2, 3}};
+    int attackFrameDurationCount = 0;
+    std::array<float, EnemySpriteMaxAnimationFrames> attackFrameDurationsSeconds{};
+    std::array<float, EnemySpriteMaxAnimationFrames> attackForwardOffsetsPx{};
 };
 
 enum class EnemySpriteDirection {
@@ -54,6 +67,7 @@ enum class EnemySpriteDirection {
 enum class EnemySpriteMotion {
     Idle,
     Walk,
+    Attack,
 };
 
 EnemySpriteDirection directionFromVector(Vec2 direction)
@@ -62,6 +76,21 @@ EnemySpriteDirection directionFromVector(Vec2 direction)
         return direction.x >= 0.0f ? EnemySpriteDirection::Right : EnemySpriteDirection::Left;
     }
     return direction.y >= 0.0f ? EnemySpriteDirection::Down : EnemySpriteDirection::Up;
+}
+
+Vec2 vectorForDirection(EnemySpriteDirection direction)
+{
+    switch (direction) {
+    case EnemySpriteDirection::Down:
+        return {0.0f, 1.0f};
+    case EnemySpriteDirection::Left:
+        return {-1.0f, 0.0f};
+    case EnemySpriteDirection::Right:
+        return {1.0f, 0.0f};
+    case EnemySpriteDirection::Up:
+        return {0.0f, -1.0f};
+    }
+    return {0.0f, 1.0f};
 }
 
 EnemySpriteDirection directionFromFacing(float angle)
@@ -123,6 +152,8 @@ const char* motionDebugName(EnemySpriteMotion motion)
         return "idle";
     case EnemySpriteMotion::Walk:
         return "walk";
+    case EnemySpriteMotion::Attack:
+        return "attack";
     }
     return "?";
 }
@@ -144,6 +175,11 @@ bool isStardustMoleId(std::string_view enemyId)
     return enemyId == StardustMoleEnemyId;
 }
 
+bool isJunkCrabId(std::string_view enemyId)
+{
+    return enemyId == JunkCrabEnemyId;
+}
+
 EnemySpriteSheetSpec defaultEnemySpriteSheetSpec(int imageNumber)
 {
     EnemySpriteSheetSpec spec;
@@ -161,8 +197,35 @@ EnemySpriteSheetSpec stardustMoleSpriteSheetSpec()
     spec.frameDurationSeconds = StardustMoleSpriteFrameDurationSeconds;
     spec.scale = StardustMoleSpriteScale;
     spec.bossScale = StardustMoleSpriteScale;
-    spec.idleRows = std::array<int, EnemySpriteDirectionCount>{{0, 2, 4, 6}};
-    spec.walkRows = std::array<int, EnemySpriteDirectionCount>{{1, 3, 5, 7}};
+    spec.mirrorRightFromLeft = true;
+    spec.idleRows = std::array<int, EnemySpriteDirectionCount>{{0, 2, 2, 4}};
+    spec.walkRows = std::array<int, EnemySpriteDirectionCount>{{1, 3, 3, 5}};
+    spec.attackRows = spec.walkRows;
+    return spec;
+}
+
+EnemySpriteSheetSpec junkCrabSpriteSheetSpec()
+{
+    EnemySpriteSheetSpec spec;
+    spec.path = std::string(JunkCrabSpritePath);
+    spec.columns = JunkCrabSpriteColumns;
+    spec.rows = JunkCrabSpriteRows;
+    spec.framesPerAnimation = JunkCrabSpriteFramesPerAnimation;
+    spec.frameDurationSeconds = JunkCrabSpriteFrameDurationSeconds;
+    spec.scale = JunkCrabSpriteScale;
+    spec.bossScale = JunkCrabSpriteScale;
+    spec.mirrorRightFromLeft = true;
+    spec.idleRows = std::array<int, EnemySpriteDirectionCount>{{0, 3, 3, 6}};
+    spec.walkRows = std::array<int, EnemySpriteDirectionCount>{{1, 4, 4, 7}};
+    spec.attackRows = std::array<int, EnemySpriteDirectionCount>{{2, 5, 5, 8}};
+    spec.attackFrameDurationCount = std::min(JunkCrabAttackFrameCount, EnemySpriteMaxAnimationFrames);
+    for (int i = 0; i < spec.attackFrameDurationCount; ++i) {
+        spec.attackFrameDurationsSeconds[static_cast<std::size_t>(i)] =
+            static_cast<float>(JunkCrabAttackFrameDurationsFrames[static_cast<std::size_t>(i)]) /
+            static_cast<float>(JunkCrabAttackFrameRate);
+        spec.attackForwardOffsetsPx[static_cast<std::size_t>(i)] =
+            JunkCrabAttackForwardOffsetsPx[static_cast<std::size_t>(i)];
+    }
     return spec;
 }
 
@@ -170,6 +233,9 @@ EnemySpriteSheetSpec enemySpriteSheetSpec(const EnemyDefinition& enemy)
 {
     if (isStardustMoleId(enemy.id)) {
         return stardustMoleSpriteSheetSpec();
+    }
+    if (isJunkCrabId(enemy.id)) {
+        return junkCrabSpriteSheetSpec();
     }
     return defaultEnemySpriteSheetSpec(enemy.imageNumber);
 }
@@ -180,6 +246,10 @@ EnemySpriteSheetSpec enemySpriteSheetSpec(const Enemy& enemy)
         (enemy.definition != nullptr && isStardustMoleId(enemy.definition->id))) {
         return stardustMoleSpriteSheetSpec();
     }
+    if (isJunkCrabId(enemy.enemyId) ||
+        (enemy.definition != nullptr && isJunkCrabId(enemy.definition->id))) {
+        return junkCrabSpriteSheetSpec();
+    }
     return enemy.definition != nullptr ? enemySpriteSheetSpec(*enemy.definition) : EnemySpriteSheetSpec{};
 }
 
@@ -189,6 +259,12 @@ bool isStardustMoleEnemy(const Enemy& enemy)
         (enemy.definition != nullptr && isStardustMoleId(enemy.definition->id));
 }
 
+bool isJunkCrabEnemy(const Enemy& enemy)
+{
+    return isJunkCrabId(enemy.enemyId) ||
+        (enemy.definition != nullptr && isJunkCrabId(enemy.definition->id));
+}
+
 bool validEnemySpriteSheetSpec(const EnemySpriteSheetSpec& spec)
 {
     return !spec.path.empty() &&
@@ -196,6 +272,9 @@ bool validEnemySpriteSheetSpec(const EnemySpriteSheetSpec& spec)
         spec.rows > 0 &&
         spec.framesPerAnimation > 0 &&
         spec.framesPerAnimation <= spec.columns &&
+        spec.framesPerAnimation <= EnemySpriteMaxAnimationFrames &&
+        spec.attackFrameDurationCount >= 0 &&
+        spec.attackFrameDurationCount <= std::min(spec.columns, EnemySpriteMaxAnimationFrames) &&
         spec.frameDurationSeconds > 0.0f &&
         spec.scale > 0.0f &&
         spec.bossScale > 0.0f;
@@ -203,6 +282,9 @@ bool validEnemySpriteSheetSpec(const EnemySpriteSheetSpec& spec)
 
 EnemySpriteMotion motionForEnemy(const Enemy& enemy)
 {
+    if (isJunkCrabEnemy(enemy) && junkCrabPhaseUsesAttackAnimation(enemy.bossAction.junkCrab.phase)) {
+        return EnemySpriteMotion::Attack;
+    }
     return lengthSquared(enemy.velocity) > 1.0f || enemy.jumpActive
         ? EnemySpriteMotion::Walk
         : EnemySpriteMotion::Idle;
@@ -218,18 +300,113 @@ float frameDurationForEnemy(const EnemySpriteSheetSpec& spec, const Enemy& enemy
     return spec.frameDurationSeconds;
 }
 
-int rowForAnimation(const EnemySpriteSheetSpec& spec, EnemySpriteDirection direction, EnemySpriteMotion motion)
+float animationTimeForEnemyMotion(const Enemy& enemy, EnemySpriteMotion motion, float animationTimeSeconds)
 {
-    const auto& rows = motion == EnemySpriteMotion::Walk ? spec.walkRows : spec.idleRows;
-    return std::clamp(rows[static_cast<std::size_t>(directionIndex(direction))], 0, spec.rows - 1);
+    if (motion == EnemySpriteMotion::Attack && isJunkCrabEnemy(enemy)) {
+        return enemy.bossAction.junkCrab.attackAnimationSeconds;
+    }
+    return animationTimeSeconds;
 }
 
-int animationFrameColumn(const EnemySpriteSheetSpec& spec, float animationTimeSeconds, float frameDurationSeconds)
+EnemySpriteDirection sourceDirectionForSpec(const EnemySpriteSheetSpec& spec, EnemySpriteDirection direction)
+{
+    if (spec.mirrorRightFromLeft && direction == EnemySpriteDirection::Right) {
+        return EnemySpriteDirection::Left;
+    }
+    return direction;
+}
+
+bool flipXForSpecDirection(const EnemySpriteSheetSpec& spec, EnemySpriteDirection direction)
+{
+    return spec.mirrorRightFromLeft && direction == EnemySpriteDirection::Right;
+}
+
+int rowForAnimation(const EnemySpriteSheetSpec& spec, EnemySpriteDirection direction, EnemySpriteMotion motion)
+{
+    const EnemySpriteDirection sourceDirection = sourceDirectionForSpec(spec, direction);
+    const auto& rows =
+        motion == EnemySpriteMotion::Attack ? spec.attackRows :
+        motion == EnemySpriteMotion::Walk ? spec.walkRows :
+        spec.idleRows;
+    return std::clamp(rows[static_cast<std::size_t>(directionIndex(sourceDirection))], 0, spec.rows - 1);
+}
+
+struct AnimationFrameSelection {
+    int column = 0;
+    float frameElapsedSeconds = 0.0f;
+};
+
+AnimationFrameSelection variableAnimationFrameColumn(const EnemySpriteSheetSpec& spec, float animationTimeSeconds)
+{
+    const int frameCount = std::clamp(spec.attackFrameDurationCount, 1, spec.columns);
+    float remaining = std::max(0.0f, animationTimeSeconds);
+    for (int i = 0; i < frameCount; ++i) {
+        const float duration = std::max(0.001f, spec.attackFrameDurationsSeconds[static_cast<std::size_t>(i)]);
+        if (remaining < duration) {
+            return {i, remaining};
+        }
+        remaining -= duration;
+    }
+    return {frameCount - 1, std::max(0.0f, spec.attackFrameDurationsSeconds[static_cast<std::size_t>(frameCount - 1)])};
+}
+
+AnimationFrameSelection animationFrameColumn(const EnemySpriteSheetSpec& spec, float animationTimeSeconds, float frameDurationSeconds)
 {
     const int frameCount = std::clamp(spec.framesPerAnimation, 1, spec.columns);
     const float frameDuration = std::max(0.001f, frameDurationSeconds);
-    const int step = static_cast<int>(std::floor(std::max(0.0f, animationTimeSeconds) / frameDuration));
-    return std::clamp(step % frameCount, 0, spec.columns - 1);
+    const float safeTime = std::max(0.0f, animationTimeSeconds);
+    const int step = static_cast<int>(std::floor(safeTime / frameDuration));
+    return {
+        std::clamp(step % frameCount, 0, spec.columns - 1),
+        std::fmod(safeTime, frameDuration),
+    };
+}
+
+AnimationFrameSelection animationFrameForMotion(
+    const EnemySpriteSheetSpec& spec,
+    const Enemy& enemy,
+    EnemySpriteMotion motion,
+    float animationTimeSeconds)
+{
+    const float motionTime = animationTimeForEnemyMotion(enemy, motion, animationTimeSeconds);
+    if (motion == EnemySpriteMotion::Attack && isJunkCrabEnemy(enemy)) {
+        const JunkCrabAttackAnimationKind kind = junkCrabAttackAnimationKind(enemy.bossAction.junkCrab.phase);
+        if (kind == JunkCrabAttackAnimationKind::Claw && spec.attackFrameDurationCount > 0) {
+            return variableAnimationFrameColumn(spec, motionTime);
+        }
+        if (kind == JunkCrabAttackAnimationKind::DebrisVolley) {
+            return animationFrameColumn(spec, motionTime, JunkCrabDebrisVolleyAttackFrameDurationSeconds);
+        }
+    }
+    if (motion == EnemySpriteMotion::Attack && spec.attackFrameDurationCount > 0) {
+        return variableAnimationFrameColumn(spec, motionTime);
+    }
+    return animationFrameColumn(spec, motionTime, frameDurationForEnemy(spec, enemy, motion));
+}
+
+Vec2 attackMotionDrawOffset(
+    const EnemySpriteSheetSpec& spec,
+    const Enemy& enemy,
+    EnemySpriteDirection direction,
+    const AnimationFrameSelection& frame)
+{
+    if (spec.attackFrameDurationCount <= 0 || frame.column < 0 || frame.column >= spec.attackFrameDurationCount) {
+        return {};
+    }
+    if (isJunkCrabEnemy(enemy) &&
+        junkCrabAttackAnimationKind(enemy.bossAction.junkCrab.phase) != JunkCrabAttackAnimationKind::Claw) {
+        return {};
+    }
+
+    Vec2 offset = vectorForDirection(direction) * spec.attackForwardOffsetsPx[static_cast<std::size_t>(frame.column)];
+    if (frame.column == JunkCrabAttackChargeFrameIndex) {
+        const float shakeStepSeconds =
+            static_cast<float>(JunkCrabAttackChargeShakeIntervalFrames) /
+            static_cast<float>(JunkCrabAttackFrameRate);
+        const int shakeStep = static_cast<int>(std::floor(std::max(0.0f, frame.frameElapsedSeconds) / shakeStepSeconds));
+        offset.x += (shakeStep % 2 == 0 ? -JunkCrabAttackChargeShakePixels : JunkCrabAttackChargeShakePixels);
+    }
+    return offset;
 }
 
 Vec2 clampedStretchScale(Vec2 scale)
@@ -386,7 +563,7 @@ EnemyImageDebugInfo enemyImageDebugInfo(
     info.directionOverrideEnabled = options.directionOverrideEnabled;
     info.directionIndex = directionIndex(direction);
     info.frameRow = rowForAnimation(spec, direction, motion);
-    info.frameColumn = animationFrameColumn(spec, animationTimeSeconds, frameDurationForEnemy(spec, enemy, motion));
+    info.frameColumn = animationFrameForMotion(spec, enemy, motion, animationTimeSeconds).column;
     info.sheetRows = spec.rows;
     info.sheetColumns = spec.columns;
     info.framesPerAnimation = spec.framesPerAnimation;
@@ -394,6 +571,35 @@ EnemyImageDebugInfo enemyImageDebugInfo(
     info.facingVector = {std::cos(enemy.facingAngle), std::sin(enemy.facingAngle)};
     info.directionOverride = options.directionOverride;
     return info;
+}
+
+Vec2 junkCrabAttackForwardMotionOffset(
+    const Enemy& enemy,
+    float animationTimeSeconds,
+    const EnemyImageDrawOptions& options)
+{
+    if (!isJunkCrabEnemy(enemy) ||
+        junkCrabAttackAnimationKind(enemy.bossAction.junkCrab.phase) != JunkCrabAttackAnimationKind::Claw) {
+        return {};
+    }
+
+    const EnemySpriteDirection direction = directionForEnemy(enemy, options);
+    return vectorForDirection(direction) * junkCrabAttackForwardOffsetPx(animationTimeSeconds);
+}
+
+Vec2 junkCrabAttackChargeShakeOffset(
+    const Enemy& enemy,
+    float animationTimeSeconds,
+    const EnemyImageDrawOptions& options)
+{
+    if (!isJunkCrabEnemy(enemy) ||
+        junkCrabAttackAnimationKind(enemy.bossAction.junkCrab.phase) != JunkCrabAttackAnimationKind::Claw) {
+        return {};
+    }
+
+    const EnemySpriteDirection direction = directionForEnemy(enemy, options);
+    (void)direction;
+    return {junkCrabAttackChargeShakeOffsetPx(animationTimeSeconds), 0.0f};
 }
 
 bool enemyImageDrawSize(Renderer& renderer, const Enemy& enemy, const EnemyImageDrawOptions& options, Vec2& outDrawSize)
@@ -423,8 +629,10 @@ bool drawEnemyImage(
     }
 
     const EnemySpriteMotion motion = motionForEnemy(enemy);
-    const int frameColumn = animationFrameColumn(spec, animationTimeSeconds, frameDurationForEnemy(spec, enemy, motion));
-    const int frameRow = rowForAnimation(spec, directionForEnemy(enemy, options), motion);
+    const AnimationFrameSelection frame = animationFrameForMotion(spec, enemy, motion, animationTimeSeconds);
+    const EnemySpriteDirection direction = directionForEnemy(enemy, options);
+    const int frameColumn = frame.column;
+    const int frameRow = rowForAnimation(spec, direction, motion);
     const RectF sourceRect{
         static_cast<float>(frameColumn * frameWidth),
         static_cast<float>(frameRow * frameHeight),
@@ -437,7 +645,16 @@ bool drawEnemyImage(
     }
 
     ImageDrawOptions drawOptions = enemyImageDrawOptions(options);
-    return renderer.drawImageRegion(handle, sourceRect, center, drawSize, drawOptions);
+    drawOptions.flipX = drawOptions.flipX != flipXForSpecDirection(spec, direction);
+    Vec2 drawCenter = center;
+    if (motion == EnemySpriteMotion::Attack) {
+        if (isJunkCrabEnemy(enemy)) {
+            drawCenter += junkCrabAttackChargeShakeOffset(enemy, animationTimeForEnemyMotion(enemy, motion, animationTimeSeconds), options);
+        } else {
+            drawCenter += attackMotionDrawOffset(spec, enemy, direction, frame);
+        }
+    }
+    return renderer.drawImageRegion(handle, sourceRect, drawCenter, drawSize, drawOptions);
 }
 
 bool drawEnemyImageIcon(
@@ -481,8 +698,9 @@ bool drawEnemyImageIcon(
         std::max(1.0f, static_cast<float>(std::round(static_cast<float>(frameHeight) * scale * optionScale * stretchScale.y))),
     };
 
-    const int frameColumn = animationFrameColumn(spec, animationTimeSeconds, spec.frameDurationSeconds);
-    const int frameRow = rowForAnimation(spec, directionForIcon(options), EnemySpriteMotion::Idle);
+    const EnemySpriteDirection direction = directionForIcon(options);
+    const int frameColumn = animationFrameColumn(spec, animationTimeSeconds, spec.frameDurationSeconds).column;
+    const int frameRow = rowForAnimation(spec, direction, EnemySpriteMotion::Idle);
     const RectF sourceRect{
         static_cast<float>(frameColumn * frameWidth),
         static_cast<float>(frameRow * frameHeight),
@@ -494,7 +712,9 @@ bool drawEnemyImageIcon(
         *outDrawSize = drawSize;
     }
 
-    return renderer.drawImageRegion(handle, sourceRect, center, drawSize, enemyImageDrawOptions(options));
+    ImageDrawOptions drawOptions = enemyImageDrawOptions(options);
+    drawOptions.flipX = drawOptions.flipX != flipXForSpecDirection(spec, direction);
+    return renderer.drawImageRegion(handle, sourceRect, center, drawSize, drawOptions);
 }
 
 }

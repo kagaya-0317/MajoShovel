@@ -45,7 +45,7 @@
 | ID | 名前 | HP | 接触攻撃力 | 接触ダメージ種別 | 移動速度 | 半径 | 経験値 | 敵AI | 敵特殊タグ |
 | --- | --- | ---: | ---: | --- | ---: | ---: | ---: | --- | --- |
 | `stardust_mole` | 星くずモグラ | 1440 | 2 | `blunt` | 21 | 15 | 60 | `stationary` | `boss,boss_only,no_normal_spawn,unique` |
-| `junk_crab` | 廃品殻獣ジャンクラブ | 1680 | 4 | `blunt` | 54 | 18 | 90 | `stationary` | `boss,boss_only,no_normal_spawn,unique,large,heavy` |
+| `junk_crab` | 廃品殻獣ジャンクラブ | 1680 | 4 | `blunt` | 18 | 18 | 90 | `stationary` | `boss,boss_only,no_normal_spawn,unique,large,heavy` |
 | `astragna` | 星封殻アストラグナ | 1 | 0 | `none` | 0 | 24 | 120 | `stationary` | `boss,boss_only,no_normal_spawn,unique,large,terrain_boss` |
 | `star_vein_dragon` | 星脈竜 | 4000 | 18 | `magic` | 58 | 30 | 180 | `hover_chase` | `boss,boss_only,no_normal_spawn,unique,large,heavy,magic` |
 

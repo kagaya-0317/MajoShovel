@@ -78,6 +78,15 @@ struct InventoryUiGridStyle {
     UiScrollAreaStyle scroll{};
 };
 
+struct InventoryUiScreenLayout {
+    UiRect window{{44.0f, 58.0f}, {1192.0f, 610.0f}};
+    UiRect backdrop{{0.0f, 0.0f}, {1280.0f, 720.0f}};
+    Vec2 gridOrigin{};
+    UiRect detailPanel{};
+    InventoryUiGridStyle grid{};
+    float itemImageMaxSize = 48.0f;
+};
+
 struct InlineItemTextStyle {
     Color text{255, 255, 255, 255};
     int scale = 2;
@@ -173,6 +182,8 @@ void drawInventoryUiSlot(
     const UiScrollAreaLayout& layout,
     int index,
     const InventoryUiGridStyle& style = {});
+[[nodiscard]] const InventoryUiScreenLayout& standardInventoryUiScreenLayout();
+[[nodiscard]] UiRect inventoryUiScreenSlotRect(const InventoryUiScreenLayout& layout, int index);
 void keepInventoryUiGridItemVisible(
     UiRect viewport,
     int selectedIndex,

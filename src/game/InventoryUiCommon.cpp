@@ -1432,6 +1432,40 @@ UiRect inventoryUiGridSlotRect(const UiScrollAreaLayout& layout, int index, cons
     }, style.slotSize};
 }
 
+const InventoryUiScreenLayout& standardInventoryUiScreenLayout()
+{
+    static const InventoryUiScreenLayout layout = [] {
+        InventoryUiScreenLayout result;
+        const float detailX = result.window.pos.x + 820.0f;
+        const float gridWidth = inventoryUiGridWidth(result.grid);
+        result.gridOrigin = {
+            result.window.pos.x + (detailX - result.window.pos.x - gridWidth) * 0.5f,
+            result.window.pos.y + 84.0f,
+        };
+        result.detailPanel = {
+            {detailX, result.window.pos.y + 50.0f},
+            {330.0f, 520.0f},
+        };
+        return result;
+    }();
+    return layout;
+}
+
+UiRect inventoryUiScreenSlotRect(const InventoryUiScreenLayout& layout, int index)
+{
+    const int safeIndex = std::max(0, index);
+    const int columns = std::max(1, layout.grid.columns);
+    const int row = safeIndex / columns;
+    const int column = safeIndex % columns;
+    return {
+        {
+            layout.gridOrigin.x + static_cast<float>(column) * (layout.grid.slotSize.x + layout.grid.slotGap.x),
+            layout.gridOrigin.y + static_cast<float>(row) * (layout.grid.slotSize.y + layout.grid.slotGap.y),
+        },
+        layout.grid.slotSize,
+    };
+}
+
 void keepInventoryUiGridItemVisible(
     UiRect viewport,
     int selectedIndex,

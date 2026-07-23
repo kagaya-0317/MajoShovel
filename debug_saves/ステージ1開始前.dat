@@ -1,0 +1,103 @@
+MAJO_SHOVEL_SAVE_V1
+durability_unit_scale 3
+money 116
+play_time_seconds 25132
+astral_high_score 0
+astral_echo_star_count 41
+captured_monster_ring_breaks_before_stage_clear 1 0
+captured_monster_ring_breaks_before_stage_clear 2 0
+captured_monster_ring_breaks_before_stage_clear 3 0
+player_level 1
+player_xp 14
+player_xp_to_next 20
+pending_level_bonus_choices 0
+upgrade_max_hp 0
+upgrade_ring_radius 0
+upgrade_ring_speed 0
+upgrade_collection_range 0
+level_ring_points 1 0 0 0
+level_ring_points 2 0 0 0
+level_ring_points 3 0 0 0
+workshop_ring_upgrade 1 0 0 0 0 0 0 0 0 0 1.2
+workshop_ring_upgrade 2 0 0 0 0 0 0 0 0 0 1.8
+workshop_ring_upgrade 3 0 0 0 0 0 0 0 0 0 2.4
+merchant_refresh_pending 0
+merchant_upgrade_level 1
+merchant_stock_version 0
+warehouse_capacity_level 0
+processing_unlock_level 0
+ring_workshop_unlocked 0
+ring_preset_slot_level 0
+auto_save_on_return 0
+equipped_staff -
+ring_shape_1 Circle
+ring_shape_2 FigureEight
+ring_shape_3 Comet
+story_flag story_intro_tutorial_fall
+story_flag story_intro_tutorial_shovel_ready
+story_flag story_intro_tutorial_torch_found
+story_flag story_intro_tutorial_torch_ready
+story_flag story_intro_tutorial_enemy_encounter
+story_flag story_intro_tutorial_enemy_defeated
+story_flag story_intro_tutorial_chest_found
+story_flag story_intro_tutorial_chest_loot_ring
+story_flag story_intro_tutorial_midway
+story_flag story_intro_tutorial_exit_found
+story_flag intro_tutorial_completed
+story_flag story_opening_base_intro
+main_knowledge_v1 1
+main_obtained_object item_apple
+main_obtained_object item_bat
+main_obtained_object item_capture_net
+main_obtained_object item_chipped_pickaxe
+main_obtained_object item_coin_bag
+main_obtained_object item_compass
+main_obtained_object item_hard_bread
+main_obtained_object item_icecrystal_book
+main_obtained_object item_iron_sword
+main_obtained_object item_power_macaron
+main_obtained_object item_shovel
+main_obtained_object item_staff_earth
+main_obtained_object item_torch
+main_obtained_object item_wood_shield
+main_obtained_object treasure_asakou_01
+main_obtained_object treasure_asakou_02
+main_obtained_object treasure_asakou_03
+main_obtained_object treasure_asakou_04
+main_obtained_object treasure_asakou_07
+main_obtained_object treasure_asakou_08
+main_obtained_object treasure_asakou_10
+main_obtained_object treasure_asakou_18
+main_obtained_object treasure_asakou_20
+main_obtained_object treasure_candle
+main_obtained_object treasure_junk_barrel
+main_obtained_object treasure_junk_pot
+main_obtained_object treasure_wind_chime
+codex_entry item item_shovel 4
+codex_entry item item_torch 4
+codex_entry item item_iron_sword 3
+codex_entry treasure item_coin_bag 4
+codex_entry enemy slime 1
+codex_entry enemy bake_kinoko 1
+codex_effect item_shovel dig
+codex_effect item_shovel basic_attack
+codex_effect item_torch light
+codex_effect item_torch basic_attack
+codex_effect item_coin_bag coin_drop_chance
+codex_effect item_coin_bag basic_attack
+codex_sync_suppress_owned item_staff_apprentice_witch 1
+codex_sync_suppress_ring item_shovel 1
+codex_sync_suppress_ring item_torch 1
+current_stage 0
+current_stage_id stage_01_stardust
+unlocked_stages 1
+unlocked_ring_count 1
+unlocked_warp_points 0
+material old_wood_building_material 0
+material enhancement_ore 2
+material moon_fragment 0
+material mana_drop 0
+ring 4 item_shovel 6 blunt 12 315 315 1.2 11 0.26 0 iteminst_1 0 0 0 0 1 1 0 0 0 0 0 0
+ring 4 item_torch 4 fire 0 132 135 0.7 11 0.26 3.14159 iteminst_2 0 0 0 0 1 1 0 0 0 0 0 0
+ring 4 item_coin_bag 1 blunt 0 57 60 0.8 11 0.26 1.5708 iteminst_3 0 0 0 0 1 1 0 0 0 0 0 0
+ring 4 item_iron_sword 18 slash 0 225 225 1.5 11 0.26 4.71239 iteminst_4 0 0 0 0 1 1 0 0 0 0 0 0

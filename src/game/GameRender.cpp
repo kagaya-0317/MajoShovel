@@ -25,7 +25,7 @@ namespace {
 
 constexpr std::string_view StoryBossSpritePath = "assets/enemies/boss_1.png";
 constexpr int StoryBossSpriteColumns = 6;
-constexpr int StoryBossSpriteRows = 8;
+constexpr int StoryBossSpriteRows = 6;
 constexpr float StoryBossSpriteScale = 0.84f;
 constexpr std::string_view StorySmallMoleSpritePath = "assets/enemies/story_small_mole_walk.png";
 constexpr int StorySmallMoleSpriteColumns = 2;
@@ -461,15 +461,28 @@ float linearMetersPerSecondForAngularSpeed(float angularSpeed, float radius)
     return angularSpeed * worldDistanceToMeters(radius);
 }
 
-std::string dungeonDepthTopInfoEntry(const DungeonLayout& layout, Vec2 tilePosition)
+std::string dungeonDepthTopInfoEntry(
+    const DungeonLayout& layout,
+    Vec2 tilePosition,
+    bool offMainRoute)
 {
-    char buffer[32];
+    char buffer[64];
     const int meters = std::max(0, static_cast<int>(std::lround(projectedDungeonRouteDistanceTiles(layout, tilePosition))));
-    std::snprintf(buffer, sizeof(buffer), "深度 %dm", meters);
+    std::snprintf(
+        buffer,
+        sizeof(buffer),
+        offMainRoute ? "深度 %dm (寄り道中)" : "深度 %dm",
+        meters);
     return buffer;
 }
 
-std::string roguelikeDepthTopInfoEntry(const DungeonLayout& layout, Vec2 tilePosition, int areaStartMeters, int areaEndMeters, int completionMeters)
+std::string roguelikeDepthTopInfoEntry(
+    const DungeonLayout& layout,
+    Vec2 tilePosition,
+    int areaStartMeters,
+    int areaEndMeters,
+    int completionMeters,
+    bool offMainRoute)
 {
     const int start = std::max(0, areaStartMeters);
     const int end = std::max(start + 1, areaEndMeters);
@@ -477,8 +490,12 @@ std::string roguelikeDepthTopInfoEntry(const DungeonLayout& layout, Vec2 tilePos
         start + static_cast<int>(std::lround(projectedDungeonRouteDistanceTiles(layout, tilePosition))),
         0,
         std::min(end, std::max(1, completionMeters)));
-    char buffer[32];
-    std::snprintf(buffer, sizeof(buffer), "深度 %dm", meters);
+    char buffer[64];
+    std::snprintf(
+        buffer,
+        sizeof(buffer),
+        offMainRoute ? "深度 %dm (寄り道中)" : "深度 %dm",
+        meters);
     return buffer;
 }
 
@@ -921,10 +938,11 @@ constexpr Color DungeonMapDiscoveredWarpColor{86, 238, 218, 235};
 constexpr Color DungeonMapUndiscoveredWarpColor{34, 64, 126, 220};
 constexpr Color DungeonMapEnemyColor{238, 72, 82, 238};
 constexpr Color DungeonMapBossEnemyColor{255, 108, 64, 246};
-constexpr Color DungeonMapChestColor{246, 198, 50, 238};
+constexpr Color DungeonMapChestColor{82, 158, 236, 238};
 constexpr Color DungeonMapCrateColor{144, 86, 42, 238};
 constexpr Color DungeonMapEventColor{246, 98, 206, 238};
-constexpr Color DungeonMapItemColor{248, 214, 64, 238};
+constexpr Color DungeonMapItemColor{104, 210, 116, 238};
+constexpr Color DungeonMapMoneyColor{248, 214, 64, 238};
 constexpr Color DungeonMapMaterialColor{72, 210, 188, 238};
 
 Vec2 dungeonMapDropPosition(const WorldDropItem& drop)
@@ -940,6 +958,12 @@ bool dungeonEventVisibleOnMap(const Game::DungeonEventInstance& event)
 void drawDungeonMapCircleMarker(Renderer& renderer, Vec2 center, float radius, Color fill)
 {
     renderer.fillCircle(center, radius, fill);
+}
+
+void drawDungeonMapWarpMarker(Renderer& renderer, Vec2 center, float radius, Color fill)
+{
+    renderer.fillCircle(center, radius, fill);
+    renderer.drawCircle(center, radius + 2.0f, fill);
 }
 
 void drawDungeonMapSquareMarker(Renderer& renderer, Vec2 center, float size, Color fill)
@@ -2167,13 +2191,20 @@ constexpr int OperationSettingsColumnAction = 0;
 constexpr int OperationSettingsColumnKeyboardMouse = 1;
 constexpr int OperationSettingsColumnGamepad = 2;
 constexpr int OperationSettingsColumnCount = 3;
-constexpr int OptionsPageOperation = 0;
+constexpr int OptionsPageVideo = 0;
 constexpr int OptionsPageAudio = 1;
-constexpr int OptionsPageVideo = 2;
+constexpr int OptionsPageOperation = 2;
 constexpr int OptionsPageCount = 3;
 constexpr int OperationSettingsCategoryCount = 4;
 constexpr int AudioSettingsRowCount = 3;
 constexpr int VideoSettingsRowCount = 7;
+constexpr int VideoSettingsRowWindowMode = 0;
+constexpr int VideoSettingsRowWindowSize = 1;
+constexpr int VideoSettingsRowBrightness = 2;
+constexpr int VideoSettingsRowInputIcons = 3;
+constexpr int VideoSettingsRowScreenShake = 4;
+constexpr int VideoSettingsRowLightweight = 5;
+constexpr int VideoSettingsRowVSync = 6;
 constexpr float OptionsContentYOffset = -16.0f;
 constexpr float OptionsStandardContentYOffset = OptionsContentYOffset + 8.0f;
 constexpr float OptionsStandardContentHeightBonus = 16.0f;
@@ -2190,15 +2221,15 @@ struct VideoResolutionPreset {
 };
 
 constexpr const char* OptionsPageLabels[OptionsPageCount] = {
-    "操作",
-    "音量",
     "画面",
+    "音量",
+    "操作",
 };
 
 constexpr std::array<MenuIconImage, OptionsPageCount> OptionsPageIcons{{
-    MenuIconImage::Gamepad,
-    MenuIconImage::Volume,
     MenuIconImage::ScreenSettings,
+    MenuIconImage::Volume,
+    MenuIconImage::Gamepad,
 }};
 
 constexpr const char* OperationSettingsCategoryLabels[OperationSettingsCategoryCount] = {
@@ -2379,7 +2410,7 @@ UiRect videoSettingsRowRect(int index)
 
 UiRect videoBrightnessSliderRect()
 {
-    const UiRect row = videoSettingsRowRect(4);
+    const UiRect row = videoSettingsRowRect(VideoSettingsRowBrightness);
     return {{row.pos.x + 202.0f, row.pos.y + 11.0f}, {250.0f, 16.0f}};
 }
 
@@ -2570,13 +2601,13 @@ std::array<UiVerticalTabItem, AudioSettingsRowCount> audioSettingsTabItems(
 const char* videoSettingsRowLabel(int row)
 {
     switch (row) {
-    case 0: return "表示モード";
-    case 1: return "ウィンドウサイズ";
-    case 2: return "VSync";
-    case 3: return "軽量化";
-    case 4: return "明るさ";
-    case 5: return "画面揺れ";
-    case 6: return "入力アイコン";
+    case VideoSettingsRowWindowMode: return "表示モード";
+    case VideoSettingsRowWindowSize: return "ウィンドウサイズ";
+    case VideoSettingsRowBrightness: return "明るさ";
+    case VideoSettingsRowInputIcons: return "操作アイコン表示";
+    case VideoSettingsRowScreenShake: return "画面揺れ";
+    case VideoSettingsRowLightweight: return "軽量化";
+    case VideoSettingsRowVSync: return "VSync";
     default: return "";
     }
 }
@@ -2596,9 +2627,9 @@ std::string screenShakeDisplayName(ScreenShakeSetting setting)
 {
     switch (setting) {
     case ScreenShakeSetting::Off:
-        return "OFF";
+        return "なし";
     case ScreenShakeSetting::Low:
-        return "弱";
+        return "弱め";
     case ScreenShakeSetting::Standard:
         return "標準";
     }
@@ -2649,20 +2680,20 @@ std::string videoResolutionText(const VideoSettings& video)
 std::string videoSettingsRowValueText(const GameSettings& settings, int row)
 {
     switch (row) {
-    case 0:
+    case VideoSettingsRowWindowMode:
         return windowModeDisplayName(settings.video.windowMode);
-    case 1:
+    case VideoSettingsRowWindowSize:
         return videoResolutionText(settings.video);
-    case 2:
-        return settings.video.vsync ? "ON" : "OFF";
-    case 3:
-        return settings.performance.lightweight ? "ON" : "OFF";
-    case 4:
+    case VideoSettingsRowBrightness:
         return screenBrightnessPercentText(settings.presentation.brightness);
-    case 5:
-        return screenShakeDisplayName(settings.presentation.screenShake);
-    case 6:
+    case VideoSettingsRowInputIcons:
         return inputIconSettingDisplayName(settings.presentation.inputIcons);
+    case VideoSettingsRowScreenShake:
+        return screenShakeDisplayName(settings.presentation.screenShake);
+    case VideoSettingsRowLightweight:
+        return settings.performance.lightweight ? "ON" : "OFF";
+    case VideoSettingsRowVSync:
+        return settings.video.vsync ? "ON" : "OFF";
     default:
         return "";
     }
@@ -2747,28 +2778,28 @@ void cycleVideoSetting(GameSettings& settings, int row, int delta)
         return;
     }
     switch (row) {
-    case 0:
+    case VideoSettingsRowWindowMode:
         settings.video.windowMode = settings.video.windowMode == WindowMode::Windowed
             ? WindowMode::BorderlessFullscreen
             : WindowMode::Windowed;
         break;
-    case 1:
+    case VideoSettingsRowWindowSize:
         cycleVideoResolution(settings, delta);
         break;
-    case 2:
-        settings.video.vsync = !settings.video.vsync;
-        break;
-    case 3:
-        settings.performance.lightweight = !settings.performance.lightweight;
-        break;
-    case 4:
+    case VideoSettingsRowBrightness:
         adjustScreenBrightness(settings, delta);
         break;
-    case 5:
+    case VideoSettingsRowInputIcons:
+        cycleInputIconSetting(settings, delta);
+        break;
+    case VideoSettingsRowScreenShake:
         cycleScreenShakeSetting(settings, delta);
         break;
-    case 6:
-        cycleInputIconSetting(settings, delta);
+    case VideoSettingsRowLightweight:
+        settings.performance.lightweight = !settings.performance.lightweight;
+        break;
+    case VideoSettingsRowVSync:
+        settings.video.vsync = !settings.video.vsync;
         break;
     default:
         break;
@@ -2792,20 +2823,20 @@ const char* audioSettingsHelpText(int row)
 const char* videoSettingsHelpText(int row)
 {
     switch (row) {
-    case 0:
+    case VideoSettingsRowWindowMode:
         return "ウィンドウ表示とフルスクリーン表示を切り替えます。フルスクリーンはボーダーレス全画面です。";
-    case 1:
+    case VideoSettingsRowWindowSize:
         return "ウィンドウ時の画面サイズです。フルスクリーン中も、次にウィンドウへ戻した時のサイズとして保存します。";
-    case 2:
-        return "VSyncはモニターの更新タイミングに描画を合わせる設定です。画面の裂けを抑えますが、入力遅延やFPSに影響することがあります。";
-    case 3:
-        return "ONにすると追加ライト、暗幕、影、常時エフェクト、粒子数を抑えて、ダンジョン中の負荷を下げます。";
-    case 4:
+    case VideoSettingsRowBrightness:
         return "ゲージで画面全体の明るさを調整します。暗闇だけでなく、拠点、UI、紙芝居など画面全体に反映されます。";
-    case 5:
-        return "被弾やボス演出などの画面揺れの強さです。酔いやすい場合は弱またはOFFにしてください。";
-    case 6:
-        return "操作ヘルプに出す入力アイコンを選びます。自動では最後に使った入力機器に合わせて切り替えます。";
+    case VideoSettingsRowInputIcons:
+        return "操作ヘルプに表示する操作アイコンを選びます。自動では最後に使った入力機器に合わせて切り替えます。";
+    case VideoSettingsRowScreenShake:
+        return "被弾やボス演出などの画面揺れの強さです。酔いやすい場合は弱めまたはなしにしてください。";
+    case VideoSettingsRowLightweight:
+        return "ONにすると追加ライト、暗幕、影、常時エフェクト、粒子数を抑えて、ダンジョン中の負荷を下げます。";
+    case VideoSettingsRowVSync:
+        return "VSyncはモニターの更新タイミングに描画を合わせる設定です。画面の裂けを抑えますが、入力遅延やFPSに影響することがあります。";
     default:
         return "";
     }
@@ -3131,16 +3162,6 @@ std::string operationSettingsConflictMessage(const std::vector<InputAction>& act
     return message;
 }
 
-InputAction operationSettingsSelectedAction(const UiSelectableTableState& state, int category)
-{
-    const std::vector<OperationSettingsActionRow> rows = operationSettingsRowsForCategory(category);
-    if (rows.empty()) {
-        return InputAction::Count;
-    }
-    const int row = std::clamp(state.selectedRow, 0, static_cast<int>(rows.size()) - 1);
-    return rows[static_cast<std::size_t>(row)].action;
-}
-
 void drawOperationSettingsCellText(
     Renderer& renderer,
     UiRect cell,
@@ -3282,6 +3303,25 @@ UiSelectableTableResult updateOperationSettingsTableClickSelection(
         keepUiSelectableTableCellVisible(rect, state.selectedRow, rowCount, state.scrollOffset, style);
     }
     return result;
+}
+
+float importantDungeonNoticeBlockHeight(int count)
+{
+    return static_cast<float>(count) * ImportantDungeonNoticeRowHeight +
+        static_cast<float>(std::max(0, count - 1)) * ImportantDungeonNoticeGap;
+}
+
+UiRect importantDungeonNoticeBlockRect(float screenWidth, float screenHeight, int count)
+{
+    const float height = importantDungeonNoticeBlockHeight(count);
+    const float bottomY = screenHeight * ImportantDungeonNoticeBottomYRatio;
+    return {{
+        (screenWidth - ImportantDungeonNoticeWidth) * 0.5f,
+        bottomY - height,
+    }, {
+        ImportantDungeonNoticeWidth,
+        height,
+    }};
 }
 
 } // namespace
@@ -3977,6 +4017,8 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
 
 void Game::prepareOptionsMenu()
 {
+    optionsPage_ = OptionsPageVideo;
+    closeUiCommandMenu(operationSettingsCommandMenu_);
     operationSettingsCapture_.cancel();
     operationSettingsConflictConfirm_ = {};
     operationSettingsResetAllConfirm_ = {};
@@ -4219,6 +4261,36 @@ void Game::updateOperationSettings(const Input& input, UiContext& ui)
         return;
     }
 
+    constexpr std::array<UiCommandMenuItem, 3> CommandItems{{
+        {"変更", true},
+        {"削除", true},
+        {"初期化", true},
+    }};
+    const int commandSelection = updateUiCommandMenu(
+        operationSettingsCommandMenu_,
+        ui,
+        input,
+        CommandItems.data(),
+        static_cast<int>(CommandItems.size()));
+    if (commandSelection >= 0) {
+        if (commandSelection == 0) {
+            operationSettingsCapture_.begin(
+                operationSettingsPendingAction_,
+                operationSettingsCaptureGroupForColumn(operationSettingsPendingColumn_));
+            operationSettingsStatus_ = operationSettingsPendingColumn_ == OperationSettingsColumnGamepad
+                ? "ゲームパッド入力を押してください"
+                : "キーまたはマウスボタンを押してください";
+        } else if (commandSelection == 1) {
+            clearOperationSettingsBinding(operationSettingsPendingAction_, operationSettingsPendingColumn_);
+        } else {
+            resetOperationSettingsAction(operationSettingsPendingAction_);
+        }
+    }
+    if (operationSettingsCommandMenu_.visible) {
+        ui.block(panel);
+        return;
+    }
+
     const int categoryDelta = input.mouseWheelDelta() == 0 ? input.shortcutCursorDelta() : 0;
     if (categoryDelta != 0) {
         operationSettingsCategory_ =
@@ -4281,34 +4353,40 @@ void Game::updateOperationSettings(const Input& input, UiContext& ui)
         const InputAction action = rows[static_cast<std::size_t>(row)].action;
         operationSettingsPendingAction_ = action;
         operationSettingsPendingColumn_ = column;
-        operationSettingsCapture_.begin(action, operationSettingsCaptureGroupForColumn(column));
-        operationSettingsStatus_ = column == OperationSettingsColumnGamepad
-            ? "ゲームパッド入力を押してください。Esc で中止、Backspace/Delete で削除"
-            : "キーまたはマウスボタンを押してください。Esc で中止、Backspace/Delete で削除";
-        ui.emitSound(UiSoundEvent::Confirm);
+        const UiRect selectedCell = uiSelectableTableCellRect(
+            makeUiSelectableTableLayout(
+                table,
+                static_cast<int>(rows.size()),
+                operationSettingsTable_.scrollOffset,
+                operationSettingsTableStyle()),
+            columns.data(),
+            static_cast<int>(columns.size()),
+            row,
+            column,
+            operationSettingsTableStyle());
+        openUiCommandMenu(
+            operationSettingsCommandMenu_,
+            uiCommandMenuAnchorForSlot(selectedCell),
+            panel,
+            static_cast<int>(CommandItems.size()),
+            CommandItems.data(),
+            160.0f);
         ui.block(panel);
         return;
     }
 
-    constexpr int ButtonCount = 3;
-    const InputAction selectedAction = operationSettingsSelectedAction(operationSettingsTable_, operationSettingsCategory_);
+    constexpr int ButtonCount = 1;
     for (int i = 0; i < ButtonCount; ++i) {
         const UiRect button = optionsFooterButtonRect(i, ButtonCount);
         if (ui.pressed(button)) {
             ui.emitSound(UiSoundEvent::Confirm);
-            if (i == 0) {
-                clearOperationSettingsBinding(selectedAction, operationSettingsTable_.selectedColumn);
-            } else if (i == 1) {
-                resetOperationSettingsAction(selectedAction);
-            } else {
-                openUiConfirmDialog(
-                    operationSettingsResetAllConfirm_,
-                    "初期化の確認",
-                    "すべての操作割当を初期状態に戻しますか？",
-                    "初期化する",
-                    "戻る",
-                    1);
-            }
+            openUiConfirmDialog(
+                operationSettingsResetAllConfirm_,
+                "初期化の確認",
+                "すべての操作割当を初期状態に戻しますか？",
+                "初期化する",
+                "戻る",
+                1);
             ui.block(panel);
             return;
         }
@@ -4406,7 +4484,9 @@ void Game::updateVideoSettings(const Input& input, UiContext& ui)
         const float value = MinScreenBrightness +
             (MaxScreenBrightness - MinScreenBrightness) * clamp(normalizedValue, 0.0f, 1.0f);
         setScreenBrightnessValue(optionsSettings_, value);
-        applyOptionsSettings(std::string(videoSettingsRowLabel(4)) + " " + videoSettingsRowValueText(optionsSettings_, 4));
+        applyOptionsSettings(
+            std::string(videoSettingsRowLabel(VideoSettingsRowBrightness)) + " " +
+            videoSettingsRowValueText(optionsSettings_, VideoSettingsRowBrightness));
     };
 
     if (input.pressed(InputAction::MoveLeft)) {
@@ -4428,7 +4508,7 @@ void Game::updateVideoSettings(const Input& input, UiContext& ui)
         static_cast<int>(tabItems.size()));
     if (clickedRow >= 0) {
         videoSettingsSelection_ = clickedRow;
-        if (clickedRow != 4) {
+        if (clickedRow != VideoSettingsRowBrightness) {
             applyVideoRow(clickedRow, 1);
             ui.emitSound(UiSoundEvent::Confirm);
         }
@@ -4437,7 +4517,7 @@ void Game::updateVideoSettings(const Input& input, UiContext& ui)
     }
 
     for (int row = 0; row < VideoSettingsRowCount; ++row) {
-        if (row == 4) {
+        if (row == VideoSettingsRowBrightness) {
             const UiRect sliderRect = videoBrightnessSliderRect();
             if (input.mouseLeftHeld() && sliderRect.contains(ui.mouse()) && !ui.pointerConsumed()) {
                 videoSettingsSelection_ = row;
@@ -4939,8 +5019,12 @@ void Game::renderTopInfoBar(Renderer& renderer) const
                 playerTilePosition,
                 astralRun_.currentDepthMeters,
                 astralRun_.nextHoleDepthMeters,
-                astralRun_.completionDepthMeters)
-            : dungeonDepthTopInfoEntry(dungeonLayout_, playerTilePosition);
+                astralRun_.completionDepthMeters,
+                dungeonRouteDeviation_.offMainRoute)
+            : dungeonDepthTopInfoEntry(
+                dungeonLayout_,
+                playerTilePosition,
+                dungeonRouteDeviation_.offMainRoute);
 
         const int totalWarpPoints = std::max(0, static_cast<int>(warpPoints_.size()));
         if (warpPointsEnabled_ && totalWarpPoints > 0) {
@@ -5866,7 +5950,7 @@ void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSourc
                 if (!dungeonMinimapTileSeen(point.tilePosition.x, point.tilePosition.y)) {
                     continue;
                 }
-                drawDungeonMapCircleMarker(
+                drawDungeonMapWarpMarker(
                     renderer,
                     marker,
                     point.discovered ? 3.2f : 3.0f,
@@ -5890,7 +5974,7 @@ void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSourc
         }
         for (const MoneyNode& node : moneyNodes_) {
             if (moneyNodeVisibleOnDungeonMap(node)) {
-                drawMiniCircleOnTile(node.tile.x, node.tile.y, 2.1f, DungeonMapItemColor);
+                drawMiniCircleOnTile(node.tile.x, node.tile.y, 2.1f, DungeonMapMoneyColor);
             }
         }
         for (const MoonFragmentNode& node : moonFragmentNodes_) {
@@ -5940,7 +6024,7 @@ void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSourc
                 drawMiniCircleOnTile(dropTileX, dropTileY, 3.0f, DungeonMapItemColor);
                 break;
             case WorldDropKind::Money:
-                drawMiniCircleOnTile(dropTileX, dropTileY, 2.1f, DungeonMapItemColor);
+                drawMiniCircleOnTile(dropTileX, dropTileY, 2.1f, DungeonMapMoneyColor);
                 break;
             case WorldDropKind::Material:
                 drawMiniCircleOnTile(dropTileX, dropTileY, 2.2f, DungeonMapMaterialColor);
@@ -6125,7 +6209,7 @@ void Game::renderDungeonMapOverlay(Renderer& renderer, const std::vector<LightSo
                 continue;
             }
             const Vec2 marker = tileToMap(point.tilePosition.x, point.tilePosition.y);
-            drawDungeonMapCircleMarker(
+            drawDungeonMapWarpMarker(
                 renderer,
                 marker,
                 std::max(3.0f, tilePx * 0.92f),
@@ -6151,7 +6235,7 @@ void Game::renderDungeonMapOverlay(Renderer& renderer, const std::vector<LightSo
     }
     for (const MoneyNode& node : moneyNodes_) {
         if (moneyNodeVisibleOnDungeonMap(node)) {
-            drawMapCircleOnTile(node.tile.x, node.tile.y, smallMarkerRadius, DungeonMapItemColor);
+            drawMapCircleOnTile(node.tile.x, node.tile.y, smallMarkerRadius, DungeonMapMoneyColor);
         }
     }
     for (const MoonFragmentNode& node : moonFragmentNodes_) {
@@ -6201,7 +6285,7 @@ void Game::renderDungeonMapOverlay(Renderer& renderer, const std::vector<LightSo
             drawMapCircleOnTile(dropTileX, dropTileY, itemMarkerRadius, DungeonMapItemColor);
             break;
         case WorldDropKind::Money:
-            drawMapCircleOnTile(dropTileX, dropTileY, smallMarkerRadius, DungeonMapItemColor);
+            drawMapCircleOnTile(dropTileX, dropTileY, smallMarkerRadius, DungeonMapMoneyColor);
             break;
         case WorldDropKind::Material:
             drawMapCircleOnTile(dropTileX, dropTileY, smallMarkerRadius, DungeonMapMaterialColor);
@@ -6337,6 +6421,84 @@ void Game::renderDungeonLogs(Renderer& renderer) const
             rowY + std::max(0.0f, (DungeonLogRowHeight - textMeasure.y) * 0.5f) + 6.0f,
         };
         drawInlineItemTextRightAligned(renderer, objectCatalog_, textPos, message, textStyle);
+    }
+}
+
+void Game::renderImportantDungeonNotices(Renderer& renderer) const
+{
+    const int visibleCount = std::min(
+        static_cast<int>(importantDungeonNotices_.size()),
+        ImportantDungeonNoticeMaxVisible);
+    if (visibleCount <= 0) {
+        return;
+    }
+
+    renderer.setScreenSpace();
+    const UiRect block = importantDungeonNoticeBlockRect(
+        static_cast<float>(camera_.width()),
+        static_cast<float>(camera_.height()),
+        visibleCount);
+    const int firstIndex = static_cast<int>(importantDungeonNotices_.size()) - visibleCount;
+
+    constexpr int TextScale = 2;
+    for (int i = 0; i < visibleCount; ++i) {
+        const DungeonLogEntry& entry =
+            importantDungeonNotices_[static_cast<std::size_t>(firstIndex + i)];
+        const float fadeDenom = std::max(0.01f, entry.lifetime - ImportantDungeonNoticeFadeStart);
+        const float fade = entry.age <= ImportantDungeonNoticeFadeStart
+            ? 1.0f
+            : std::clamp(
+                1.0f - (entry.age - ImportantDungeonNoticeFadeStart) / fadeDenom,
+                0.0f,
+                1.0f);
+        const float rowY = block.pos.y +
+            static_cast<float>(i) * (ImportantDungeonNoticeRowHeight + ImportantDungeonNoticeGap);
+        const float halfWidth = block.size.x * 0.5f;
+        const unsigned char centerAlpha = static_cast<unsigned char>(
+            std::clamp(205.0f * fade, 0.0f, 205.0f));
+        renderer.fillGradientRect(
+            {block.pos.x, rowY},
+            {halfWidth, ImportantDungeonNoticeRowHeight},
+            {0, 0, 0, 0},
+            {12, 10, 18, centerAlpha},
+            GradientDirection::LeftToRight);
+        renderer.fillGradientRect(
+            {block.pos.x + halfWidth, rowY},
+            {halfWidth, ImportantDungeonNoticeRowHeight},
+            {12, 10, 18, centerAlpha},
+            {0, 0, 0, 0},
+            GradientDirection::LeftToRight);
+
+        InlineItemTextStyle textStyle;
+        textStyle.text = {
+            255,
+            236,
+            166,
+            static_cast<unsigned char>(std::clamp(255.0f * fade, 0.0f, 255.0f)),
+        };
+        textStyle.scale = TextScale;
+        textStyle.iconTextGap = 5.0f;
+        textStyle.iconScale = 1.15f;
+        textStyle.outlineEnabled = true;
+        textStyle.outline = {
+            0,
+            0,
+            0,
+            static_cast<unsigned char>(std::clamp(255.0f * fade, 0.0f, 255.0f)),
+        };
+        textStyle.outlinePx = 2;
+
+        const std::string message = fittedInlineItemText(
+            renderer,
+            entry.message,
+            block.size.x - 72.0f,
+            textStyle);
+        const Vec2 textSize = measureInlineItemText(renderer, message, textStyle);
+        const Vec2 textPos{
+            block.pos.x + std::max(0.0f, (block.size.x - textSize.x) * 0.5f),
+            rowY + std::max(0.0f, (ImportantDungeonNoticeRowHeight - textSize.y) * 0.5f),
+        };
+        drawInlineItemText(renderer, objectCatalog_, textPos, message, textStyle);
     }
 }
 
@@ -6817,10 +6979,8 @@ void Game::renderOperationSettings(Renderer& renderer) const
             operationSettingsStatus_);
     }
 
-    constexpr int ButtonCount = 3;
+    constexpr int ButtonCount = 1;
     constexpr const char* ButtonLabels[ButtonCount] = {
-        "削除",
-        "選択中の操作を初期化",
         "操作設定を全初期化",
     };
     for (int i = 0; i < ButtonCount; ++i) {
@@ -6833,6 +6993,17 @@ void Game::renderOperationSettings(Renderer& renderer) const
             uiActionButtonStyle());
     }
 
+    constexpr std::array<UiCommandMenuItem, 3> CommandItems{{
+        {"変更", true},
+        {"削除", true},
+        {"初期化", true},
+    }};
+    drawUiCommandMenu(
+        renderer,
+        operationSettingsCommandMenu_,
+        CommandItems.data(),
+        static_cast<int>(CommandItems.size()));
+
     if (operationSettingsCapture_.active()) {
         drawUiModalBackdrop(
             renderer,
@@ -6844,7 +7015,7 @@ void Game::renderOperationSettings(Renderer& renderer) const
             "operation_settings.capture",
             dialog,
             "入力待ち",
-            "Esc 中止  Backspace/Delete 削除",
+            "×ボタンで中止",
             UiWindowOptions{true, true});
         const std::string line = operationSettingsPendingColumn_ == OperationSettingsColumnGamepad
             ? "ゲームパッドのボタンまたはスティック/トリガーを入力してください。"
@@ -8614,6 +8785,13 @@ void Game::render(Renderer& renderer, const Time& time)
                 noticeStyle.iconScale = 1.15f;
                 drawInlineItemText(renderer, objectCatalog_, {26.0f, 176.0f}, reloadNotice_, noticeStyle);
             }
+            const bool importantNoticeMode =
+                mode_ == ScreenMode::Playing ||
+                ((mode_ == ScreenMode::Inventory || mode_ == ScreenMode::Ring) &&
+                    pauseReturnMode_ != ScreenMode::Base);
+            if (!suppressDungeonUi && !dungeonMapOverlayOpen_ && importantNoticeMode) {
+                renderImportantDungeonNotices(renderer);
+            }
         }
         {
             FrameProfileScope popupsProfile("UI.popups");
@@ -8625,6 +8803,19 @@ void Game::render(Renderer& renderer, const Time& time)
                 encyclopediaAvoidRects.push_back({{TopInfoBarX, TopInfoBarY}, {screenWidth - TopInfoBarX * 2.0f, TopInfoBarHeight + 8.0f}});
                 if (reloadNoticeTimer_ > 0.0f) {
                     encyclopediaAvoidRects.push_back({{18.0f, 170.0f}, {430.0f, 26.0f}});
+                }
+                const bool importantNoticeMode =
+                    mode_ == ScreenMode::Playing ||
+                    ((mode_ == ScreenMode::Inventory || mode_ == ScreenMode::Ring) &&
+                        pauseReturnMode_ != ScreenMode::Base);
+                const int importantNoticeCount = std::min(
+                    static_cast<int>(importantDungeonNotices_.size()),
+                    ImportantDungeonNoticeMaxVisible);
+                if (importantNoticeMode && importantNoticeCount > 0) {
+                    encyclopediaAvoidRects.push_back(importantDungeonNoticeBlockRect(
+                        screenWidth,
+                        screenHeight,
+                        importantNoticeCount));
                 }
                 if (mode_ == ScreenMode::Playing) {
                     if (!enemyTestActive_ && !dungeonMinimapCells_.empty()) {
@@ -8664,6 +8855,7 @@ void Game::render(Renderer& renderer, const Time& time)
         }
         {
             FrameProfileScope overlaysProfile("UI.overlays");
+            renderDungeonEventItemRequestUi(renderer, time.totalSeconds());
             dialogue_.render(renderer, camera_.width(), camera_.height());
             if (!suppressDungeonUi) {
                 renderDebugNamedSaveUi(renderer);

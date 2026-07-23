@@ -4,4 +4,15 @@
 @once dungeon_discovery_seen_cold_witch_campfire
 
 @say player ルネ
-火が消えかけてる。
+おや？
+
+@say witch 魔女
+うう…寒い…
+誰か…
+
+@say player ルネ
+なんだか、寒そうな声が聞こえるよ
+あっちに急ごう！
+
+@say chicory チコリ
+ちかちか！

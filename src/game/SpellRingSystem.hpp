@@ -105,6 +105,13 @@ struct RingItemBreakEvent {
     bool protectionEnabled = false;
 };
 
+struct RingItemAddedEvent {
+    int ringIndex = 0;
+    float totalWeight = 0.0f;
+    float weightLimit = 0.0f;
+    bool overweight = false;
+};
+
 Vec2 getRingCenterWorldPosition(Vec2 playerPosition, Vec2 shiftDirection, float spellRingShift);
 Vec2 getRingItemLocalPosition(float localAngle, const RingOrbitContext& context);
 Vec2 getRingItemWorldPosition(Vec2 center, float localAngle, const RingOrbitContext& context);
@@ -205,6 +212,7 @@ public:
     bool canAddItem() const;
     bool consumeItemDurability(SpellRingItem& item, int durabilityUnits = FullPointDurabilityCostUnits);
     std::vector<RingItemBreakEvent> consumeItemBreakEvents();
+    std::vector<RingItemAddedEvent> consumeItemAddedEvents();
     bool canAddItem(const SpellRingItem& item) const;
     bool canAddItemForRing(int ringIndex) const;
     bool addObjectItemToRing(int ringIndex, const ItemData& item, SpellRingAddResult* outResult);
@@ -376,6 +384,7 @@ private:
     std::array<RingWorkshopModifiers, SpellRingCount> workshopModifiersByRing_{};
     RingOrbitTuning orbitTuning_{};
     std::vector<RingItemBreakEvent> itemBreakEvents_;
+    std::vector<RingItemAddedEvent> itemAddedEvents_;
     std::vector<RingMotionEvent> motionEvents_;
 
     std::vector<SpellRingItem>& activeItems();
@@ -392,6 +401,7 @@ private:
     float throwReachForRing(int ringIndex) const;
     bool canAddItemForRing(int ringIndex, const SpellRingItem& item) const;
     bool addItemToRing(int ringIndex, SpellRingItem item, SpellRingAddResult* outResult);
+    void recordItemAddedEvent(int ringIndex);
     bool canPlaceItemAtAngle(const SpellRingItem& item, float angle, int ignoreIndex, const RingOrbitTuning& tuning) const;
     bool canPlaceItemAtAngleForRing(
         int ringIndex,

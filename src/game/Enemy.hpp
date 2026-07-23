@@ -109,10 +109,148 @@ enum class JunkCrabPhase {
     RingGuard,
     ClawWindup,
     ClawStrike,
-    ThrowWindup,
-    ThrowBurst,
-    Toppled,
-    Recover,
+    DebrisVolleyWindup,
+    DebrisVolley,
+};
+
+enum class JunkCrabAttackAnimationKind {
+    None,
+    Claw,
+    DebrisVolley,
+};
+
+inline constexpr int JunkCrabAttackFrameRate = 60;
+inline constexpr int JunkCrabAttackFrameCount = 6;
+inline constexpr std::array<int, JunkCrabAttackFrameCount> JunkCrabAttackFrameDurationsFrames{{
+    9,
+    18,
+    54,
+    6,
+    6,
+    80,
+}};
+inline constexpr std::array<float, JunkCrabAttackFrameCount> JunkCrabAttackForwardOffsetsPx{{
+    -5.0f,
+    -8.0f,
+    -9.0f,
+    48.0f,
+    96.0f,
+    108.0f,
+}};
+inline constexpr int JunkCrabAttackImpactFrames =
+    JunkCrabAttackFrameDurationsFrames[0] +
+    JunkCrabAttackFrameDurationsFrames[1] +
+    JunkCrabAttackFrameDurationsFrames[2];
+inline constexpr int JunkCrabAttackChargeStartFrames =
+    JunkCrabAttackFrameDurationsFrames[0] +
+    JunkCrabAttackFrameDurationsFrames[1];
+inline constexpr int JunkCrabAttackTotalFrames =
+    JunkCrabAttackImpactFrames +
+    JunkCrabAttackFrameDurationsFrames[3] +
+    JunkCrabAttackFrameDurationsFrames[4] +
+    JunkCrabAttackFrameDurationsFrames[5];
+inline constexpr float JunkCrabAttackImpactSeconds =
+    static_cast<float>(JunkCrabAttackImpactFrames) / static_cast<float>(JunkCrabAttackFrameRate);
+inline constexpr float JunkCrabAttackFollowThroughSeconds =
+    static_cast<float>(JunkCrabAttackTotalFrames - JunkCrabAttackImpactFrames) /
+    static_cast<float>(JunkCrabAttackFrameRate);
+inline constexpr float JunkCrabAttackTotalSeconds =
+    static_cast<float>(JunkCrabAttackTotalFrames) / static_cast<float>(JunkCrabAttackFrameRate);
+inline constexpr float JunkCrabAttackChargeStartSeconds =
+    static_cast<float>(JunkCrabAttackChargeStartFrames) / static_cast<float>(JunkCrabAttackFrameRate);
+inline constexpr int JunkCrabAttackChargeFrameIndex = 2;
+inline constexpr int JunkCrabAttackChargeShakeIntervalFrames = 4;
+inline constexpr float JunkCrabAttackChargeShakePixels = 1.0f;
+inline constexpr int JunkCrabDebrisVolleyAttackFrameDurationFrames = 12;
+inline constexpr float JunkCrabDebrisVolleyAttackFrameDurationSeconds =
+    static_cast<float>(JunkCrabDebrisVolleyAttackFrameDurationFrames) /
+    static_cast<float>(JunkCrabAttackFrameRate);
+inline constexpr float JunkCrabDebrisVolleyWindupSeconds =
+    JunkCrabDebrisVolleyAttackFrameDurationSeconds * static_cast<float>(JunkCrabAttackFrameCount);
+
+struct JunkCrabAttackFrameSample {
+    int frameIndex = 0;
+    float frameElapsedSeconds = 0.0f;
+};
+
+[[nodiscard]] inline JunkCrabAttackFrameSample sampleJunkCrabAttackFrame(float animationTimeSeconds)
+{
+    float remaining = std::max(0.0f, animationTimeSeconds);
+    for (int i = 0; i < JunkCrabAttackFrameCount; ++i) {
+        const float duration =
+            static_cast<float>(JunkCrabAttackFrameDurationsFrames[static_cast<std::size_t>(i)]) /
+            static_cast<float>(JunkCrabAttackFrameRate);
+        if (remaining < duration) {
+            return {
+                .frameIndex = i,
+                .frameElapsedSeconds = remaining,
+            };
+        }
+        remaining -= duration;
+    }
+
+    return {
+        .frameIndex = JunkCrabAttackFrameCount - 1,
+        .frameElapsedSeconds =
+            static_cast<float>(JunkCrabAttackFrameDurationsFrames[JunkCrabAttackFrameCount - 1]) /
+            static_cast<float>(JunkCrabAttackFrameRate),
+    };
+}
+
+[[nodiscard]] inline float junkCrabAttackForwardOffsetPx(float animationTimeSeconds)
+{
+    const JunkCrabAttackFrameSample sample = sampleJunkCrabAttackFrame(animationTimeSeconds);
+    return JunkCrabAttackForwardOffsetsPx[static_cast<std::size_t>(sample.frameIndex)];
+}
+
+[[nodiscard]] inline float junkCrabAttackChargeShakeOffsetPx(float animationTimeSeconds)
+{
+    const JunkCrabAttackFrameSample sample = sampleJunkCrabAttackFrame(animationTimeSeconds);
+    if (sample.frameIndex != JunkCrabAttackChargeFrameIndex) {
+        return 0.0f;
+    }
+
+    const float shakeStepSeconds =
+        static_cast<float>(JunkCrabAttackChargeShakeIntervalFrames) /
+        static_cast<float>(JunkCrabAttackFrameRate);
+    const int shakeStep = static_cast<int>(std::floor(sample.frameElapsedSeconds / shakeStepSeconds));
+    return shakeStep % 2 == 0 ? -JunkCrabAttackChargeShakePixels : JunkCrabAttackChargeShakePixels;
+}
+
+[[nodiscard]] inline JunkCrabAttackAnimationKind junkCrabAttackAnimationKind(JunkCrabPhase phase)
+{
+    switch (phase) {
+    case JunkCrabPhase::ClawWindup:
+    case JunkCrabPhase::ClawStrike:
+        return JunkCrabAttackAnimationKind::Claw;
+    case JunkCrabPhase::DebrisVolleyWindup:
+        return JunkCrabAttackAnimationKind::DebrisVolley;
+    case JunkCrabPhase::None:
+    case JunkCrabPhase::RingGuard:
+    case JunkCrabPhase::DebrisVolley:
+        break;
+    }
+    return JunkCrabAttackAnimationKind::None;
+}
+
+[[nodiscard]] inline bool junkCrabPhaseUsesAttackAnimation(JunkCrabPhase phase)
+{
+    return junkCrabAttackAnimationKind(phase) != JunkCrabAttackAnimationKind::None;
+}
+
+[[nodiscard]] inline bool junkCrabAttackLocksFacing(JunkCrabPhase phase, float attackAnimationSeconds)
+{
+    return junkCrabAttackAnimationKind(phase) == JunkCrabAttackAnimationKind::Claw &&
+        attackAnimationSeconds >= JunkCrabAttackChargeStartSeconds;
+}
+
+enum class JunkCrabDebrisState {
+    Inactive,
+    Orbiting,
+    ReturningToBoss,
+    BouncingAway,
+    Fading,
+    VolleyProjectile,
 };
 
 enum class AstragnaPhase {
@@ -136,24 +274,39 @@ enum class AstragnaEmitterPhase {
     Destroyed,
 };
 
-inline constexpr int JunkCrabMaxDebris = 6;
+inline constexpr int JunkCrabMaxDebris = 12;
 inline constexpr int AstragnaSealPartCount = 5;
 inline constexpr int AstragnaMaxShellBlocks = 256;
 
 struct JunkCrabDebrisRuntime {
-    bool active = false;
-    float baseAngle = 0.0f;
+    JunkCrabDebrisState state = JunkCrabDebrisState::Inactive;
+    float angle = 0.0f;
     float radius = 0.0f;
+    float orbitAngularSpeed = 0.0f;
+    Vec2 position{};
+    Vec2 velocity{};
+    float visualAngle = 0.0f;
+    float visualAngularSpeed = 0.0f;
+    float timer = 0.0f;
+    float lifetime = 0.0f;
+    float altitude = 0.0f;
+    float verticalVelocity = 0.0f;
+    float alpha = 1.0f;
     int hp = 0;
+    int maxHp = 0;
+    int iconIndex = 0;
 };
 
 struct JunkCrabBossRuntime {
     JunkCrabPhase phase = JunkCrabPhase::None;
     float timer = 0.0f;
-    float orbitAngle = 0.0f;
-    int toppleMeter = 0;
-    int throwBurstIndex = 0;
+    float attackAnimationSeconds = 0.0f;
+    float guardRespawnTimer = 0.0f;
+    float guardRespawnDelaySeconds = 0.0f;
+    float debrisVolleyTimer = 0.0f;
+    float debrisVolleyLaunchTimer = 0.0f;
     bool actionFired = false;
+    Vec2 appliedAttackMotionOffset{};
     std::array<JunkCrabDebrisRuntime, JunkCrabMaxDebris> debris{};
 };
 
