@@ -39,6 +39,24 @@ constexpr float EnemyMinSpawnDistance = 18.0f;
 constexpr float EnemySpawnWarmup = 0.65f;
 constexpr float EnemySeparationStrength = 85.0f;
 
+constexpr int MerchantSellPriceNumerator = 1;
+constexpr int MerchantSellPriceDenominator = 2;
+constexpr double MerchantSellPriceMultiplier =
+    static_cast<double>(MerchantSellPriceNumerator) /
+    static_cast<double>(MerchantSellPriceDenominator);
+constexpr int CapturedEnemySellPricePerMoneyDrop = 11;
+
+constexpr int capturedEnemyItemBasePrice(int moneyDrop)
+{
+    return moneyDrop > 0
+        ? moneyDrop * CapturedEnemySellPricePerMoneyDrop * MerchantSellPriceDenominator /
+            MerchantSellPriceNumerator
+        : 0;
+}
+
+static_assert(
+    capturedEnemyItemBasePrice(10) * MerchantSellPriceNumerator / MerchantSellPriceDenominator == 110);
+
 constexpr int XpBase = 12;
 constexpr int XpPerLevel = 8;
 

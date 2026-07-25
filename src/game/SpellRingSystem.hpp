@@ -304,10 +304,18 @@ public:
     std::vector<RingMotionEvent> consumeMotionEvents();
 
 private:
+    struct RingAnchorFollowState {
+        Vec2 offset{};
+        Vec2 targetCenter{};
+        bool targetInitialized = false;
+        bool active = false;
+    };
+
     struct RingRuntimeState {
         Vec2 homeCenter{};
         Vec2 center{};
         Vec2 previousCenter{};
+        RingAnchorFollowState anchor{};
         Vec2 externalWindOffset{};
         Vec2 externalWindVelocity{};
         Vec2 throwDirection{1.0f, 0.0f};

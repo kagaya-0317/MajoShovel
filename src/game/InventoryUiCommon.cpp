@@ -1212,6 +1212,18 @@ void drawInventoryUiSlotBottomLabel(Renderer& renderer, UiRect rect, std::string
     renderer.drawOutlinedText(labelPos, label, color, {0, 0, 0, 120}, 6, LabelScale);
 }
 
+void drawInventoryUiProtectionLabel(Renderer& renderer, UiRect rect, Color color, float alphaScale)
+{
+    alphaScale = std::clamp(alphaScale, 0.0f, 1.0f);
+    renderer.drawOutlinedText(
+        rect.pos + Vec2{5.0f, 3.0f},
+        "保護",
+        scaleAlpha(color, alphaScale),
+        scaleAlpha({0, 0, 0, 120}, alphaScale),
+        6,
+        2);
+}
+
 void drawInventoryUiItemIcon(
     Renderer& renderer,
     Vec2 center,
@@ -1309,19 +1321,14 @@ void drawInventoryUiSlot(
             LabelScale);
     };
     const auto drawProtectionLabel = [&]() {
-        if (!style.showProtectionLabel || !stats || !stats->protectionEnabled) {
+        if (!style.showProtectionLabel ||
+            style.bottomLabel == InventoryUiProtectionStatusText ||
+            !stats ||
+            !stats->protectionEnabled) {
             return;
         }
-        constexpr int LabelScale = 2;
-        renderer.drawOutlinedText(
-            rect.pos + Vec2{5.0f, 3.0f},
-            "保護",
-            scaleAlpha(style.protectionLabelColor, contentAlpha),
-            scaleAlpha({0, 0, 0, 120}, contentAlpha),
-            6,
-            LabelScale);
+        drawInventoryUiProtectionLabel(renderer, rect, style.protectionLabelColor, contentAlpha);
     };
-
     if (entry.item == nullptr) {
         drawBottomLabel();
         drawTopRightCount();
@@ -1538,7 +1545,7 @@ void drawInventoryUiDetailPanel(
         renderer,
         panel,
         detailTitle,
-        stats && stats->protectionEnabled,
+        options.showProtectionLabel && stats && stats->protectionEnabled,
         entry.item->rarity,
         options.animationSeconds);
 

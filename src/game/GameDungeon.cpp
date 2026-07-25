@@ -7442,6 +7442,7 @@ void Game::renderDungeonEventItemRequestUi(Renderer& renderer, double totalSecon
             objectCatalog_,
             encyclopedia_,
             InventoryUiDetailOptions{
+                .showProtectionLabel = detailAvailability != DungeonEventRequestItemAvailability::Protected,
                 .animationSeconds = static_cast<float>(totalSeconds),
                 .unlockedRingCount = unlockedRingCount(),
             },

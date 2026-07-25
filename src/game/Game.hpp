@@ -1320,6 +1320,16 @@ private:
         int ringItemIndex = -1;
         bool valid = false;
     };
+    struct MerchantBulkSellKey {
+        BaseItemSource source = BaseItemSource::Backpack;
+        bool stack = false;
+        std::string stableId;
+        int sourceIndex = -1;
+    };
+    struct MerchantBulkSellSummary {
+        int itemCount = 0;
+        int totalPrice = 0;
+    };
     struct BaseMiningRescueDropItem {
         std::string objectId;
         Vec2 startPosition{};
@@ -1354,6 +1364,18 @@ private:
     MerchantSellTarget merchantSellTargetForScreenSlot(int slotIndex) const;
     bool merchantSellTargetAvailable(MerchantSellTarget target) const;
     int merchantSellTargetPrice(MerchantSellTarget target) const;
+    int merchantSellTargetQuantity(MerchantSellTarget target) const;
+    std::vector<MerchantSellTarget> merchantSellTargetsForSource(int source) const;
+    std::optional<MerchantBulkSellKey> merchantBulkSellKeyForTarget(MerchantSellTarget target) const;
+    MerchantSellTarget merchantSellTargetForBulkKey(const MerchantBulkSellKey& key) const;
+    bool merchantBulkSellKeySelected(const MerchantBulkSellKey& key) const;
+    bool merchantBulkSellTargetSelected(MerchantSellTarget target) const;
+    bool toggleMerchantBulkSellTarget(MerchantSellTarget target);
+    void selectAllMerchantBulkSellTargets(int source);
+    void pruneMerchantBulkSellSelection();
+    MerchantBulkSellSummary merchantBulkSellSummary() const;
+    bool sellMerchantBulkSelection();
+    void clearMerchantBulkSellState();
     void sellMerchantTarget(MerchantSellTarget target, int count);
     void sellMerchantScreenSlot(int slotIndex, int count);
     std::vector<StorageEntry> processingEntries() const;
@@ -1406,7 +1428,7 @@ private:
     InventoryUiEntryView storageTransferTargetView(StorageTransferTarget target) const;
     void depositStorageTarget(StorageTransferTarget target, int count);
     void withdrawStorageTarget(StorageTransferTarget target, int count);
-    void depositAllStorageItems();
+    void depositAllBackpackItems();
     void prepareRingPresetFromWarehouse(int presetIndex);
     std::string storageEntryLabel(StorageEntry entry, bool warehouseEntry) const;
     const ItemData* storageEntryItem(StorageEntry entry, bool warehouseEntry) const;
@@ -2360,6 +2382,9 @@ private:
     UiCommandMenuState baseMerchantSellCommandMenu_{};
     int baseMerchantSellCommandSource_ = 0;
     int baseMerchantSellCommandIndex_ = -1;
+    bool baseMerchantBulkSellActive_ = false;
+    std::vector<MerchantBulkSellKey> baseMerchantBulkSellSelection_;
+    UiConfirmDialogState baseMerchantBulkSellConfirm_{};
     UiCommandMenuState baseMerchantBuyCommandMenu_{};
     int baseMerchantBuyCommandIndex_ = -1;
     bool baseUpgradeActive_ = false;

@@ -41,6 +41,8 @@ struct InventoryUiEntryView {
     bool equipped = false;
 };
 
+inline constexpr std::string_view InventoryUiProtectionStatusText = "保護中";
+
 struct InventoryUiSlotStyle {
     bool selected = false;
     bool disabled = false;
@@ -64,6 +66,7 @@ struct InventoryUiDetailExtraLine {
 
 struct InventoryUiDetailOptions {
     bool showEnhanceCount = true;
+    bool showProtectionLabel = true;
     float animationSeconds = 0.0f;
     bool showExtraLineSeparator = true;
     int unlockedRingCount = SpellRingCount;
@@ -137,6 +140,12 @@ void drawInventoryUiSlotBottomLabel(
     UiRect rect,
     std::string_view label,
     Color color = ui::Text);
+
+void drawInventoryUiProtectionLabel(
+    Renderer& renderer,
+    UiRect rect,
+    Color color = ui::Text,
+    float alphaScale = 1.0f);
 
 void drawInventoryUiItemIcon(
     Renderer& renderer,

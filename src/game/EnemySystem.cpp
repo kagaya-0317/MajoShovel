@@ -1829,7 +1829,9 @@ ItemData makeCapturedItemData(const Enemy& enemy)
     item.rarity = 1;
     item.roguelikeDropWeight = 0.0;
     item.roguelikeResidualWeight = 0.0;
-    item.price = 0;
+    item.price = enemy.definition != nullptr
+        ? balance::capturedEnemyItemBasePrice(enemy.definition->money)
+        : 0;
 
     if (enemy.definition == nullptr) {
         item.damageType = "none";

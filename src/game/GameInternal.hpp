@@ -2,6 +2,7 @@
 
 #include "game/Game.hpp"
 
+#include "data/GameBalance.hpp"
 #include "engine/Log.hpp"
 #include "engine/Renderer.hpp"
 #include "engine/Ui.hpp"
@@ -294,6 +295,8 @@ constexpr int BaseEditUndoLimit = 100;
 constexpr float BaseEditHandleSize = 12.0f;
 constexpr float BaseEditHandleHitPadding = 8.0f;
 constexpr float RingObjectImageMaxSize = 48.0f;
+constexpr Vec2 RingItemUiRectSize{54.0f, 54.0f};
+constexpr float RingItemBottomLabelExtraHeight = 30.0f;
 constexpr float ObjectImageScaleMin = 0.25f;
 constexpr float ObjectImageScaleMax = 4.0f;
 constexpr float ObjectImageScaleStep = 0.05f;
@@ -2192,9 +2195,8 @@ UiRect ringItemUiRect(
     int itemIndex,
     int itemCount)
 {
-    constexpr Vec2 Size{54.0f, 54.0f};
     const Vec2 center = ringItemUiCenter(item, spellRing, balance, itemIndex, itemCount);
-    return {center - Size * 0.5f, Size};
+    return {center - RingItemUiRectSize * 0.5f, RingItemUiRectSize};
 }
 
 float normalizeRingAngle(float angle)
@@ -2973,7 +2975,7 @@ ItemImageDrawOptions ringScreenItemImageOptions(const SpellRingItem& item, const
     return itemOptions;
 }
 
-void drawRingItemShape(
+void drawRingItemShapeVisual(
     Renderer& renderer,
     const SpellRingItem& item,
     const ItemData* object,
@@ -3060,6 +3062,43 @@ void drawRingItemShape(
     }
     renderer.fillCircle(center, 12.0f, itemFallbackColorForBrokenState({96, 122, 210, 255}, broken));
     renderer.drawCircle(center, 15.0f, itemFallbackColorForBrokenState({160, 202, 255, 255}, broken));
+}
+
+void drawRingItemShape(
+    Renderer& renderer,
+    const SpellRingItem& item,
+    const ItemData* object,
+    Vec2 center,
+    Vec2 outward,
+    Vec2 forward,
+    float totalSeconds,
+    bool selected,
+    bool invalid = false,
+    bool moveMode = false,
+    bool showProtectionLabel = true)
+{
+    drawRingItemShapeVisual(
+        renderer,
+        item,
+        object,
+        center,
+        outward,
+        forward,
+        totalSeconds,
+        selected,
+        invalid,
+        moveMode);
+
+    if (!showProtectionLabel || !item.protectionEnabled) {
+        return;
+    }
+
+    const Vec2 visualCenter = ringItemActionDrawPosition(item, center, outward);
+    const UiRect itemRect{
+        visualCenter - RingItemUiRectSize * 0.5f,
+        RingItemUiRectSize,
+    };
+    drawInventoryUiProtectionLabel(renderer, itemRect);
 }
 
 bool drawRingItemObjectImage(
@@ -3285,7 +3324,7 @@ ObjectDefinition makeCapturedObjectDefinition(const EnemyDefinition& enemy, Enem
     item.rarity = 1;
     item.roguelikeDropWeight = 0.0;
     item.roguelikeResidualWeight = 0.0;
-    item.price = 0;
+    item.price = balance::capturedEnemyItemBasePrice(enemy.money);
     item.visual.source = ItemVisualSource::Enemy;
     item.visual.imageNumber = enemy.imageNumber;
     item.visual.sourceId = enemy.id;

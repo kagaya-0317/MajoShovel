@@ -55,6 +55,12 @@ constexpr float RingWindVelocityDamping = 8.5f;
 constexpr float RingWindReturnRate = 7.0f;
 constexpr float RingWindMaxOffset = 92.0f;
 constexpr float RingWindMaxVelocity = 260.0f;
+constexpr float RingAnchorBaseFollowRate = 14.0f;
+constexpr float RingAnchorStrengthFollowScale = 2.5f;
+constexpr float RingAnchorBaseMaxLag = 16.0f;
+constexpr float RingAnchorStrengthMaxLag = 32.0f;
+constexpr float RingAnchorReleaseRate = 14.0f;
+constexpr float RingAnchorSettleDistance = 0.05f;
 constexpr float RingFluidItemPositionInfluence = 0.5f;
 
 struct SpellRingFluidNodeBasis {
@@ -1975,7 +1981,14 @@ void SpellRingSystem::updatePresentation(const Player& player, float dt, const R
             ringIndex,
             activeRingIndex_,
             ringShiftAllowed);
-        const Vec2 windCenter = targetCenter + runtime.externalWindOffset;
+        const Vec2 playerCenter = witchSelfLightCenter(player.position);
+        // Keep the player-controlled shift outside the anchor response.
+        const Vec2 shiftOffset = targetCenter - playerCenter;
+        const Vec2 anchorTargetCenter = playerCenter + runtime.externalWindOffset;
+        runtime.anchor = {};
+        runtime.anchor.targetCenter = anchorTargetCenter;
+        runtime.anchor.targetInitialized = true;
+        const Vec2 windCenter = anchorTargetCenter + shiftOffset;
         runtime.homeCenter = windCenter;
         if (runtime.state == SpellRingState::Normal) {
             runtime.center = windCenter;
@@ -2009,6 +2022,8 @@ void SpellRingSystem::resetRuntimeStateAtPlayer(const Player& player, const Runt
         runtime.homeCenter = normalCenter;
         runtime.center = normalCenter;
         runtime.previousCenter = normalCenter;
+        runtime.anchor.targetCenter = witchSelfLightCenter(player.position);
+        runtime.anchor.targetInitialized = true;
         runtime.throwDirection = player.facing;
 
         RingFluidPresentationState& fluid = ringFluidPresentation_[static_cast<std::size_t>(ringIndex)];
@@ -2257,23 +2272,59 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
             ringIndex,
             activeRingIndex_,
             ringShiftAllowed);
-        const Vec2 windCenter = targetCenter + runtime.externalWindOffset;
+        const Vec2 playerCenter = witchSelfLightCenter(player.position);
+        const Vec2 shiftOffset = targetCenter - playerCenter;
+        const Vec2 anchorTargetCenter = playerCenter + runtime.externalWindOffset;
+        if (!runtime.anchor.targetInitialized) {
+            runtime.anchor.targetCenter = anchorTargetCenter;
+            runtime.anchor.targetInitialized = true;
+        }
+
+        const bool anchorRequested =
+            runtime.state == SpellRingState::Normal &&
+            ringShiftAllowed &&
+            input.ringOffsetHeld() &&
+            anchorStrength > 0.0;
+        if (runtime.state != SpellRingState::Normal || anchorStrength <= 0.0) {
+            runtime.anchor.offset = {};
+            runtime.anchor.active = false;
+        } else if (anchorRequested) {
+            runtime.anchor.active = true;
+            if (safeDt > 0.0f) {
+                const float clampedAnchor = clamp(static_cast<float>(anchorStrength), 0.0f, 5.0f);
+                const float followRate =
+                    RingAnchorBaseFollowRate /
+                    (1.0f + clampedAnchor * RingAnchorStrengthFollowScale);
+                // Preserve the anchored world position before easing it toward the moving base.
+                const Vec2 targetDelta = anchorTargetCenter - runtime.anchor.targetCenter;
+                runtime.anchor.offset =
+                    (runtime.anchor.offset - targetDelta) * std::exp(-followRate * safeDt);
+
+                const float lag = length(runtime.anchor.offset);
+                const float maxLag =
+                    RingAnchorBaseMaxLag + clampedAnchor * RingAnchorStrengthMaxLag;
+                if (lag > maxLag) {
+                    runtime.anchor.offset = runtime.anchor.offset / lag * maxLag;
+                }
+            }
+        } else if (runtime.anchor.active && safeDt > 0.0f) {
+            runtime.anchor.offset =
+                runtime.anchor.offset * std::exp(-RingAnchorReleaseRate * safeDt);
+            if (lengthSquared(runtime.anchor.offset) <=
+                RingAnchorSettleDistance * RingAnchorSettleDistance) {
+                runtime.anchor.offset = {};
+                runtime.anchor.active = false;
+            }
+        } else if (!runtime.anchor.active) {
+            runtime.anchor.offset = {};
+        }
+        runtime.anchor.targetCenter = anchorTargetCenter;
+
+        const Vec2 windCenter = anchorTargetCenter + runtime.anchor.offset + shiftOffset;
         runtime.homeCenter = windCenter;
 
         if (runtime.state == SpellRingState::Normal) {
-            if (input.ringOffsetHeld() && anchorStrength > 0.0 && safeDt > 0.0f) {
-                const float clampedAnchor = clamp(static_cast<float>(anchorStrength), 0.0f, 5.0f);
-                const float followRate = 14.0f / (1.0f + clampedAnchor * 2.5f);
-                runtime.center = lerp(runtime.center, windCenter, 1.0f - std::exp(-followRate * safeDt));
-                const Vec2 toNormalCenter = windCenter - runtime.center;
-                const float lag = length(toNormalCenter);
-                const float maxLag = 16.0f + clampedAnchor * 32.0f;
-                if (lag > maxLag) {
-                    runtime.center = windCenter - normalize(toNormalCenter) * maxLag;
-                }
-            } else {
-                runtime.center = windCenter;
-            }
+            runtime.center = windCenter;
             continue;
         }
 
