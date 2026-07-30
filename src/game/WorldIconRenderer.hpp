@@ -13,6 +13,8 @@
 
 namespace majo {
 
+inline constexpr float WorldIconScaleReferenceSize = 48.0f;
+
 enum class WorldIconId {
     MoneySmall,
     MoneyMedium,

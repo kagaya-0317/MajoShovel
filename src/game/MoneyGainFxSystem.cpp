@@ -17,6 +17,7 @@ namespace {
 constexpr std::size_t MaxActiveCoins = 96;
 constexpr int MaxCoinsPerGrant = 20;
 constexpr float Pi = 3.14159265358979323846f;
+constexpr float MoneyCoinShadowSize = 20.0f;
 constexpr float ArrivalPulseDurationSeconds = 0.24f;
 constexpr float HudPulseDurationSeconds = 0.22f;
 constexpr Vec2 MoneyCoinTargetOffset{0.0f, -16.0f};
@@ -147,7 +148,6 @@ void MoneyGainFxSystem::spawn(int amount, Vec2 origin)
         coin.initialRotationDegrees = randomRange(rng, 0.0f, 360.0f);
         coin.angularVelocityDegrees = randomRange(rng, 480.0f, 820.0f) *
             (std::bernoulli_distribution(0.5)(rng) ? 1.0f : -1.0f);
-        coin.visualSize = randomRange(rng, 18.0f, 22.0f);
         coin.displayAmount = displayAmount;
         coin.sequenceIndex = index;
         coin.sequenceCount = coinCount;
@@ -287,10 +287,10 @@ void MoneyGainFxSystem::renderForeground(Renderer& renderer) const
         const float shadowAlpha = (1.0f - flightProgress) * lerp(1.0f, 0.42f, shadowLift);
         const float shadowScale = lerp(1.0f, 0.58f, shadowLift);
         renderer.fillEllipse(
-            coin.groundPosition + Vec2{0.0f, coin.visualSize * 0.34f},
+            coin.groundPosition + Vec2{0.0f, MoneyCoinShadowSize * 0.34f},
             {
-                coin.visualSize * 0.43f * shadowScale,
-                coin.visualSize * 0.15f * shadowScale,
+                MoneyCoinShadowSize * 0.43f * shadowScale,
+                MoneyCoinShadowSize * 0.15f * shadowScale,
             },
             withScaledAlpha({14, 10, 20, 78}, shadowAlpha));
 
@@ -313,16 +313,11 @@ void MoneyGainFxSystem::renderForeground(Renderer& renderer) const
             1.0f));
         const float arrivalShrink = lerp(1.0f, 0.62f, smooth01(flightProgress));
         const float popScale = 0.78f + 0.22f * easeOutCubic(popProgress);
-        const float pulseScale = 1.0f + std::sin(activeSeconds * 18.0f) * 0.025f;
-        const float visualScale = popScale * arrivalShrink * pulseScale;
-
-        renderer.fillSoftCircle(
-            coin.position,
-            coin.visualSize * visualScale * 0.72f,
-            withScaledAlpha({255, 194, 54, 76}, 1.0f - flightProgress * 0.45f));
+        const float visualScale = popScale * arrivalShrink;
 
         WorldIconDrawOptions options;
         options.filter = TextureFilter::Linear;
+        options.allowUpscale = true;
         options.outlineEnabled = false;
         options.rotationDegrees =
             coin.initialRotationDegrees +
@@ -334,8 +329,8 @@ void MoneyGainFxSystem::renderForeground(Renderer& renderer) const
             WorldIconId::MoneyCoin,
             coin.position,
             {
-                coin.visualSize * (1.0f + landingImpact * 0.10f),
-                coin.visualSize * (1.0f - landingImpact * 0.12f),
+                WorldIconScaleReferenceSize * (1.0f + landingImpact * 0.10f),
+                WorldIconScaleReferenceSize * (1.0f - landingImpact * 0.12f),
             },
             options);
     }

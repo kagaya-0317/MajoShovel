@@ -52,7 +52,6 @@ private:
         float curveLift = 24.0f;
         float initialRotationDegrees = 0.0f;
         float angularVelocityDegrees = 0.0f;
-        float visualSize = 20.0f;
         int displayAmount = 0;
         int sequenceIndex = 0;
         int sequenceCount = 1;

@@ -3,6 +3,7 @@
 #include "engine/Input.hpp"
 #include "engine/Renderer.hpp"
 
+#include <cstddef>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -85,10 +86,28 @@ private:
     };
 
     struct SpeakingPortraitMotion {
+        enum class Cue {
+            Neutral,
+            Speech,
+            Pause,
+        };
+
+        enum class Phase {
+            WaitingForPortrait,
+            WaitingForCue,
+            Bouncing,
+            FinishingBounceForPause,
+            Pausing,
+        };
+
         std::string speakerId;
+        std::vector<Cue> cues;
+        std::size_t nextCueIndex = 0;
         float cycleElapsedSeconds = 0.0f;
+        float pauseRemainingSeconds = 0.0f;
+        Phase phase = Phase::WaitingForPortrait;
         bool active = false;
-        bool started = false;
+        bool completedCycle = false;
     };
 
     [[nodiscard]] const DialogueStep* currentStep() const;
@@ -106,7 +125,9 @@ private:
     void updateRightPortrait(float dt);
     void applyPortraitExpressionStep(const DialogueStep& step);
     void resetSpeakingPortraitMotion();
+    void finishSpeakingPortraitMotion();
     void updateSpeakingPortraitMotion(float dt);
+    [[nodiscard]] std::size_t revealedSpeakingPortraitCueCount() const;
     [[nodiscard]] bool speakingPortraitReady() const;
     [[nodiscard]] bool speakingPortraitMotionBlocksAdvance() const;
     [[nodiscard]] float speakingPortraitOffsetY(std::string_view speakerId) const;

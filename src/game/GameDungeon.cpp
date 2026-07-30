@@ -7703,7 +7703,8 @@ void Game::appendDungeonEventRenderEntries(
                     frameIndex = characterSpriteIdleFrameIndex(static_cast<float>(totalSeconds)),
                     totalSeconds
                 ]() {
-                    const unsigned char alpha = static_cast<unsigned char>(completed ? 145 : 245);
+                    const bool fadeCompletedMarker = completed && !dungeonEventKindIsWitch(kind);
+                    const unsigned char alpha = static_cast<unsigned char>(fadeCompletedMarker ? 145 : 245);
                     if (kind == DungeonEventKind::WarpGuideMap) {
                         const Vec2 pedestalCenter = center + Vec2{0.0f, 8.0f};
                         const Vec2 mapCenter = center + Vec2{

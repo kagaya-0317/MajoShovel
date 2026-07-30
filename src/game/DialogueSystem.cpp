@@ -23,8 +23,9 @@ constexpr float DialogueCharacterDelay = 0.035f;
 constexpr float DialogueCharacterFadeSeconds = 0.12f;
 constexpr float DialoguePortraitFadeSeconds = 0.18f;
 constexpr float DialoguePortraitSlidePixels = 24.0f;
-constexpr float DialogueSpeakingPortraitLiftPixels = 24.0f;
-constexpr float DialogueSpeakingPortraitCycleSeconds = 20.0f / 60.0f;
+constexpr float DialogueSpeakingPortraitLiftPixels = 9.0f;
+constexpr float DialogueSpeakingPortraitCycleSeconds = 12.0f / 60.0f;
+constexpr float DialogueSpeakingPortraitPauseSeconds = 6.0f / 60.0f;
 constexpr float DialogueAdvanceRepeatInterval = 0.28f;
 constexpr float DialogueSpeakerModeSwitchWaitSeconds = 0.45f;
 constexpr float DialogueContentStartLeadFrames = 10.0f;
@@ -149,6 +150,24 @@ const DialogueLine* previousLineBeforeStep(const DialogueSequence& sequence, int
 bool isLineBreak(std::string_view codepoint)
 {
     return codepoint == "\n" || codepoint == "\r";
+}
+
+bool isSpeakingPortraitPause(std::string_view codepoint)
+{
+    return codepoint == "…" ||
+        codepoint == "・" ||
+        codepoint == "。" ||
+        codepoint == "." ||
+        codepoint == "、" ||
+        codepoint == ",";
+}
+
+bool isDialogueWhitespace(std::string_view codepoint)
+{
+    return isLineBreak(codepoint) ||
+        codepoint == " " ||
+        codepoint == "\t" ||
+        codepoint == "　";
 }
 
 bool dialogueWorldIconTagAt(std::string_view text, std::size_t offset, std::size_t& outEnd, std::string& outKey)
@@ -1452,8 +1471,40 @@ void DialoguePlayer::resetSpeakingPortraitMotion()
         }
     }
 
+    std::vector<SpeakingPortraitMotion::Cue> cues;
+    bool hasSpeech = false;
+    for (const DialogueTextUnit& unit : splitDialogueTextUnits(line->text)) {
+        if (unit.kind == DialogueGlyph::Kind::Text && isLineBreak(unit.text)) {
+            continue;
+        }
+
+        SpeakingPortraitMotion::Cue cue = SpeakingPortraitMotion::Cue::Speech;
+        if (unit.kind == DialogueGlyph::Kind::Text && isSpeakingPortraitPause(unit.text)) {
+            cue = SpeakingPortraitMotion::Cue::Pause;
+        } else if (unit.kind == DialogueGlyph::Kind::Text && isDialogueWhitespace(unit.text)) {
+            cue = SpeakingPortraitMotion::Cue::Neutral;
+        } else {
+            hasSpeech = true;
+        }
+        cues.push_back(cue);
+    }
+    if (!hasSpeech) {
+        return;
+    }
+
     speakingPortraitMotion_.speakerId = line->speakerId;
+    speakingPortraitMotion_.cues = std::move(cues);
     speakingPortraitMotion_.active = true;
+}
+
+void DialoguePlayer::finishSpeakingPortraitMotion()
+{
+    const bool advanceAfterMotion = advanceAfterSpeakingPortraitMotion_;
+    speakingPortraitMotion_ = {};
+    advanceAfterSpeakingPortraitMotion_ = false;
+    if (advanceAfterMotion) {
+        advanceLine();
+    }
 }
 
 void DialoguePlayer::updateSpeakingPortraitMotion(float dt)
@@ -1461,28 +1512,118 @@ void DialoguePlayer::updateSpeakingPortraitMotion(float dt)
     if (!speakingPortraitMotion_.active) {
         return;
     }
-    if (!speakingPortraitMotion_.started) {
+    if (speakingPortraitMotion_.phase == SpeakingPortraitMotion::Phase::WaitingForPortrait) {
         if (!speakingPortraitReady()) {
             return;
         }
-        speakingPortraitMotion_.started = true;
+        speakingPortraitMotion_.phase = SpeakingPortraitMotion::Phase::WaitingForCue;
     }
 
-    speakingPortraitMotion_.cycleElapsedSeconds += std::max(0.0f, dt);
-    while (speakingPortraitMotion_.cycleElapsedSeconds >= DialogueSpeakingPortraitCycleSeconds) {
-        speakingPortraitMotion_.cycleElapsedSeconds -= DialogueSpeakingPortraitCycleSeconds;
-        if (!lineComplete()) {
+    float remainingSeconds = std::max(0.0f, dt);
+    while (speakingPortraitMotion_.active) {
+        const bool complete = lineComplete();
+        if (complete && !speakingPortraitMotion_.completedCycle) {
+            speakingPortraitMotion_.nextCueIndex = speakingPortraitMotion_.cues.size();
+            speakingPortraitMotion_.pauseRemainingSeconds = 0.0f;
+            speakingPortraitMotion_.phase = SpeakingPortraitMotion::Phase::Bouncing;
+        } else if (complete &&
+            speakingPortraitMotion_.phase != SpeakingPortraitMotion::Phase::Bouncing &&
+            speakingPortraitMotion_.phase != SpeakingPortraitMotion::Phase::FinishingBounceForPause) {
+            finishSpeakingPortraitMotion();
+            return;
+        }
+
+        if (speakingPortraitMotion_.phase == SpeakingPortraitMotion::Phase::WaitingForCue ||
+            speakingPortraitMotion_.phase == SpeakingPortraitMotion::Phase::Bouncing) {
+            const std::size_t revealedCueCount = revealedSpeakingPortraitCueCount();
+            while (speakingPortraitMotion_.nextCueIndex < revealedCueCount) {
+                const SpeakingPortraitMotion::Cue cue =
+                    speakingPortraitMotion_.cues[speakingPortraitMotion_.nextCueIndex++];
+                if (cue == SpeakingPortraitMotion::Cue::Speech) {
+                    if (speakingPortraitMotion_.phase == SpeakingPortraitMotion::Phase::WaitingForCue) {
+                        speakingPortraitMotion_.phase = SpeakingPortraitMotion::Phase::Bouncing;
+                    }
+                    continue;
+                }
+                if (cue != SpeakingPortraitMotion::Cue::Pause) {
+                    continue;
+                }
+
+                if (speakingPortraitMotion_.phase == SpeakingPortraitMotion::Phase::Bouncing) {
+                    speakingPortraitMotion_.phase =
+                        SpeakingPortraitMotion::Phase::FinishingBounceForPause;
+                } else {
+                    speakingPortraitMotion_.pauseRemainingSeconds =
+                        DialogueSpeakingPortraitPauseSeconds;
+                    speakingPortraitMotion_.phase = SpeakingPortraitMotion::Phase::Pausing;
+                }
+                break;
+            }
+        }
+
+        if (speakingPortraitMotion_.phase == SpeakingPortraitMotion::Phase::WaitingForCue) {
+            return;
+        }
+
+        if (speakingPortraitMotion_.phase == SpeakingPortraitMotion::Phase::Pausing) {
+            const float elapsed = std::min(
+                remainingSeconds,
+                speakingPortraitMotion_.pauseRemainingSeconds);
+            speakingPortraitMotion_.pauseRemainingSeconds -= elapsed;
+            remainingSeconds -= elapsed;
+            if (speakingPortraitMotion_.pauseRemainingSeconds > 0.0f) {
+                return;
+            }
+            speakingPortraitMotion_.pauseRemainingSeconds = 0.0f;
+            speakingPortraitMotion_.phase = SpeakingPortraitMotion::Phase::WaitingForCue;
+            if (remainingSeconds <= 0.0f) {
+                return;
+            }
             continue;
         }
 
-        const bool advanceAfterMotion = advanceAfterSpeakingPortraitMotion_;
-        speakingPortraitMotion_ = {};
-        advanceAfterSpeakingPortraitMotion_ = false;
-        if (advanceAfterMotion) {
-            advanceLine();
+        const float cycleRemaining =
+            DialogueSpeakingPortraitCycleSeconds - speakingPortraitMotion_.cycleElapsedSeconds;
+        const float elapsed = std::min(remainingSeconds, cycleRemaining);
+        speakingPortraitMotion_.cycleElapsedSeconds += elapsed;
+        remainingSeconds -= elapsed;
+        if (speakingPortraitMotion_.cycleElapsedSeconds < DialogueSpeakingPortraitCycleSeconds) {
+            return;
         }
-        return;
+
+        speakingPortraitMotion_.cycleElapsedSeconds = 0.0f;
+        speakingPortraitMotion_.completedCycle = true;
+        if (lineComplete()) {
+            finishSpeakingPortraitMotion();
+            return;
+        }
+        if (speakingPortraitMotion_.phase ==
+            SpeakingPortraitMotion::Phase::FinishingBounceForPause) {
+            speakingPortraitMotion_.pauseRemainingSeconds =
+                DialogueSpeakingPortraitPauseSeconds;
+            speakingPortraitMotion_.phase = SpeakingPortraitMotion::Phase::Pausing;
+        }
+        if (remainingSeconds <= 0.0f) {
+            return;
+        }
     }
+}
+
+std::size_t DialoguePlayer::revealedSpeakingPortraitCueCount() const
+{
+    if (!speakingPortraitMotion_.active) {
+        return 0;
+    }
+    if (lineComplete()) {
+        return speakingPortraitMotion_.cues.size();
+    }
+
+    std::size_t revealedCount = 0;
+    while (revealedCount < speakingPortraitMotion_.cues.size() &&
+        lineElapsed_ > static_cast<float>(revealedCount) * DialogueCharacterDelay) {
+        ++revealedCount;
+    }
+    return revealedCount;
 }
 
 bool DialoguePlayer::speakingPortraitReady() const
@@ -1504,14 +1645,26 @@ bool DialoguePlayer::speakingPortraitReady() const
 
 bool DialoguePlayer::speakingPortraitMotionBlocksAdvance() const
 {
-    return speakingPortraitMotion_.active;
+    if (!speakingPortraitMotion_.active) {
+        return false;
+    }
+    if (!speakingPortraitMotion_.completedCycle) {
+        return true;
+    }
+    return speakingPortraitMotion_.phase == SpeakingPortraitMotion::Phase::Bouncing ||
+        speakingPortraitMotion_.phase ==
+            SpeakingPortraitMotion::Phase::FinishingBounceForPause;
 }
 
 float DialoguePlayer::speakingPortraitOffsetY(std::string_view speakerId) const
 {
     if (!speakingPortraitMotion_.active ||
-        !speakingPortraitMotion_.started ||
         speakerId != speakingPortraitMotion_.speakerId) {
+        return 0.0f;
+    }
+    if (speakingPortraitMotion_.phase != SpeakingPortraitMotion::Phase::Bouncing &&
+        speakingPortraitMotion_.phase !=
+            SpeakingPortraitMotion::Phase::FinishingBounceForPause) {
         return 0.0f;
     }
 

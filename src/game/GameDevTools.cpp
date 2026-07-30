@@ -4683,7 +4683,12 @@ void Game::renderObjectImageScaleEditScreen(Renderer& renderer) const
             if (definition != nullptr) {
                 WorldIconDrawOptions options;
                 options.allowUpscale = true;
-                drewImage = drawWorldIcon(renderer, definition->iconId, previewCenter, {ObjectImageScalePreviewSize, ObjectImageScalePreviewSize}, options);
+                drewImage = drawWorldIcon(
+                    renderer,
+                    definition->iconId,
+                    previewCenter,
+                    {WorldIconScaleReferenceSize, WorldIconScaleReferenceSize},
+                    options);
                 name = std::string(definition->displayName);
                 subtitle = "img_" + std::to_string(definition->imageNumber) + " / " + key;
             } else {
