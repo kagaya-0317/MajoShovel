@@ -56,6 +56,13 @@ struct InventoryUiSlotStyle {
     bool showProtectionLabel = true;
     Color protectionLabelColor = ui::Text;
     bool showFrame = true;
+    bool registerNavigationTarget = true;
+};
+
+struct InventoryUiProtectionLabelStyle {
+    Color color = ui::Text;
+    float alphaScale = 1.0f;
+    Vec2 offset{};
 };
 
 struct InventoryUiDetailExtraLine {
@@ -108,6 +115,15 @@ struct InlineItemTextStyle {
 [[nodiscard]] InventoryUiItemStats inventoryUiStatsFromRingItem(const SpellRingItem& item);
 [[nodiscard]] std::optional<InventoryUiItemStats> inventoryUiEntryStats(const InventoryUiEntryView& entry);
 [[nodiscard]] std::string joinInventoryUiEffectLines(const std::vector<std::string>& lines);
+[[nodiscard]] Vec2 measureInventoryUiRarityStars(Renderer& renderer, int rarity);
+[[nodiscard]] Vec2 drawInventoryUiRarityStars(
+    Renderer& renderer,
+    Vec2 pos,
+    int rarity,
+    float animationSeconds);
+[[nodiscard]] std::string formatInventoryUiWeightText(
+    const ItemData& item,
+    const std::optional<InventoryUiItemStats>& stats = std::nullopt);
 [[nodiscard]] Vec2 measureInlineItemText(
     Renderer& renderer,
     std::string_view text,
@@ -144,8 +160,7 @@ void drawInventoryUiSlotBottomLabel(
 void drawInventoryUiProtectionLabel(
     Renderer& renderer,
     UiRect rect,
-    Color color = ui::Text,
-    float alphaScale = 1.0f);
+    const InventoryUiProtectionLabelStyle& style = {});
 
 void drawInventoryUiItemIcon(
     Renderer& renderer,

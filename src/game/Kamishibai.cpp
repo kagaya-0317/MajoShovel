@@ -836,15 +836,6 @@ void KamishibaiRenderer::renderTitleScreen(Renderer& renderer, std::string_view 
         static_cast<float>(height) * 0.35f - titleSize.y * 0.5f,
     };
     renderer.drawOutlinedText(titlePos, title, {255, 248, 220, 255}, {0, 0, 0, 185}, 8, titleScale);
-
-    const std::string prompt = "Enter / F";
-    const int promptScale = width >= 800 ? 3 : 2;
-    const Vec2 promptSize = renderer.measureText(prompt, promptScale);
-    const Vec2 promptPos{
-        (static_cast<float>(width) - promptSize.x) * 0.5f,
-        static_cast<float>(height) * 0.76f,
-    };
-    renderer.drawOutlinedText(promptPos, prompt, {246, 238, 214, 235}, {0, 0, 0, 170}, 5, promptScale);
 }
 
 void KamishibaiRenderer::drawCoverImage(

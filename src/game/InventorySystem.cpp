@@ -1370,14 +1370,14 @@ void InventorySystem::moveShortcutCursor(int delta)
 
 void InventorySystem::moveShortcutCursorGrid(int dx, int dy)
 {
-    selectedShortcutColumn_ = (selectedShortcutColumn_ + dx) % ShortcutColumns;
-    if (selectedShortcutColumn_ < 0) {
-        selectedShortcutColumn_ += ShortcutColumns;
-    }
-    shortcutRow_ = (shortcutRow_ + dy) % ShortcutRows;
-    if (shortcutRow_ < 0) {
-        shortcutRow_ += ShortcutRows;
-    }
+    const int moved = moveUiGridSelection(
+        selectedShortcutIndex(),
+        ShortcutSlotCount,
+        ShortcutColumns,
+        dx,
+        dy);
+    shortcutRow_ = moved / ShortcutColumns;
+    selectedShortcutColumn_ = moved % ShortcutColumns;
 }
 
 void InventorySystem::selectShortcutSlot(int slot)
@@ -1904,9 +1904,15 @@ bool InventorySystem::moveObjectInstanceToScreenSlot(std::string_view instanceId
     return false;
 }
 
-void InventorySystem::toggleShortcutRow()
+void InventorySystem::moveShortcutRow(int delta)
 {
-    shortcutRow_ = (shortcutRow_ + 1) % ShortcutRows;
+    if (delta == 0) {
+        return;
+    }
+    shortcutRow_ = (shortcutRow_ + delta) % ShortcutRows;
+    if (shortcutRow_ < 0) {
+        shortcutRow_ += ShortcutRows;
+    }
 }
 
 void InventorySystem::grabOrPlaceSelected()
@@ -2585,7 +2591,7 @@ void InventorySystem::updateShortcuts(
     if (!ui.pointerConsumed()) {
         for (int column = 0; column < ShortcutColumns; ++column) {
             const UiRect rect = shortcutHudSlotRect(column, screenWidth, screenHeight);
-            if (rect.contains(ui.mouse())) {
+            if (ui.pointerInside(rect)) {
                 hoveredSlotIndex = shortcutRow_ * ShortcutColumns + column;
                 break;
             }
@@ -2622,9 +2628,10 @@ void InventorySystem::updateShortcuts(
         moveShortcutCursor(input.shortcutCursorDelta());
     }
 
-    if (input.toggleShortcutRowPressed()) {
-        toggleShortcutRow();
-    }
+    const int shortcutRowDelta =
+        (input.pressed(InputAction::NextShortcutRow) ? 1 : 0) -
+        (input.pressed(InputAction::PreviousShortcutRow) ? 1 : 0);
+    moveShortcutRow(shortcutRowDelta);
     ui.emitCursorMoveIfChanged(previousShortcutIndex, selectedShortcutIndex());
 
     if (input.useItemPressed()) {
@@ -2827,38 +2834,44 @@ void InventorySystem::updateScreen(
     }
 
     const int previousSelection = selectedShortcutIndex();
-    if (input.pressed(InputAction::MoveLeft)) {
-        moveShortcutCursorGrid(-1, 0);
-    }
-    if (input.pressed(InputAction::MoveRight)) {
-        moveShortcutCursorGrid(1, 0);
-    }
-    if (input.pressed(InputAction::MoveUp)) {
-        moveShortcutCursorGrid(0, -1);
-    }
-    if (input.pressed(InputAction::MoveDown)) {
-        moveShortcutCursorGrid(0, 1);
+    const bool gridNavigationEnabled =
+        !ui.navigationActive() ||
+        ui.navigationFocusRole() == UiNavigationRole::Grid;
+    if (gridNavigationEnabled) {
+        if (input.pressed(InputAction::MoveLeft)) {
+            moveShortcutCursorGrid(-1, 0);
+        }
+        if (input.pressed(InputAction::MoveRight)) {
+            moveShortcutCursorGrid(1, 0);
+        }
+        if (input.pressed(InputAction::MoveUp)) {
+            moveShortcutCursorGrid(0, -1);
+        }
+        if (input.pressed(InputAction::MoveDown)) {
+            moveShortcutCursorGrid(0, 1);
+        }
     }
     if (input.shortcutCursorDelta() != 0) {
         moveShortcutCursor(input.shortcutCursorDelta());
     }
     selectShortcutSlot(input.shortcutSlotPressed());
 
-    int hoveredSlotIndex = -1;
+    int pointerSlotIndex = -1;
     for (int i = 0; i < ShortcutSlotCount; ++i) {
         const UiRect rect = inventorySlotRect(i);
-        if (rect.contains(ui.mouse())) {
-            hoveredSlotIndex = i;
+        if (ui.selectionFocused(rect)) {
             selectShortcutIndex(i);
-            break;
+        }
+        if (ui.pointerInside(rect)) {
+            pointerSlotIndex = i;
         }
     }
     ui.emitCursorMoveIfChanged(previousSelection, selectedShortcutIndex());
 
-    if (input.mouseLeftPressed() && hoveredSlotIndex >= 0 && !ui.pointerConsumed()) {
-        slotPointerPressIndex_ = hoveredSlotIndex;
+    if (input.mouseLeftPressed() && pointerSlotIndex >= 0 && !ui.pointerConsumed()) {
+        slotPointerPressIndex_ = pointerSlotIndex;
         slotPointerPressMouse_ = input.mouseScreen();
-        slotPointerPressCanOpenMenu_ = hasScreenItem(hoveredSlotIndex);
+        slotPointerPressCanOpenMenu_ = hasScreenItem(pointerSlotIndex);
         slotPointerDragTriggered_ = false;
         ui.consumePointer();
     }
@@ -2883,12 +2896,12 @@ void InventorySystem::updateScreen(
 
     if (slotPointerPressIndex_ >= 0 && input.mouseLeftReleased()) {
         if (slotPointerDragTriggered_ && grabbedSlotActive_) {
-            if (hoveredSlotIndex >= 0) {
-                selectShortcutIndex(hoveredSlotIndex);
+            if (pointerSlotIndex >= 0) {
+                selectShortcutIndex(pointerSlotIndex);
             }
             placeGrabbedAtSelected();
             ui.emitSound(UiSoundEvent::ItemMove);
-        } else if (slotPointerPressCanOpenMenu_ && hoveredSlotIndex == slotPointerPressIndex_) {
+        } else if (slotPointerPressCanOpenMenu_ && pointerSlotIndex == slotPointerPressIndex_) {
             openSlotCommandMenu(slotPointerPressIndex_, itemUseEnabled, itemDiscardEnabled);
         }
         resetSlotPointerPress();
@@ -3185,6 +3198,7 @@ void InventorySystem::renderShortcutHud(Renderer& renderer, const SpellRingSyste
         const InventoryUiEntryView entry = entryViewForSlot(slotIndex);
         InventoryUiSlotStyle style{selected && !drewFrame, false, shortcutHudIconMaxSize(hudPanel)};
         style.showFrame = !drewFrame;
+        style.registerNavigationTarget = false;
         if (entry.item != nullptr && entry.instance == nullptr && entry.stackCount > 1) {
             style.showTopRightCount = true;
             style.topRightCount = entry.stackCount;

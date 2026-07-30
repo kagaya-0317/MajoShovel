@@ -10144,17 +10144,14 @@ void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
             const InventoryUiGridStyle gridStyle = bookshelfGridStyle();
             const int columns = std::max(1, gridStyle.columns);
             int nextSelection = bookshelfSelection_;
-            if (input.pressed(InputAction::MoveLeft)) {
-                nextSelection = std::max(0, nextSelection - 1);
-            }
-            if (input.pressed(InputAction::MoveRight)) {
-                nextSelection = std::min(itemCount - 1, nextSelection + 1);
-            }
-            if (input.pressed(InputAction::MoveUp)) {
-                nextSelection = std::max(0, nextSelection - columns);
-            }
-            if (input.pressed(InputAction::MoveDown)) {
-                nextSelection = std::min(itemCount - 1, nextSelection + columns);
+            if (!ui.navigationActive() || ui.navigationFocusRole() == UiNavigationRole::Grid) {
+                const int dx =
+                    (input.pressed(InputAction::MoveRight) ? 1 : 0) -
+                    (input.pressed(InputAction::MoveLeft) ? 1 : 0);
+                const int dy =
+                    (input.pressed(InputAction::MoveDown) ? 1 : 0) -
+                    (input.pressed(InputAction::MoveUp) ? 1 : 0);
+                nextSelection = moveUiGridSelection(nextSelection, itemCount, columns, dx, dy);
             }
             if (nextSelection != bookshelfSelection_) {
                 bookshelfSelection_ = nextSelection;
@@ -10173,7 +10170,7 @@ void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
         const int visibleCount = std::min(BookshelfVisibleRows, itemCount);
         for (int i = 0; i < visibleCount; ++i) {
             const UiRect rect = bookshelfMenuChoiceRect(panel, i);
-            if (rect.contains(ui.mouse())) {
+            if (ui.selectionFocused(rect)) {
                 bookshelfSelection_ = i;
             }
             if (ui.pressed(rect)) {
@@ -10198,7 +10195,7 @@ void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
             if (!uiScrollAreaRectVisible(layout, rect)) {
                 continue;
             }
-            if (ui.hovered(rect)) {
+            if (ui.selectionFocused(rect)) {
                 bookshelfSelection_ = i;
             }
             if (ui.pressed(rect)) {
@@ -10580,10 +10577,10 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             }
 
             int move = 0;
-            if (input.pressed(InputAction::MoveUp) || input.pressed(InputAction::MoveLeft) || input.shortcutCursorDelta() < 0) {
+            if (input.pressed(InputAction::MoveUp) || input.pressed(InputAction::MoveLeft)) {
                 --move;
             }
-            if (input.pressed(InputAction::MoveDown) || input.pressed(InputAction::MoveRight) || input.shortcutCursorDelta() > 0) {
+            if (input.pressed(InputAction::MoveDown) || input.pressed(InputAction::MoveRight)) {
                 ++move;
             }
             if (move != 0) {
@@ -10922,21 +10919,17 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 2);
             baseStatus_.clear();
         };
-        const auto moveGridSelection = [&input](int& selection, int slotCount) {
+        const auto moveGridSelection = [&input, &ui](int& selection, int slotCount) {
             const int count = std::max(1, slotCount);
             selection = std::clamp(selection, 0, count - 1);
-            const int columns = StorageColumns;
-            if (input.pressed(InputAction::MoveLeft)) {
-                selection = std::max(0, selection - 1);
-            }
-            if (input.pressed(InputAction::MoveRight)) {
-                selection = std::min(count - 1, selection + 1);
-            }
-            if (input.pressed(InputAction::MoveUp)) {
-                selection = std::max(0, selection - columns);
-            }
-            if (input.pressed(InputAction::MoveDown)) {
-                selection = std::min(count - 1, selection + columns);
+            if (!ui.navigationActive() || ui.navigationFocusRole() == UiNavigationRole::Grid) {
+                const int dx =
+                    (input.pressed(InputAction::MoveRight) ? 1 : 0) -
+                    (input.pressed(InputAction::MoveLeft) ? 1 : 0);
+                const int dy =
+                    (input.pressed(InputAction::MoveDown) ? 1 : 0) -
+                    (input.pressed(InputAction::MoveUp) ? 1 : 0);
+                selection = moveUiGridSelection(selection, count, StorageColumns, dx, dy);
             }
             if (input.shortcutCursorDelta() != 0) {
                 selection = std::clamp(selection + input.shortcutCursorDelta(), 0, count - 1);
@@ -11012,7 +11005,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             }
             for (int i = 0; i < ChoiceCount; ++i) {
                 const UiRect rect = storageActionChoiceRect(i);
-                if (rect.contains(ui.mouse())) {
+                if (ui.selectionFocused(rect)) {
                     baseStorageActionSelection_ = i;
                 }
                 if (ui.pressed(rect)) {
@@ -11072,7 +11065,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
 
             for (int i = 0; i < ChoiceCount; ++i) {
                 const UiRect rect = storageBulkChoiceRect(i);
-                if (rect.contains(ui.mouse())) {
+                if (ui.selectionFocused(rect)) {
                     baseStorageBulkSelection_ = i;
                 }
                 if (ui.pressed(rect)) {
@@ -11106,8 +11099,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             sourceTabsInput.focusDelta = input.activeRingDelta();
             sourceTabsInput.commit =
                 sourceTabsInput.focusDelta != 0 ||
-                input.confirmPressed() ||
-                input.useItemPressed();
+                (!ui.navigationActive() && (input.confirmPressed() || input.useItemPressed()));
             const int sourceSelection = updateUiTabs(
                 baseStorageDepositSourceTabs_,
                 ui,
@@ -11151,11 +11143,13 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                         }
                     };
                     moveRingSelection(input.shortcutCursorDelta());
-                    if (input.pressed(InputAction::MoveLeft) || input.pressed(InputAction::MoveUp)) {
-                        moveRingSelection(-1);
-                    }
-                    if (input.pressed(InputAction::MoveRight) || input.pressed(InputAction::MoveDown)) {
-                        moveRingSelection(1);
+                    if (!ui.navigationActive() || ui.navigationFocusRole() == UiNavigationRole::Control) {
+                        if (input.pressed(InputAction::MoveLeft) || input.pressed(InputAction::MoveUp)) {
+                            moveRingSelection(-1);
+                        }
+                        if (input.pressed(InputAction::MoveRight) || input.pressed(InputAction::MoveDown)) {
+                            moveRingSelection(1);
+                        }
                     }
                 }
                 int hoveredRingItem = -1;
@@ -11168,8 +11162,10 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                         i,
                         itemCount,
                         ringPreviewSeconds);
-                    if (rect.contains(ui.mouse())) {
+                    if (ui.selectionFocused(rect)) {
                         baseStorageDepositSelection_ = i;
+                    }
+                    if (ui.pointerInside(rect)) {
                         hoveredRingItem = i;
                     }
                 }
@@ -11247,8 +11243,10 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             int hoveredBackpackSlot = -1;
             for (int i = 0; i < inventory_.screenSlotCount(); ++i) {
                 const UiRect rect = storageTransferGridSlotRect(i);
-                if (rect.contains(ui.mouse())) {
+                if (ui.selectionFocused(rect)) {
                     baseStorageDepositSelection_ = i;
+                }
+                if (ui.pointerInside(rect)) {
                     hoveredBackpackSlot = i;
                 }
             }
@@ -11363,8 +11361,10 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             int hoveredWarehouseSlot = -1;
             for (int i = 0; i < StorageWithdrawSlotCount; ++i) {
                 const UiRect rect = storageWithdrawSlotRect(i);
-                if (rect.contains(ui.mouse())) {
+                if (ui.selectionFocused(rect)) {
                     baseStorageWithdrawSelection_ = i;
+                }
+                if (ui.pointerInside(rect)) {
                     hoveredWarehouseSlot = i;
                 }
             }
@@ -11494,7 +11494,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             };
             for (int i = 0; i < ChoiceCount; ++i) {
                 const UiRect rect = merchantActionChoiceRect(i);
-                if (rect.contains(ui.mouse())) {
+                if (ui.selectionFocused(rect)) {
                     baseProcessingActionSelection_ = i;
                 }
                 if (ui.pressed(rect)) {
@@ -11612,8 +11612,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         sourceTabsInput.commit =
             sourceTabsInput.focusDelta != 0 ||
             sourceTabsInput.directFocusIndex >= 0 ||
-            input.confirmPressed() ||
-            input.useItemPressed();
+            (!ui.navigationActive() && (input.confirmPressed() || input.useItemPressed()));
         const int sourceSelection = updateUiTabs(
             baseProcessingSourceTabs_,
             ui,
@@ -11663,21 +11662,23 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             }
 
             baseProcessingSelection_ = std::clamp(baseProcessingSelection_, 0, StoragePaneSlotCount - 1);
-            if (input.pressed(InputAction::MoveLeft)) {
-                baseProcessingSelection_ = std::max(0, baseProcessingSelection_ - 1);
-            }
-            if (input.pressed(InputAction::MoveRight)) {
-                baseProcessingSelection_ = std::min(StoragePaneSlotCount - 1, baseProcessingSelection_ + 1);
-            }
-            if (input.pressed(InputAction::MoveUp)) {
-                baseProcessingSelection_ = std::max(0, baseProcessingSelection_ - StorageColumns);
-            }
-            if (input.pressed(InputAction::MoveDown)) {
-                baseProcessingSelection_ = std::min(StoragePaneSlotCount - 1, baseProcessingSelection_ + StorageColumns);
+            if (!ui.navigationActive() || ui.navigationFocusRole() == UiNavigationRole::Grid) {
+                const int dx =
+                    (input.pressed(InputAction::MoveRight) ? 1 : 0) -
+                    (input.pressed(InputAction::MoveLeft) ? 1 : 0);
+                const int dy =
+                    (input.pressed(InputAction::MoveDown) ? 1 : 0) -
+                    (input.pressed(InputAction::MoveUp) ? 1 : 0);
+                baseProcessingSelection_ = moveUiGridSelection(
+                    baseProcessingSelection_,
+                    StoragePaneSlotCount,
+                    StorageColumns,
+                    dx,
+                    dy);
             }
             for (int i = 0; i < StoragePaneSlotCount; ++i) {
                 const UiRect rect = externalWarehouseSourceSlotRect(baseProcessingGridSlotRect, i);
-                if (rect.contains(ui.mouse())) {
+                if (ui.selectionFocused(rect)) {
                     baseProcessingSelection_ = i;
                 }
                 if (ui.pressed(rect)) {
@@ -11712,11 +11713,13 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                     }
                 };
                 moveRingSelection(input.shortcutCursorDelta());
-                if (input.pressed(InputAction::MoveLeft) || input.pressed(InputAction::MoveUp)) {
-                    moveRingSelection(-1);
-                }
-                if (input.pressed(InputAction::MoveRight) || input.pressed(InputAction::MoveDown)) {
-                    moveRingSelection(1);
+                if (!ui.navigationActive() || ui.navigationFocusRole() == UiNavigationRole::Control) {
+                    if (input.pressed(InputAction::MoveLeft) || input.pressed(InputAction::MoveUp)) {
+                        moveRingSelection(-1);
+                    }
+                    if (input.pressed(InputAction::MoveRight) || input.pressed(InputAction::MoveDown)) {
+                        moveRingSelection(1);
+                    }
                 }
             }
 
@@ -11729,7 +11732,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                     i,
                     itemCount,
                     ringPreviewSeconds);
-                if (rect.contains(ui.mouse())) {
+                if (ui.selectionFocused(rect)) {
                     baseProcessingSelection_ = i;
                 }
                 if (ui.pressed(rect)) {
@@ -11749,21 +11752,19 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         constexpr int Columns = 8;
         const int slotCount = inventory_.screenSlotCount();
         baseProcessingSelection_ = std::clamp(baseProcessingSelection_, 0, std::max(0, slotCount - 1));
-        if (input.pressed(InputAction::MoveLeft)) {
-            baseProcessingSelection_ = std::max(0, baseProcessingSelection_ - 1);
-        }
-        if (input.pressed(InputAction::MoveRight)) {
-            baseProcessingSelection_ = std::min(slotCount - 1, baseProcessingSelection_ + 1);
-        }
-        if (input.pressed(InputAction::MoveUp)) {
-            baseProcessingSelection_ = std::max(0, baseProcessingSelection_ - Columns);
-        }
-        if (input.pressed(InputAction::MoveDown)) {
-            baseProcessingSelection_ = std::min(slotCount - 1, baseProcessingSelection_ + Columns);
+        if (!ui.navigationActive() || ui.navigationFocusRole() == UiNavigationRole::Grid) {
+            const int dx =
+                (input.pressed(InputAction::MoveRight) ? 1 : 0) -
+                (input.pressed(InputAction::MoveLeft) ? 1 : 0);
+            const int dy =
+                (input.pressed(InputAction::MoveDown) ? 1 : 0) -
+                (input.pressed(InputAction::MoveUp) ? 1 : 0);
+            baseProcessingSelection_ =
+                moveUiGridSelection(baseProcessingSelection_, slotCount, Columns, dx, dy);
         }
         for (int i = 0; i < slotCount; ++i) {
             const UiRect rect = baseProcessingGridSlotRect(i);
-            if (rect.contains(ui.mouse())) {
+            if (ui.selectionFocused(rect)) {
                 baseProcessingSelection_ = i;
             }
             if (ui.pressed(rect)) {
@@ -11804,24 +11805,21 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseMerchantActionSelection_ = 0;
             baseStatus_.clear();
         };
-        const auto moveGridSelection = [&input](int& selection, int count) {
+        const auto moveGridSelection = [&input, &ui](int& selection, int count) {
             constexpr int Columns = 8;
             if (count <= 0) {
                 selection = 0;
                 return;
             }
             selection = std::clamp(selection, 0, count - 1);
-            if (input.pressed(InputAction::MoveLeft)) {
-                selection = std::max(0, selection - 1);
-            }
-            if (input.pressed(InputAction::MoveRight)) {
-                selection = std::min(count - 1, selection + 1);
-            }
-            if (input.pressed(InputAction::MoveUp)) {
-                selection = std::max(0, selection - Columns);
-            }
-            if (input.pressed(InputAction::MoveDown)) {
-                selection = std::min(count - 1, selection + Columns);
+            if (!ui.navigationActive() || ui.navigationFocusRole() == UiNavigationRole::Grid) {
+                const int dx =
+                    (input.pressed(InputAction::MoveRight) ? 1 : 0) -
+                    (input.pressed(InputAction::MoveLeft) ? 1 : 0);
+                const int dy =
+                    (input.pressed(InputAction::MoveDown) ? 1 : 0) -
+                    (input.pressed(InputAction::MoveUp) ? 1 : 0);
+                selection = moveUiGridSelection(selection, count, Columns, dx, dy);
             }
         };
         const auto merchantSellSourceSlotCount = [&]() {
@@ -11983,7 +11981,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             }
             for (int i = 0; i < ChoiceCount; ++i) {
                 const UiRect rect = merchantActionChoiceRect(i);
-                if (rect.contains(ui.mouse())) {
+                if (ui.selectionFocused(rect)) {
                     baseMerchantActionSelection_ = i;
                 }
                 if (ui.pressed(rect)) {
@@ -12075,8 +12073,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             sourceTabsInput.commit =
                 sourceTabsInput.focusDelta != 0 ||
                 sourceTabsInput.directFocusIndex >= 0 ||
-                input.confirmPressed() ||
-                input.useItemPressed();
+                (!ui.navigationActive() && (input.confirmPressed() || input.useItemPressed()));
             const int sourceSelection = updateUiTabs(
                 baseMerchantSellSourceTabs_,
                 ui,
@@ -12180,7 +12177,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 moveGridSelection(baseSellSelection_, StoragePaneSlotCount);
                 for (int i = 0; i < StoragePaneSlotCount; ++i) {
                     const UiRect rect = externalWarehouseSourceSlotRect(merchantSellGridSlotRect, i);
-                    if (rect.contains(ui.mouse())) {
+                    if (ui.selectionFocused(rect)) {
                         baseSellSelection_ = i;
                     }
                     if (ui.pressed(rect)) {
@@ -12217,11 +12214,13 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                         }
                     };
                     moveRingSelection(input.shortcutCursorDelta());
-                    if (input.pressed(InputAction::MoveLeft) || input.pressed(InputAction::MoveUp)) {
-                        moveRingSelection(-1);
-                    }
-                    if (input.pressed(InputAction::MoveRight) || input.pressed(InputAction::MoveDown)) {
-                        moveRingSelection(1);
+                    if (!ui.navigationActive() || ui.navigationFocusRole() == UiNavigationRole::Control) {
+                        if (input.pressed(InputAction::MoveLeft) || input.pressed(InputAction::MoveUp)) {
+                            moveRingSelection(-1);
+                        }
+                        if (input.pressed(InputAction::MoveRight) || input.pressed(InputAction::MoveDown)) {
+                            moveRingSelection(1);
+                        }
                     }
                 }
 
@@ -12234,7 +12233,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                         i,
                         itemCount,
                         ringPreviewSeconds);
-                    if (rect.contains(ui.mouse())) {
+                    if (ui.selectionFocused(rect)) {
                         baseSellSelection_ = i;
                     }
                     if (ui.pressed(rect)) {
@@ -12256,7 +12255,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             moveGridSelection(baseSellSelection_, inventory_.screenSlotCount());
             for (int i = 0; i < inventory_.screenSlotCount(); ++i) {
                 const UiRect rect = merchantSellGridSlotRect(i);
-                if (rect.contains(ui.mouse())) {
+                if (ui.selectionFocused(rect)) {
                     baseSellSelection_ = i;
                 }
                 if (ui.pressed(rect)) {
@@ -12306,7 +12305,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             moveGridSelection(baseMerchantBuySelection_, static_cast<int>(merchantStock_.size()));
             for (int i = 0; i < static_cast<int>(merchantStock_.size()); ++i) {
                 const UiRect rect = merchantGridSlotRect(i);
-                if (rect.contains(ui.mouse())) {
+                if (ui.selectionFocused(rect)) {
                     baseMerchantBuySelection_ = i;
                 }
                 if (ui.pressed(rect)) {
@@ -12544,7 +12543,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             }
             for (int i = 0; i < warpPointCount; ++i) {
                 const UiRect rect = baseMiningWarpPointSelectChoiceRect(i);
-                if (rect.contains(ui.mouse())) {
+                if (ui.selectionFocused(rect)) {
                     baseWarpPointSelection_ = i;
                 }
                 if (ui.pressed(rect)) {
@@ -12577,14 +12576,19 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             ui.block(miningStartPanel);
             return;
         }
-        if (input.pressed(InputAction::MoveLeft) || ui.pressed(stageSelectorHitRect(stageSelector.prev))) {
+        const auto stageSelectorPressed = [&](UiRect rect) {
+            return ui.pressed(rect) || ui.pressed(stageSelectorHitRect(rect));
+        };
+        if ((!ui.navigationActive() && input.pressed(InputAction::MoveLeft)) ||
+            stageSelectorPressed(stageSelector.prev)) {
             if (changeSelectedStage(-1)) {
                 ui.emitSound(UiSoundEvent::TabSwitch);
                 ui.block(miningStartPanel);
                 return;
             }
         }
-        if (input.pressed(InputAction::MoveRight) || ui.pressed(stageSelectorHitRect(stageSelector.next))) {
+        if ((!ui.navigationActive() && input.pressed(InputAction::MoveRight)) ||
+            stageSelectorPressed(stageSelector.next)) {
             if (changeSelectedStage(1)) {
                 ui.emitSound(UiSoundEvent::TabSwitch);
                 ui.block(miningStartPanel);
@@ -12593,7 +12597,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         }
         if (selectedStageRoguelike) {
             const UiRect startRect = baseMiningStartChoiceRect(0);
-            if (startRect.contains(ui.mouse())) {
+            if (ui.selectionFocused(startRect)) {
                 baseMiningStartSelection_ = 0;
             }
             if (ui.pressed(startRect) || input.confirmPressed() || input.useItemPressed()) {
@@ -12613,7 +12617,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         }
         for (int i = 0; i < BaseMiningStartChoiceCount; ++i) {
             const UiRect rect = baseMiningStartChoiceRect(i);
-            if (rect.contains(ui.mouse())) {
+            if (ui.selectionFocused(rect)) {
                 baseMiningStartSelection_ = i;
             }
             if (ui.pressed(rect)) {
@@ -13937,6 +13941,17 @@ void Game::renderBaseScreen(Renderer& renderer) const
                         ringPreviewSeconds);
                     for (int i = 0; i < static_cast<int>(ringItems.size()); ++i) {
                         const SpellRingItem& item = ringItems[static_cast<std::size_t>(i)];
+                        registerUiNavigationTarget(
+                            storageRingItemRect(
+                                item,
+                                spellRing_,
+                                balance_,
+                                ringIndex,
+                                i,
+                                static_cast<int>(ringItems.size()),
+                                ringPreviewSeconds),
+                            UiNavigationRole::Control,
+                            i == selectedRingIndex);
                         if (!item.objectId.empty()) {
                             continue;
                         }
@@ -14460,6 +14475,19 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 ringIndex,
                 selectedRingItem,
                 ringPreviewSeconds);
+            for (int i = 0; i < static_cast<int>(ringItems.size()); ++i) {
+                registerUiNavigationTarget(
+                    baseProcessingRingItemRect(
+                        ringItems[static_cast<std::size_t>(i)],
+                        spellRing_,
+                        balance_,
+                        ringIndex,
+                        i,
+                        static_cast<int>(ringItems.size()),
+                        ringPreviewSeconds),
+                    UiNavigationRole::Control,
+                    i == selectedRingItem);
+            }
         } else if (warehouseSource) {
             const int warehousePageCount = std::max(1, (warehouseCapacity() + StoragePaneSlotCount - 1) / StoragePaneSlotCount);
             const int warehousePage = std::clamp(baseStorageWarehousePage_, 0, warehousePageCount - 1);
@@ -14804,6 +14832,17 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     for (int i = 0; i < static_cast<int>(ringItems.size()); ++i) {
                         const MerchantSellTarget target = merchantSellTargetForSourceSlot(baseMerchantSellSource_, i);
                         const SpellRingItem& ringItem = ringItems[static_cast<std::size_t>(i)];
+                        registerUiNavigationTarget(
+                            merchantSellRingItemRect(
+                                ringItem,
+                                spellRing_,
+                                balance_,
+                                ringIndex,
+                                i,
+                                static_cast<int>(ringItems.size()),
+                                ringPreviewSeconds),
+                            UiNavigationRole::Control,
+                            i == selectedRingIndex);
                         UiRect labelRect = merchantSellRingItemRect(
                             ringItem,
                             spellRing_,
@@ -15303,6 +15342,16 @@ void Game::renderBaseScreen(Renderer& renderer) const
         renderer.drawText({contentLeft, body.pos.y}, "行き先", {198, 198, 206, 255}, 2);
         drawUiRectButton(renderer, stageSelector.prev, "<", false);
         drawUiRectButton(renderer, stageSelector.next, ">", false);
+        registerUiNavigationTarget(
+            stageSelector.prev,
+            UiNavigationRole::Control,
+            false,
+            canSelectDestination);
+        registerUiNavigationTarget(
+            stageSelector.next,
+            UiNavigationRole::Control,
+            false,
+            canSelectDestination);
         if (!canSelectDestination) {
             renderer.fillRect(stageSelector.prev.pos, stageSelector.prev.size, {0, 0, 0, 118});
             renderer.fillRect(stageSelector.next.pos, stageSelector.next.size, {0, 0, 0, 118});

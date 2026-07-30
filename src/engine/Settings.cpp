@@ -18,7 +18,7 @@ namespace majo {
 
 namespace {
 
-constexpr int CurrentSettingsVersion = 1;
+constexpr int CurrentSettingsVersion = 3;
 constexpr int MinWindowWidth = 640;
 constexpr int MinWindowHeight = 360;
 constexpr int MaxWindowWidth = 7680;
@@ -451,6 +451,22 @@ std::optional<InputBinding> parseInputBindingValue(const JsonValue& value)
             return std::nullopt;
         }
         binding.code = *scancode;
+        if (const JsonValue* modifiers = objectMember(value, "modifiers")) {
+            const auto appendModifier = [&](std::string_view name) {
+                if (const std::optional<InputModifiers> modifier = parseInputModifier(name)) {
+                    binding.modifiers |= *modifier;
+                }
+            };
+            if (modifiers->type == JsonValue::Type::String) {
+                appendModifier(modifiers->stringValue);
+            } else if (modifiers->type == JsonValue::Type::Array) {
+                for (const JsonValue& modifier : modifiers->arrayValue) {
+                    if (modifier.type == JsonValue::Type::String) {
+                        appendModifier(modifier.stringValue);
+                    }
+                }
+            }
+        }
     } else if (binding.device == InputBindingDevice::MouseButton) {
         const std::optional<std::string> button = stringMember(value, "button");
         if (!button) {
@@ -510,12 +526,138 @@ void loadInputBindings(const JsonValue& inputValue, InputBindingMap& bindings)
     }
 }
 
+void migrateLoadedSettings(GameSettings& settings)
+{
+    if (settings.version < 2) {
+        const std::optional<int> leftTriggerAxis = parseGamepadAxis("left_trigger");
+        if (leftTriggerAxis) {
+            const InputBinding legacyRingOffsetBinding{
+                .device = InputBindingDevice::GamepadAxis,
+                .code = *leftTriggerAxis,
+                .direction = 1,
+                .threshold = 0.45f,
+            };
+            auto& ringOffsetBindings =
+                settings.input.bindings[inputActionIndex(InputAction::OffsetRingCenter)];
+            ringOffsetBindings.erase(
+                std::remove_if(
+                    ringOffsetBindings.begin(),
+                    ringOffsetBindings.end(),
+                    [&](const InputBinding& binding) {
+                        return inputBindingEquals(binding, legacyRingOffsetBinding);
+                    }),
+                ringOffsetBindings.end());
+        }
+    }
+
+    if (settings.version < 3) {
+        const auto keyboardBinding = [](std::string_view key) {
+            return InputBinding{
+                .device = InputBindingDevice::Keyboard,
+                .code = parseKeyboardScancode(key).value_or(0),
+            };
+        };
+        const auto gamepadButtonBinding = [](std::string_view button) {
+            return InputBinding{
+                .device = InputBindingDevice::GamepadButton,
+                .code = parseGamepadButton(button).value_or(-1),
+            };
+        };
+        const auto bindingsEqual = [](const std::vector<InputBinding>& lhs, const std::vector<InputBinding>& rhs) {
+            if (lhs.size() != rhs.size()) {
+                return false;
+            }
+            std::vector<bool> matched(rhs.size(), false);
+            for (const InputBinding& left : lhs) {
+                bool found = false;
+                for (std::size_t i = 0; i < rhs.size(); ++i) {
+                    if (!matched[i] && inputBindingEquals(left, rhs[i])) {
+                        matched[i] = true;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        const auto appendUnique = [](std::vector<InputBinding>& destination, const std::vector<InputBinding>& source) {
+            for (const InputBinding& binding : source) {
+                const bool alreadyPresent = std::any_of(
+                    destination.begin(),
+                    destination.end(),
+                    [&](const InputBinding& existing) {
+                        return inputBindingEquals(existing, binding);
+                    });
+                if (!alreadyPresent) {
+                    destination.push_back(binding);
+                }
+            }
+        };
+
+        const InputBindingMap currentDefaults = defaultInputBindings();
+        const std::vector<InputBinding> legacyShortcutLeft{
+            keyboardBinding("Q"),
+            gamepadButtonBinding("dpad_left"),
+        };
+        const std::vector<InputBinding> legacyShortcutRight{
+            keyboardBinding("E"),
+            gamepadButtonBinding("dpad_right"),
+        };
+        const std::vector<InputBinding> legacyShortcutRow{
+            keyboardBinding("Tab"),
+            gamepadButtonBinding("dpad_up"),
+        };
+
+        auto& shortcutLeft =
+            settings.input.bindings[inputActionIndex(InputAction::ShortcutCursorLeft)];
+        if (bindingsEqual(shortcutLeft, legacyShortcutLeft)) {
+            shortcutLeft = currentDefaults[inputActionIndex(InputAction::ShortcutCursorLeft)];
+        }
+        auto& shortcutRight =
+            settings.input.bindings[inputActionIndex(InputAction::ShortcutCursorRight)];
+        if (bindingsEqual(shortcutRight, legacyShortcutRight)) {
+            shortcutRight = currentDefaults[inputActionIndex(InputAction::ShortcutCursorRight)];
+        }
+
+        const auto& legacyRowBindings =
+            settings.input.bindings[inputActionIndex(InputAction::ToggleShortcutRow)];
+        if (!bindingsEqual(legacyRowBindings, legacyShortcutRow)) {
+            auto& nextRow =
+                settings.input.bindings[inputActionIndex(InputAction::NextShortcutRow)];
+            appendUnique(nextRow, legacyRowBindings);
+        }
+    }
+}
+
 void writeInputBindingJson(std::ostream& out, const InputBinding& binding, std::string_view indent)
 {
     out << indent << "{ \"device\": \"" << inputBindingDeviceName(binding.device) << "\"";
     switch (binding.device) {
     case InputBindingDevice::Keyboard:
         out << ", \"key\": \"" << jsonEscape(keyboardScancodeName(binding.code)) << "\"";
+        if (binding.modifiers != InputModifiers::None) {
+            out << ", \"modifiers\": [";
+            bool first = true;
+            for (const InputModifiers modifier : {
+                    InputModifiers::Ctrl,
+                    InputModifiers::Alt,
+                    InputModifiers::Shift,
+                    InputModifiers::Gui,
+                }) {
+                if (!inputModifiersContain(binding.modifiers, modifier)) {
+                    continue;
+                }
+                if (!first) {
+                    out << ", ";
+                }
+                first = false;
+                out << "\"" << inputModifierName(modifier) << "\"";
+            }
+            out << "]";
+        }
         break;
     case InputBindingDevice::MouseButton:
         out << ", \"button\": \"" << mouseButtonName(binding.code) << "\"";
@@ -768,6 +910,7 @@ bool SettingsStore::load(GameSettings& outSettings, std::string* outError) const
         loadInputBindings(*input, loaded.input.bindings);
     }
 
+    migrateLoadedSettings(loaded);
     outSettings = sanitizeSettings(loaded);
     return true;
 }

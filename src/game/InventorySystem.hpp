@@ -138,6 +138,7 @@ public:
     const std::vector<InventoryObjectStack>& objectStacks() const { return objectStacks_; }
     std::vector<StackItem> stackItemsForSave() const;
     const std::vector<InventoryObjectInstance>& objectInstances() const { return objectInstances_; }
+    const InventoryObjectInstance* objectInstanceById(std::string_view instanceId) const;
     const MaterialInventory& materials() const { return materials_; }
     MaterialInventory& materials() { return materials_; }
     const std::string& equippedStaffInstanceId() const { return equippedStaffInstanceId_; }
@@ -257,7 +258,6 @@ private:
     InventoryObjectStack* objectStackAtScreenIndex(int index);
     const InventoryObjectInstance* objectInstanceAtScreenIndex(int index) const;
     InventoryObjectInstance* objectInstanceAtScreenIndex(int index);
-    const InventoryObjectInstance* objectInstanceById(std::string_view instanceId) const;
     InventoryObjectInstance* objectInstanceById(std::string_view instanceId);
     const InventoryObjectStack* selectedObjectStack() const;
     InventoryObjectInstance* selectedObjectInstance();
@@ -267,7 +267,7 @@ private:
     void moveShortcutCursorGrid(int dx, int dy);
     void selectShortcutSlot(int slot);
     void selectShortcutIndex(int index);
-    void toggleShortcutRow();
+    void moveShortcutRow(int delta);
     void grabOrPlaceSelected();
     void placeGrabbedAtSelected();
     bool addObjectSelectionToRing(SpellRingSystem& spellRing, SpellRingAddResult* outResult = nullptr);

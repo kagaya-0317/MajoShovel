@@ -3,66 +3,68 @@ bgm.title	bgm	bgm/title_placeholder.wav	0.44	true	0	0	タイトルBGM
 bgm.base	bgm	bgm/base_placeholder.wav	0.38	true	0	0	拠点BGM
 bgm.dungeon	bgm	bgm/dungeon_placeholder.wav	0.42	true	0	0	ダンジョンBGM
 bgm.boss	bgm	bgm/boss_placeholder.wav	0.48	true	0	0	ボス戦BGM
-se.ui.confirm	se	se/zz_tmp_ui_confirm_placeholder.wav	0.72	false	60	0	UI 決定
-se.ui.cancel	se	se/cancel.wav	0.68	false	60	52	UI キャンセル
-se.ui.menu_open	se	se/sound8.wav	0.66	false	80	0	メニューを開く
-se.ui.tab_switch	se	se/button_002.wav	0.6	false	50	-39	タブ切替
-se.ui.book_open	se	se/book.wav	0.68	false	120	22	本を開く
-se.ui.cursor_move	se	se/button_002.wav	0.58	false	35	100	カーソル移動
-se.ui.item_move	se	se/zz_tmp_ui_item_move_placeholder.wav	0.62	false	55	0	アイテム移動
-se.ui.item_use	se	se/zz_tmp_ui_item_use_placeholder.wav	0.68	false	80	0	アイテム使用
-se.ui.equip	se	se/sound4.wav	0.74	false	90	29	装備
-se.ui.ring_place	se	se/zz_tmp_ui_ring_place_placeholder.wav	0.72	false	90	0	リング配置
-se.ui.upgrade_select	se	se/zz_tmp_ui_upgrade_select_placeholder.wav	0.78	false	120	0	レベルアップ選択
-se.dialogue.advance	se	se/zz_tmp_dialogue_advance_placeholder.wav	0.62	false	45	0	メッセージ送り
+se.ui.confirm	se	se/0_Confirm1.wav	1	false	60	32.193	UI 決定
+se.ui.cancel	se	se/0_Cancel1.wav	1	false	60	32.193	UI キャンセル
+se.ui.menu_open	se	se/sound8.wav	0.95	false	80	13.75	メニューを開く
+se.ui.tab_switch	se	se/0_Cursor1.wav	0.95	false	50	0	タブ切替
+se.ui.book_open	se	se/book.wav	1.25	false	120	0	本を開く
+se.ui.cursor_move	se	se/0_Cursor5.wav	1	false	35	0	カーソル移動
+se.ui.item_move	se	se/0_Cursor4.wav	1	false	55	0	アイテム移動
+se.ui.item_use	se	se/0_PowerUp.wav	1	false	80	26.303	アイテム使用
+se.ui.equip	se	se/sound7.wav	1	false	90	7.039	装備
+se.ui.ring_place	se	se/0_Cursor4.wav	1.05	false	90	0	リング配置
+se.ui.upgrade_select	se	se/0_Recharge1.wav	1	false	120	26.303	レベルアップ選択
+se.dialogue.advance	se	se/0_Cursor5.wav	0.7	false	45	0	メッセージ送り
 se.story.phone.incoming	se	se/zz_tmp_story_phone_incoming_placeholder.wav	0.72	false	250	0	電話 着信
 se.story.phone.outgoing	se	se/zz_tmp_story_phone_outgoing_placeholder.wav	0.66	false	180	0	電話 発信
 se.story.phone.hangup	se	se/zz_tmp_story_phone_hangup_placeholder.wav	0.64	false	120	0	電話 切断
-se.story.rumble	se	se/zz_tmp_story_rumble_placeholder.wav	0.8	false	320	0	地面揺れ
+se.story.rumble	se	se/earth.wav	0.95	false	320	-51.457	地面揺れ
 se.level_up.jingle	se	se/zz_tmp_level_up_jingle_placeholder.wav	0.86	false	0	0	レベルアップジングル
 se.game_over.jingle	se	se/zz_tmp_game_over_jingle_placeholder.wav	0.88	false	0	0	ゲームオーバージングル
-se.item.new.jingle	se	se/dead.wav	0.84	false	0	0	新規アイテム入手ジングル
-se.transition	se	se/warp.wav	0.72	false	160	5	画面遷移
-se.footstep.base_outdoor	se	se/zz_tmp_footstep_base_outdoor_placeholder.wav	0.38	false	60	0	足音 拠点外
+se.item.new.jingle	se	se/zz_tmp_ui_equip_placeholder.wav	0.84	false	0	0	新規アイテム入手ジングル
+se.transition	se	se/warp.wav	0.95	false	160	0	画面遷移
+se.footstep.base_outdoor	se	se/zz_tmp_footstep_base_outdoor_placeholder.wav	0.38	false	60	100	足音 拠点外
 se.footstep.home	se	se/zz_tmp_footstep_home_placeholder.wav	0.34	false	60	0	足音 家
-se.footstep.dungeon	se	se/zz_tmp_footstep_dungeon_placeholder.wav	0.4	false	60	0	足音 ダンジョン
-se.dig.hit	se	se/hit7.wav	0.62	false	70	-78	採掘ヒット
-se.dig.break	se	se/earth2.wav	0.84	false	90	26	採掘破壊
-se.dig.ore_break	se	se/crash4.wav	0.78	false	110	0	鉱石破壊
-se.attack.hit	se	se/zz_tmp_attack_hit_placeholder.wav	0.74	false	45	0	攻撃ヒット
-se.impact.dirt.scoop	se	se/zz_tmp_impact_dirt_scoop_placeholder.wav	0.68	false	55	0	衝突 土 すくい形状
-se.impact.dirt.blade	se	se/zz_tmp_impact_dirt_blade_placeholder.wav	0.64	false	55	0	衝突 土 刃物
-se.impact.dirt.pointed	se	se/zz_tmp_impact_dirt_pointed_placeholder.wav	0.64	false	55	0	衝突 土 尖り
-se.impact.dirt.generic	se	se/zz_tmp_impact_dirt_generic_placeholder.wav	0.58	false	55	0	衝突 土 汎用
-se.impact.rock.metal	se	se/metal11.wav	0.74	false	65	30	衝突 岩 金属
-se.impact.rock.pointed	se	se/metal.wav	0.72	false	65	0	衝突 岩 尖り
-se.impact.rock.stone	se	se/earth2.wav	0.58	false	65	72	衝突 岩 石
-se.impact.slime.slime	se	se/zz_tmp_impact_slime_slime_placeholder.wav	0.62	false	50	0	衝突 スライム同士
-se.impact.soft.soft	se	se/zz_tmp_impact_soft_soft_placeholder.wav	0.58	false	50	0	衝突 柔らかい同士
-se.impact.hard.soft	se	se/zz_tmp_impact_hard_soft_placeholder.wav	0.64	false	50	0	衝突 硬いものと柔らかいもの
+se.footstep.dungeon	se	se/zz_tmp_footstep_dungeon_placeholder.wav	0.2	false	60	80.735	足音 ダンジョン
+se.dig.hit	se	se/hit7.wav	0.7	false	70	0	採掘ヒット
+se.dig.break	se	se/0_Strike6.wav	1	false	90	0	採掘破壊
+se.dig.ore_break	se	se/crash4.wav	0.3	false	110	0	鉱石破壊
+se.attack.hit	se	se/0_Strike1.wav	1.05	false	45	-7.4	攻撃ヒット
+se.impact.dirt.scoop	se	se/0_Strike6.wav	0.5	false	55	58.496	衝突 土 すくい形状
+se.impact.dirt.blade	se	se/0_Strike7.wav	0.8	false	55	100	衝突 土 刃物
+se.impact.dirt.pointed	se	se/0_Strike8.wav	0.7	false	55	63.227	衝突 土 尖り
+se.impact.dirt.generic	se	se/0_Strike4.wav	0.5	false	55	58.496	衝突 土 汎用
+se.impact.rock.metal	se	se/metal9.wav	0.3	false	65	100	衝突 岩 金属
+se.impact.rock.pointed	se	se/metal.wav	0.45	false	65	0	衝突 岩 尖り
+se.impact.rock.stone	se	se/earth2.wav	0.6	false	65	53.605	衝突 岩 石
+se.impact.slime.slime	se	se/0_Slime.wav	0.62	false	50	100	衝突 スライム同士
+se.impact.soft.soft	se	se/zz_tmp_impact_soft_soft_placeholder.wav	0.8	false	50	48.543	衝突 柔らかい同士
+se.impact.hard.soft	se	se/zz_tmp_impact_hard_soft_placeholder.wav	0.64	false	50	48.543	衝突 硬いものと柔らかいもの
 se.impact.crisp	se	se/zz_tmp_impact_crisp_placeholder.wav	0.56	false	45	0	衝突 シャリ質感
-se.impact.paper.book	se	se/book.wav	0.54	false	45	54	衝突 本・紙
-se.impact.metal.trinket	se	se/metal4.wav	0.6	false	55	1	衝突 小物金属
+se.impact.paper.book	se	se/book.wav	0.54	false	45	100	衝突 本・紙
+se.impact.metal.trinket	se	se/metal4.wav	0.6	false	55	32.193	衝突 小物金属
 se.impact.resonant.gong	se	se/metal11.wav	0.74	false	110	100	衝突 鐘
-se.impact.resonant.chime	se	se/sound14.wav	0.62	false	80	37	衝突 風鈴
-se.impact.cloth.fluffy	se	se/zz_tmp_impact_cloth_fluffy_placeholder.wav	0.56	false	55	0	衝突 ふわふわ布
-se.impact.fiber.rustle	se	se/zz_tmp_impact_fiber_rustle_placeholder.wav	0.54	false	45	0	衝突 毛束・網
-se.impact.glass	se	se/glass.wav	0.62	false	65	51	衝突 ガラス
-se.impact.metal.metal	se	se/metal8.wav	0.7	false	55	0	衝突 金属
-se.impact.stone.metal	se	se/metal11.wav	0.41	false	60	45	衝突 石と金属
-se.impact.wood	se	se/wood4.wav	0.58	false	55	16	衝突 木
-se.impact.generic	se	se/hit7.wav	0.68	false	45	63	衝突 汎用
+se.impact.resonant.chime	se	se/sound14.wav	0.75	false	80	48.543	衝突 風鈴
+se.impact.cloth.fluffy	se	se/0_WhipSwing2.wav	0.85	false	55	58.496	衝突 ふわふわ布
+se.impact.fiber.rustle	se	se/0_WhipSwing1.wav	0.54	false	45	43.296	衝突 毛束・網
+se.impact.glass	se	se/glass.wav	0.65	false	65	53.605	衝突 ガラス
+se.impact.metal.metal	se	se/metal9.wav	0.55	false	55	80.735	衝突 金属
+se.impact.stone.metal	se	se/metal11.wav	0.35	false	60	84.8	衝突 石と金属
+se.impact.wood	se	se/wood4.wav	0.58	false	55	26.303	衝突 木
+se.impact.generic	se	se/hit7.wav	0.75	false	45	-23.447	衝突 汎用
 se.pickup	se	se/zz_tmp_pickup_placeholder.wav	0.72	false	45	0	拾得
-se.boss.spawn	se	se/zz_tmp_boss_spawn_placeholder.wav	0.82	false	350	0	ボス出現
-se.boss.defeat	se	se/zz_tmp_boss_defeat_placeholder.wav	0.88	false	400	0	ボス撃破
-se.player.damage	se	se/zz_tmp_player_damage_placeholder.wav	0.82	false	150	0	プレイヤー被弾
+se.money.spawn	se	se/coin.wav	0.78	false	40	0	お金 出現
+se.money.arrive	se	se/coin2.wav	0.70	false	20	0	お金 吸収
+se.boss.spawn	se	se/earth.wav	0.82	false	350	0	ボス出現
+se.boss.defeat	se	se/0_RobotHeavy3.wav	0.88	false	400	0	ボス撃破
+se.player.damage	se	se/0_Strike1.wav	0.82	false	150	-32.193	プレイヤー被弾
 se.player.pinch	se	se/alert.wav	0.97	false	900	0	ピンチ警告
 se.ring.throw	se	se/wind10.wav	0.69	false	120	17	リング投げ
 se.ring.charge_ready	se	se/sound14.wav	0.58	false	90	48	リング投げチャージ完了
-se.ring.appear	se	se/zz_tmp_ring_appear_placeholder.wav	0.74	false	180	0	リング出現
+se.ring.appear	se	se/0_Buff2.wav	0.55	false	180	26.303	リング出現
 se.ring.unlock.jingle	se	se/zz_tmp_ring_unlock_jingle_placeholder.wav	0.88	false	0	0	スペルリング解禁ジングル
 se.enemy.defeat	se	se/zz_tmp_enemy_defeat_placeholder.wav	0.76	false	120	0	敵撃破
-se.enemy.spawn	se	se/zz_tmp_enemy_spawn_placeholder.wav	0.7	false	180	0	敵出現
+se.enemy.spawn	se	se/0_Dash.wav	0.7	false	180	48.543	敵出現
 se.enemy.buried_warning	se	se/zz_tmp_enemy_buried_warning_placeholder.wav	0.74	false	80	0	埋没敵予兆
 se.enemy.alert	se	se/zz_tmp_enemy_alert_placeholder.wav	0.72	false	180	0	敵発見
 se.enemy.attack	se	se/zz_tmp_enemy_attack_placeholder.wav	0.76	false	140	0	敵攻撃

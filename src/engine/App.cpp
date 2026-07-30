@@ -1230,7 +1230,7 @@ bool App::executeSettingsDebugCommand(const std::string& normalizedCommand)
 
             if (words.size() < 6) {
                 logWarning(
-                    "Usage: settings input add ACTION keyboard KEY | mouse BUTTON | "
+                    "Usage: settings input add ACTION keyboard KEY [MODIFIER...] | mouse BUTTON | "
                     "gamepad_button BUTTON | gamepad_axis AXIS DIRECTION [THRESHOLD]");
                 return true;
             }
@@ -1250,6 +1250,14 @@ bool App::executeSettingsDebugCommand(const std::string& normalizedCommand)
                     return true;
                 }
                 binding.code = *scancode;
+                for (std::size_t i = 6; i < words.size(); ++i) {
+                    const std::optional<InputModifiers> modifier = parseInputModifier(words[i]);
+                    if (!modifier || *modifier == InputModifiers::None) {
+                        logWarning("Unknown keyboard modifier: " + words[i]);
+                        return true;
+                    }
+                    binding.modifiers |= *modifier;
+                }
             } else if (*device == InputBindingDevice::MouseButton) {
                 const std::optional<int> button = parseMouseButton(words[5]);
                 if (!button) {

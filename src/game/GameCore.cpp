@@ -49,6 +49,8 @@ constexpr std::string_view AudioSeMagicImpact = "se.magic.impact";
 constexpr std::string_view AudioSeCaptureFail = "se.capture.fail";
 constexpr std::string_view AudioSeExplosionTick = "se.explosion.tick";
 constexpr std::string_view AudioSeDiscovery = "se.discovery";
+constexpr std::string_view AudioSeMoneySpawn = "se.money.spawn";
+constexpr std::string_view AudioSeMoneyArrive = "se.money.arrive";
 constexpr std::string_view AudioSeMonsterDiscovery = "se.discovery.monster";
 constexpr std::string_view AudioSeUiConfirm = "se.ui.confirm";
 constexpr std::string_view AudioSeUiCancel = "se.ui.cancel";
@@ -324,28 +326,6 @@ std::string normalizeTitleCreditsText(std::string text)
         return text;
     }
     return "MajoShovel\n\n制作\nGenta Kagaya\n\n使用ライブラリ\nSDL3";
-}
-
-float estimateTitleCreditsContentHeight(std::string_view text)
-{
-    constexpr float LineHeight = 30.0f;
-    constexpr float PaddingY = 12.0f;
-    constexpr std::size_t ApproxBytesPerLine = 72;
-    int visualLines = 0;
-    std::size_t lineBytes = 0;
-    const auto flushLine = [&]() {
-        visualLines += std::max(1, static_cast<int>((lineBytes + ApproxBytesPerLine - 1) / ApproxBytesPerLine));
-        lineBytes = 0;
-    };
-    for (char ch : text) {
-        if (ch == '\n') {
-            flushLine();
-        } else {
-            ++lineBytes;
-        }
-    }
-    flushLine();
-    return PaddingY * 2.0f + static_cast<float>(std::max(1, visualLines)) * LineHeight;
 }
 
 bool parseTsvTable(std::string_view text, GoogleSheetTable& outTable, std::string& outError)
@@ -1370,6 +1350,7 @@ void Game::resetWorldEffectState()
     resetInPlace(groundLines_);
     resetInPlace(wetGround_);
     captureAbsorbAnimations_.clear();
+    moneyGainFx_.clear();
     ringTrailEffectTimer_ = 0.0f;
     ambientParticleTimer_ = 0.0f;
 }
@@ -2028,10 +2009,14 @@ void Game::loadTitleCreditsData()
     if (!readTextFile(titleCreditsDataPath(), text, error)) {
         logWarning("[title] credits load failed: " + error);
         titleCreditsText_ = normalizeTitleCreditsText({});
+        titleCreditsScrollOffset_ = 0.0f;
+        titleCreditsContentHeight_ = 0.0f;
+        titleCreditsScrollState_ = {};
         return;
     }
     titleCreditsText_ = normalizeTitleCreditsText(std::move(text));
     titleCreditsScrollOffset_ = 0.0f;
+    titleCreditsContentHeight_ = 0.0f;
     titleCreditsScrollState_ = {};
     logInfo("[title] credits loaded: " + titleCreditsDataPath().generic_string());
 }
@@ -2298,32 +2283,38 @@ void Game::updateTitleScreen(const Input& input, UiContext& ui)
 
         const UiRect viewport = titleCreditsViewportRect();
         UiScrollAreaStyle scrollStyle;
-        const float contentHeight = estimateTitleCreditsContentHeight(titleCreditsText_);
-        updateUiScrollArea(
+        const UiScrollAreaLayout layout = updateUiScrollArea(
             ui,
             input,
             viewport,
-            contentHeight,
+            titleCreditsContentHeight_,
             titleCreditsScrollOffset_,
             scrollStyle,
             &titleCreditsScrollState_);
 
-        const float maxScroll = std::max(0.0f, contentHeight - viewport.size.y);
-        if (input.pressed(InputAction::MoveUp)) {
-            titleCreditsScrollOffset_ = std::max(0.0f, titleCreditsScrollOffset_ - 36.0f);
-            ui.emitSound(UiSoundEvent::CursorMove);
-        }
-        if (input.pressed(InputAction::MoveDown)) {
-            titleCreditsScrollOffset_ = std::min(maxScroll, titleCreditsScrollOffset_ + 36.0f);
-            ui.emitSound(UiSoundEvent::CursorMove);
-        }
-        if (input.pressed(InputAction::MoveLeft)) {
-            titleCreditsScrollOffset_ = std::max(0.0f, titleCreditsScrollOffset_ - viewport.size.y * 0.8f);
-            ui.emitSound(UiSoundEvent::CursorMove);
-        }
-        if (input.pressed(InputAction::MoveRight)) {
-            titleCreditsScrollOffset_ = std::min(maxScroll, titleCreditsScrollOffset_ + viewport.size.y * 0.8f);
-            ui.emitSound(UiSoundEvent::CursorMove);
+        const auto scrollBy = [&](float delta) {
+            const float previousOffset = titleCreditsScrollOffset_;
+            titleCreditsScrollOffset_ = clamp(
+                titleCreditsScrollOffset_ + delta,
+                0.0f,
+                layout.maxScroll);
+            if (titleCreditsScrollOffset_ != previousOffset) {
+                ui.emitSound(UiSoundEvent::CursorMove);
+            }
+        };
+        if (layout.scrollable) {
+            if (input.pressed(InputAction::MoveUp)) {
+                scrollBy(-36.0f);
+            }
+            if (input.pressed(InputAction::MoveDown)) {
+                scrollBy(36.0f);
+            }
+            if (input.pressed(InputAction::MoveLeft)) {
+                scrollBy(-viewport.size.y * 0.8f);
+            }
+            if (input.pressed(InputAction::MoveRight)) {
+                scrollBy(viewport.size.y * 0.8f);
+            }
         }
         ui.block(panel);
         return;
@@ -2340,7 +2331,9 @@ void Game::updateTitleScreen(const Input& input, UiContext& ui)
         return;
     }
 
-    if (input.confirmPressed() || input.useItemPressed() || (input.mouseLeftPressed() && !ui.pointerConsumed())) {
+    if (ui.pressed(titleStartPromptRect()) ||
+        (!ui.navigationActive() && (input.confirmPressed() || input.useItemPressed())) ||
+        (input.mouseLeftPressed() && !ui.pointerConsumed())) {
         if (input.mouseLeftPressed()) {
             ui.consumePointer();
         }
@@ -4330,7 +4323,6 @@ void Game::updateScreenMode(
                     ui.consumePointer();
                 }
             }
-            dungeonMapOverlayScroll_.x += static_cast<float>(input.shortcutCursorDelta()) * 22.0f;
             if (dungeonMapOverlayViewportRect().contains(ui.mouse())) {
                 dungeonMapOverlayScroll_.y += static_cast<float>(input.mouseWheelDelta()) * 42.0f;
             }
@@ -4739,7 +4731,7 @@ void Game::switchActiveRingWithLog(int delta)
 void Game::update(const Input& input, const Time& time)
 {
     FrameProfileScope updateProfile("Game.update");
-    gamepadUiCursorEnabled_ = input.lastActiveDevice() == InputDeviceKind::Gamepad;
+    navigationUiCursorEnabled_ = input.uiNavigationCursorActive();
     const GameSettings currentSettings = settingsGetter_ ? settingsGetter_() : optionsSettings_;
     lightweightModeActive_ = currentSettings.performance.lightweight;
     presentationSettingsActive_ = currentSettings.presentation;
@@ -4852,7 +4844,6 @@ void Game::update(const Input& input, const Time& time)
                 FrameProfileScope profile("Player.update");
                 player_.update(
                     input,
-                    camera_,
                     tileMap_,
                     time.deltaSeconds(),
                     false,
@@ -4985,11 +4976,9 @@ void Game::update(const Input& input, const Time& time)
                     lootDepthMultiplier(balance_, currentStageId_, depthRank);
                 std::uniform_int_distribution<int> moneyDistribution(2, 6);
                 const int amount = scaledLootAmount(moneyDistribution(rng), multiplier);
-                if (worldDrops_.spawnMoneyDrop(
+                if (grantDungeonMoney(
                         amount,
-                        safeLootLandingPosition(tile.center, rng),
-                        runStats_.elapsedSeconds,
-                        makeWorldLootJumpMotion(tile.center, rng))) {
+                        safeLootLandingPosition(tile.center, rng))) {
                     runStats_.dugTilesSinceMoneyDrop = 0;
                 }
             }
@@ -5120,6 +5109,8 @@ void Game::update(const Input& input, const Time& time)
                 if (!introTutorialActive() && std::string_view(event.id) == TutorialAppleObjectId) {
                     queueStoryEventForTrigger("tutorial:item_use");
                 }
+            } else if (event.kind == WorldDropKind::Money) {
+                moneyGainFx_.spawn(std::max(0, event.quantity), event.position);
             }
         }
         if (introTutorialActive() &&
@@ -5206,6 +5197,9 @@ void Game::update(const Input& input, const Time& time)
                 enemyCatalog_,
                 objectCatalog_,
                 worldDrops_,
+                [this](int amount, Vec2 origin) {
+                    return grantDungeonMoney(amount, origin);
+                },
                 witchSelfLightCenter(player_.position),
                 std::vector<LightSource>{},
                 effectDispatcher_,
@@ -5426,11 +5420,9 @@ void Game::update(const Input& input, const Time& time)
                 addScreenShake(event.type == EnemyEventType::BossDeath ? 8.0f : 1.5f, event.type == EnemyEventType::BossDeath ? 0.28f : 0.08f);
                 std::mt19937& rng = lootRuntimeRng();
                 if (eventRewardsEnabled && event.moneyDrop > 0) {
-                    worldDrops_.spawnMoneyDrop(
+                    grantDungeonMoney(
                         event.moneyDrop,
-                        safeLootLandingPosition(event.position, rng),
-                        runStats_.elapsedSeconds,
-                        makeWorldLootJumpMotion(event.position, rng));
+                        safeLootLandingPosition(event.position, rng));
                 }
                 const bool bossDeath = event.type == EnemyEventType::BossDeath;
                 const float manaChance = bossDeath ? balance_.bossManaDropChance : balance_.enemyManaDropChance;
@@ -5495,11 +5487,9 @@ void Game::update(const Input& input, const Time& time)
                     continue;
                 }
                 std::mt19937& rng = lootRuntimeRng();
-                worldDrops_.spawnMoneyDrop(
+                grantDungeonMoney(
                     event.moneyDrop,
-                    safeLootLandingPosition(event.position, rng),
-                    runStats_.elapsedSeconds,
-                    makeWorldLootJumpMotion(event.position, rng));
+                    safeLootLandingPosition(event.position, rng));
             } else if (event.type == EnemyEventType::MaterialDrop) {
                 if (!gameplayRewardsEnabled()) {
                     continue;
@@ -5637,8 +5627,15 @@ void Game::update(const Input& input, const Time& time)
             wetGround_.update(time.deltaSeconds());
             wetGround_.erasePendingGroundLines(groundLines_);
             groundLines_.update(time.deltaSeconds());
+            moneyGainFx_.update(time.deltaSeconds(), player_.position);
             magicFx_.update(time.deltaSeconds());
             effects_.update(time.deltaSeconds());
+        }
+        for (const MoneyGainSpawnEvent& event : moneyGainFx_.consumeSpawnEvents()) {
+            playAudioSeAt(AudioSeMoneySpawn, event.position, 1.0f, event.pitchScale);
+        }
+        for (const MoneyGainArrivalEvent& event : moneyGainFx_.consumeArrivalEvents()) {
+            playAudioSeAt(AudioSeMoneyArrive, event.position, 0.56f, event.pitchScale);
         }
         const int pendingXp = enemies_.consumePendingXp();
         if (gameplayRewardsEnabled()) {

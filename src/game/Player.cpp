@@ -22,7 +22,6 @@ int playerSpriteFrameIndex(float animationTime, bool walking)
 
 namespace {
 
-constexpr float RingShiftAimDeadzone = 0.15f;
 constexpr float RingShiftPointerDeadzonePx = 2.0f;
 constexpr float RingShiftDirectionResponse = 18.0f;
 constexpr float RingShiftDistanceResponse = 14.0f;
@@ -195,7 +194,6 @@ float Player::effectiveRadius(float baseRadius) const
 
 void Player::update(
     const Input& input,
-    const Camera& camera,
     TileMap& map,
     float dt,
     bool paused,
@@ -294,17 +292,8 @@ void Player::update(
         position = next;
     }
 
-    if (input.hasAimAxis()) {
-        facing = normalize(input.aimAxis());
-    } else if (input.lastActiveDevice() == InputDeviceKind::KeyboardMouse) {
-        const Vec2 aim = camera.screenToWorld(input.mouseScreen()) - position;
-        if (lengthSquared(aim) > 16.0f) {
-            facing = normalize(aim);
-        } else if (lengthSquared(velocity) > 1.0f) {
-            facing = normalize(velocity);
-        }
-    } else if (lengthSquared(velocity) > 1.0f) {
-        facing = normalize(velocity);
+    if (lengthSquared(moveAxis) > 0.0001f) {
+        facing = normalize(moveAxis);
     }
     updateSpriteFlipFromFacing();
 
@@ -337,13 +326,12 @@ void Player::update(
         }
     } else {
         spellRingShiftDragActive = false;
-        if (input.ringOffsetHeld()) {
-            const Vec2 aimAxis = input.aimAxis();
-            if (input.hasAimAxis() && lengthSquared(aimAxis) >= RingShiftAimDeadzone * RingShiftAimDeadzone) {
-                targetShiftDirection = normalize(aimAxis);
-            } else {
-                targetShiftDirection = normalizedOr(facing, targetShiftDirection);
-            }
+        const Vec2 shiftAxis = input.ringShiftAxis();
+        if (lengthSquared(shiftAxis) > 0.0001f) {
+            targetShiftDirection = normalize(shiftAxis);
+            targetShift = shiftDistance * std::clamp(length(shiftAxis), 0.0f, 1.0f);
+        } else if (input.ringOffsetHeld()) {
+            targetShiftDirection = normalizedOr(facing, targetShiftDirection);
             targetShift = shiftDistance;
         } else if (lengthSquared(facing) > 0.0001f) {
             targetShiftDirection = normalize(facing);

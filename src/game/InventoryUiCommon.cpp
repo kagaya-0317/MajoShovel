@@ -50,6 +50,9 @@ constexpr float TwoPi = 6.283185307f;
 constexpr float DetailLabelWidth = 106.0f;
 constexpr float DetailMinLineHeight = 31.0f;
 constexpr float DetailLineGap = 4.0f;
+constexpr std::string_view RarityStarGlyph = "★";
+constexpr int RarityStarScale = 2;
+constexpr float RarityStarGap = 2.0f;
 
 struct InlineIconTag {
     InlineIconKind kind = InlineIconKind::Item;
@@ -595,30 +598,54 @@ void drawRarityStarGlow(
     }
 }
 
+Vec2 measureRarityStars(Renderer& renderer, int rarity)
+{
+    const int clampedRarity = std::clamp(rarity, 1, 10);
+    const Vec2 starSize = renderer.measureText(RarityStarGlyph, RarityStarScale);
+    return {
+        starSize.x * static_cast<float>(clampedRarity) +
+            RarityStarGap * static_cast<float>(clampedRarity - 1),
+        starSize.y,
+    };
+}
+
 Vec2 drawRarityStars(Renderer& renderer, Vec2 pos, int rarity, float animationSeconds)
 {
-    constexpr std::string_view Star = "★";
-    constexpr int StarScale = 2;
-    constexpr float StarGap = 2.0f;
     const int clampedRarity = std::clamp(rarity, 1, 10);
-    const Vec2 starSize = renderer.measureText(Star, StarScale);
+    const Vec2 starSize = renderer.measureText(RarityStarGlyph, RarityStarScale);
     Vec2 cursor = pos;
     for (int i = 0; i < clampedRarity; ++i) {
         const float shine = rarityShineAmount(clampedRarity, i, animationSeconds);
         const Color baseColor = rarityBaseColor(clampedRarity, i, animationSeconds);
         const Color color = mixColor(baseColor, {255, 255, 255, 255}, shine * 0.88f);
-        drawRarityStarGlow(renderer, cursor, Star, baseColor, shine, StarScale);
+        drawRarityStarGlow(
+            renderer,
+            cursor,
+            RarityStarGlyph,
+            baseColor,
+            shine,
+            RarityStarScale);
         if (clampedRarity >= 7) {
-            renderer.drawOutlinedText(cursor, Star, color, {20, 16, 24, 150}, 2, StarScale);
+            renderer.drawOutlinedText(
+                cursor,
+                RarityStarGlyph,
+                color,
+                {20, 16, 24, 150},
+                2,
+                RarityStarScale);
         } else {
-            renderer.drawText(cursor, Star, color, StarScale);
+            renderer.drawText(cursor, RarityStarGlyph, color, RarityStarScale);
         }
         if (shine > 0.0f) {
-            renderer.drawText(cursor + Vec2{-1.0f, -1.0f}, Star, withAlpha({255, 255, 255, 255}, 58.0f + 150.0f * shine), StarScale);
+            renderer.drawText(
+                cursor + Vec2{-1.0f, -1.0f},
+                RarityStarGlyph,
+                withAlpha({255, 255, 255, 255}, 58.0f + 150.0f * shine),
+                RarityStarScale);
         }
-        cursor.x += starSize.x + StarGap;
+        cursor.x += starSize.x + RarityStarGap;
     }
-    return {cursor.x - pos.x - StarGap, starSize.y};
+    return measureRarityStars(renderer, clampedRarity);
 }
 
 float drawInventoryDetailHeader(
@@ -866,6 +893,20 @@ void drawInventoryEnhancementLine(Renderer& renderer, UiRect panel, float& y, co
     y += std::max(DetailMinLineHeight, bottomY - y + DetailLineGap);
 }
 
+}
+
+Vec2 measureInventoryUiRarityStars(Renderer& renderer, int rarity)
+{
+    return measureRarityStars(renderer, rarity);
+}
+
+Vec2 drawInventoryUiRarityStars(
+    Renderer& renderer,
+    Vec2 pos,
+    int rarity,
+    float animationSeconds)
+{
+    return drawRarityStars(renderer, pos, rarity, animationSeconds);
 }
 
 Color inventoryUiObjectColor(const ItemData& item)
@@ -1212,13 +1253,16 @@ void drawInventoryUiSlotBottomLabel(Renderer& renderer, UiRect rect, std::string
     renderer.drawOutlinedText(labelPos, label, color, {0, 0, 0, 120}, 6, LabelScale);
 }
 
-void drawInventoryUiProtectionLabel(Renderer& renderer, UiRect rect, Color color, float alphaScale)
+void drawInventoryUiProtectionLabel(
+    Renderer& renderer,
+    UiRect rect,
+    const InventoryUiProtectionLabelStyle& style)
 {
-    alphaScale = std::clamp(alphaScale, 0.0f, 1.0f);
+    const float alphaScale = std::clamp(style.alphaScale, 0.0f, 1.0f);
     renderer.drawOutlinedText(
-        rect.pos + Vec2{5.0f, 3.0f},
+        rect.pos + Vec2{5.0f, 3.0f} + style.offset,
         "保護",
-        scaleAlpha(color, alphaScale),
+        scaleAlpha(style.color, alphaScale),
         scaleAlpha({0, 0, 0, 120}, alphaScale),
         6,
         2);
@@ -1272,6 +1316,9 @@ void drawInventoryUiSlot(
     const InventoryUiEntryView& entry,
     const InventoryUiSlotStyle& style)
 {
+    if (style.registerNavigationTarget) {
+        registerUiNavigationTarget(rect, UiNavigationRole::Grid, style.selected);
+    }
     Color fill = style.selected ? Color{54, 44, 72, 242} : Color{20, 20, 28, 226};
     const Vec2 slotCenter = uiRectCenter(rect);
     const std::optional<InventoryUiItemStats> stats = inventoryUiEntryStats(entry);
@@ -1327,7 +1374,13 @@ void drawInventoryUiSlot(
             !stats->protectionEnabled) {
             return;
         }
-        drawInventoryUiProtectionLabel(renderer, rect, style.protectionLabelColor, contentAlpha);
+        drawInventoryUiProtectionLabel(
+            renderer,
+            rect,
+            InventoryUiProtectionLabelStyle{
+                .color = style.protectionLabelColor,
+                .alphaScale = contentAlpha,
+            });
     };
     if (entry.item == nullptr) {
         drawBottomLabel();

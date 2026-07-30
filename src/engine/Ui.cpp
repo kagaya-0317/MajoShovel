@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -40,7 +41,7 @@ constexpr std::string_view UiMenuIconPrefix = "img_";
 constexpr std::string_view UiMenuIconExtension = ".png";
 constexpr Vec2 UiSelectionCursorSize{58.0f, 58.0f};
 constexpr Vec2 UiSelectionCursorTargetOffset{8.0f, -5.0f};
-constexpr float UiSelectionCursorMoveResponsiveness = 14.0f;
+constexpr float UiSelectionCursorMoveResponsiveness = 18.0f;
 constexpr float UiSelectionCursorBobAmplitude = 3.0f;
 constexpr float UiSelectionCursorBobSpeed = 3.2f;
 constexpr float UiTextIconGap = 8.0f;
@@ -51,6 +52,7 @@ float windowAnimationStep = 1.0f / ui::WindowAnimationFrames;
 struct UiSelectionCursorState {
     bool enabled = false;
     bool targetThisFrame = false;
+    bool suppressedThisFrame = false;
     bool hasPosition = false;
     Vec2 target{};
     Vec2 position{};
@@ -59,6 +61,222 @@ struct UiSelectionCursorState {
 };
 
 UiSelectionCursorState selectionCursor;
+
+struct UiNavigationTarget {
+    UiRect rect{};
+    UiNavigationRole role = UiNavigationRole::Control;
+    bool preferred = false;
+    bool enabled = true;
+    int layer = 0;
+};
+
+std::vector<UiNavigationTarget> previousNavigationTargets;
+std::vector<UiNavigationTarget> currentNavigationTargets;
+UiRect navigationFocusRect{};
+UiNavigationRole activeNavigationFocusRole = UiNavigationRole::Control;
+bool navigationHasFocus = false;
+bool uiNavigationActive = false;
+bool navigationWasActive = false;
+int navigationLayer = 0;
+
+constexpr float NavigationRectEpsilon = 0.5f;
+constexpr float NavigationDirectionEpsilon = 0.5f;
+
+bool navigationRectsMatch(UiRect left, UiRect right)
+{
+    return std::abs(left.pos.x - right.pos.x) <= NavigationRectEpsilon &&
+        std::abs(left.pos.y - right.pos.y) <= NavigationRectEpsilon &&
+        std::abs(left.size.x - right.size.x) <= NavigationRectEpsilon &&
+        std::abs(left.size.y - right.size.y) <= NavigationRectEpsilon;
+}
+
+Vec2 navigationRectCenter(UiRect rect)
+{
+    return rect.pos + rect.size * 0.5f;
+}
+
+bool navigationRectsShareRow(UiRect left, UiRect right)
+{
+    const float overlapTop = std::max(left.pos.y, right.pos.y);
+    const float overlapBottom = std::min(left.pos.y + left.size.y, right.pos.y + right.size.y);
+    if (overlapBottom > overlapTop) {
+        return true;
+    }
+    const float centerDistance = std::abs(navigationRectCenter(left).y - navigationRectCenter(right).y);
+    return centerDistance <= std::max(left.size.y, right.size.y) * 0.55f;
+}
+
+int enabledNavigationTargetIndexForRect(const std::vector<UiNavigationTarget>& targets, UiRect rect)
+{
+    for (int i = 0; i < static_cast<int>(targets.size()); ++i) {
+        if (targets[static_cast<std::size_t>(i)].enabled &&
+            navigationRectsMatch(targets[static_cast<std::size_t>(i)].rect, rect)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int preferredNavigationTargetIndex(const std::vector<UiNavigationTarget>& targets)
+{
+    int preferredIndex = -1;
+    int preferredPriority = -1;
+    for (int i = 0; i < static_cast<int>(targets.size()); ++i) {
+        const UiNavigationTarget& target = targets[static_cast<std::size_t>(i)];
+        if (target.enabled && target.preferred) {
+            const int priority = target.role == UiNavigationRole::Grid
+                ? 2
+                : (target.role == UiNavigationRole::Control ? 1 : 0);
+            if (priority > preferredPriority) {
+                preferredIndex = i;
+                preferredPriority = priority;
+            }
+        }
+    }
+    if (preferredIndex >= 0) {
+        return preferredIndex;
+    }
+    for (int i = 0; i < static_cast<int>(targets.size()); ++i) {
+        if (targets[static_cast<std::size_t>(i)].enabled) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void focusNavigationTarget(const UiNavigationTarget& target)
+{
+    navigationFocusRect = target.rect;
+    activeNavigationFocusRole = target.role;
+    navigationHasFocus = true;
+}
+
+int directionalNavigationTargetIndex(
+    const std::vector<UiNavigationTarget>& targets,
+    int currentIndex,
+    int dx,
+    int dy)
+{
+    if (currentIndex < 0 || currentIndex >= static_cast<int>(targets.size()) || (dx == 0 && dy == 0)) {
+        return -1;
+    }
+
+    const UiNavigationTarget& current = targets[static_cast<std::size_t>(currentIndex)];
+    const Vec2 currentCenter = navigationRectCenter(current.rect);
+    int bestIndex = -1;
+    float bestScore = std::numeric_limits<float>::max();
+
+    const auto consider = [&](int index, bool requireSameRole, bool requireSameRow) {
+        if (index == currentIndex) {
+            return;
+        }
+        const UiNavigationTarget& candidate = targets[static_cast<std::size_t>(index)];
+        if (!candidate.enabled ||
+            (requireSameRole && candidate.role != current.role) ||
+            (requireSameRow && !navigationRectsShareRow(current.rect, candidate.rect))) {
+            return;
+        }
+
+        const Vec2 candidateCenter = navigationRectCenter(candidate.rect);
+        const float deltaX = candidateCenter.x - currentCenter.x;
+        const float deltaY = candidateCenter.y - currentCenter.y;
+        if ((dx < 0 && deltaX >= -NavigationDirectionEpsilon) ||
+            (dx > 0 && deltaX <= NavigationDirectionEpsilon) ||
+            (dy < 0 && deltaY >= -NavigationDirectionEpsilon) ||
+            (dy > 0 && deltaY <= NavigationDirectionEpsilon)) {
+            return;
+        }
+
+        const float primary = dx != 0 ? std::abs(deltaX) : std::abs(deltaY);
+        const float cross = dx != 0 ? std::abs(deltaY) : std::abs(deltaX);
+        const float score = primary + cross * 2.25f;
+        if (score < bestScore) {
+            bestScore = score;
+            bestIndex = index;
+        }
+    };
+
+    if (dx != 0) {
+        for (int i = 0; i < static_cast<int>(targets.size()); ++i) {
+            consider(i, current.role == UiNavigationRole::Grid || current.role == UiNavigationRole::Tab, true);
+        }
+        if (bestIndex >= 0 || current.role != UiNavigationRole::Grid) {
+            return bestIndex;
+        }
+
+        // グリッドだけは同じ行の左右端を循環する。
+        float wrappedX = dx < 0 ? -std::numeric_limits<float>::max() : std::numeric_limits<float>::max();
+        for (int i = 0; i < static_cast<int>(targets.size()); ++i) {
+            if (i == currentIndex) {
+                continue;
+            }
+            const UiNavigationTarget& candidate = targets[static_cast<std::size_t>(i)];
+            if (!candidate.enabled ||
+                candidate.role != UiNavigationRole::Grid ||
+                !navigationRectsShareRow(current.rect, candidate.rect)) {
+                continue;
+            }
+            const float candidateX = navigationRectCenter(candidate.rect).x;
+            const bool better = dx < 0 ? candidateX > wrappedX : candidateX < wrappedX;
+            if (better) {
+                wrappedX = candidateX;
+                bestIndex = i;
+            }
+        }
+        return bestIndex;
+    }
+
+    if (current.role == UiNavigationRole::Grid) {
+        for (int i = 0; i < static_cast<int>(targets.size()); ++i) {
+            consider(i, true, false);
+        }
+        if (bestIndex >= 0) {
+            return bestIndex;
+        }
+    }
+
+    bestScore = std::numeric_limits<float>::max();
+    for (int i = 0; i < static_cast<int>(targets.size()); ++i) {
+        consider(i, false, false);
+    }
+    return bestIndex;
+}
+
+void updateUiNavigation(const Input& input)
+{
+    uiNavigationActive = input.uiNavigationCursorActive();
+    if (previousNavigationTargets.empty()) {
+        navigationHasFocus = false;
+        navigationWasActive = uiNavigationActive;
+        return;
+    }
+
+    int currentIndex = navigationHasFocus
+        ? enabledNavigationTargetIndexForRect(previousNavigationTargets, navigationFocusRect)
+        : -1;
+    if (currentIndex < 0 || (uiNavigationActive && !navigationWasActive)) {
+        currentIndex = preferredNavigationTargetIndex(previousNavigationTargets);
+        if (currentIndex >= 0) {
+            focusNavigationTarget(previousNavigationTargets[static_cast<std::size_t>(currentIndex)]);
+        }
+    }
+
+    if (uiNavigationActive && currentIndex >= 0) {
+        const int dx =
+            (input.pressed(InputAction::MoveRight) ? 1 : 0) -
+            (input.pressed(InputAction::MoveLeft) ? 1 : 0);
+        const int dy =
+            (input.pressed(InputAction::MoveDown) ? 1 : 0) -
+            (input.pressed(InputAction::MoveUp) ? 1 : 0);
+        const int nextIndex = dy != 0
+            ? directionalNavigationTargetIndex(previousNavigationTargets, currentIndex, 0, dy)
+            : directionalNavigationTargetIndex(previousNavigationTargets, currentIndex, dx, 0);
+        if (nextIndex >= 0 && nextIndex != currentIndex) {
+            focusNavigationTarget(previousNavigationTargets[static_cast<std::size_t>(nextIndex)]);
+        }
+    }
+    navigationWasActive = uiNavigationActive;
+}
 
 std::string windowKey(std::string_view id, UiRect panel)
 {
@@ -194,9 +412,12 @@ void drawCapsuleOutline(Renderer& renderer, UiRect rect, float radius, Color col
     }
 }
 
-void requestUiSelectionCursor(UiRect rect)
+void setUiSelectionCursorTarget(UiRect rect)
 {
-    if (!selectionCursor.enabled || rect.size.x <= 0.0f || rect.size.y <= 0.0f) {
+    if (!selectionCursor.enabled ||
+        selectionCursor.suppressedThisFrame ||
+        rect.size.x <= 0.0f ||
+        rect.size.y <= 0.0f) {
         return;
     }
 
@@ -718,6 +939,83 @@ void fillRoundedRect(Renderer& renderer, UiRect rect, float radius, Color color)
 
 }
 
+UiNavigationLayerScope::UiNavigationLayerScope()
+    : previousLayer_(navigationLayer)
+{
+    ++navigationLayer;
+}
+
+UiNavigationLayerScope::~UiNavigationLayerScope()
+{
+    navigationLayer = previousLayer_;
+}
+
+void registerUiNavigationTarget(UiRect rect, UiNavigationRole role, bool preferred, bool enabled)
+{
+    if (rect.size.x <= 0.0f || rect.size.y <= 0.0f) {
+        return;
+    }
+    for (UiNavigationTarget& target : currentNavigationTargets) {
+        if (target.layer == navigationLayer &&
+            target.role == role &&
+            navigationRectsMatch(target.rect, rect)) {
+            target.preferred = target.preferred || preferred;
+            target.enabled = target.enabled && enabled;
+            return;
+        }
+    }
+    currentNavigationTargets.push_back(UiNavigationTarget{
+        .rect = rect,
+        .role = role,
+        .preferred = preferred,
+        .enabled = enabled,
+        .layer = navigationLayer,
+    });
+}
+
+void requestUiSelectionCursor(UiRect rect)
+{
+    setUiSelectionCursorTarget(rect);
+}
+
+void suppressUiSelectionCursor()
+{
+    selectionCursor.suppressedThisFrame = true;
+    selectionCursor.targetThisFrame = false;
+}
+
+int moveUiGridSelection(int selectedIndex, int itemCount, int columns, int dx, int dy)
+{
+    if (itemCount <= 0) {
+        return 0;
+    }
+    columns = std::max(1, columns);
+    selectedIndex = std::clamp(selectedIndex, 0, itemCount - 1);
+
+    if (dx != 0) {
+        const int rowStart = (selectedIndex / columns) * columns;
+        const int rowEnd = std::min(itemCount, rowStart + columns) - 1;
+        const int rowLength = rowEnd - rowStart + 1;
+        const int rowOffset = selectedIndex - rowStart;
+        int nextOffset = (rowOffset + dx) % rowLength;
+        if (nextOffset < 0) {
+            nextOffset += rowLength;
+        }
+        selectedIndex = rowStart + nextOffset;
+    }
+
+    if (dy != 0) {
+        const int column = selectedIndex % columns;
+        const int targetRow = selectedIndex / columns + dy;
+        const int rowCount = (itemCount + columns - 1) / columns;
+        if (targetRow >= 0 && targetRow < rowCount) {
+            const int targetRowStart = targetRow * columns;
+            selectedIndex = std::min(itemCount - 1, targetRowStart + column);
+        }
+    }
+    return selectedIndex;
+}
+
 void setUiMenuIconScaleOverrides(const std::unordered_map<std::string, float>* scaleByIconKey)
 {
     menuIconScaleOverrides = scaleByIconKey;
@@ -734,7 +1032,10 @@ bool UiRect::contains(Vec2 point) const
 UiContext::UiContext(const Input& input)
     : mouse_(input.mouseScreen())
     , mouseLeftPressed_(input.mouseLeftPressed())
+    , pointerActive_(input.lastInputModality() == InputModality::Mouse)
+    , navigationConfirmPressed_(input.confirmPressed() || input.useItemPressed())
 {
+    updateUiNavigation(input);
     if (!input.backHeld() && !input.backReleased()) {
         backInputConsumedUntilRelease = false;
     }
@@ -785,10 +1086,11 @@ bool UiContext::hasSoundEvents() const
     return false;
 }
 
-void beginUiFrame(float dt, bool gamepadCursorEnabled)
+void beginUiFrame(float dt, bool navigationCursorEnabled)
 {
-    selectionCursor.enabled = gamepadCursorEnabled;
+    selectionCursor.enabled = navigationCursorEnabled;
     selectionCursor.targetThisFrame = false;
+    selectionCursor.suppressedThisFrame = false;
     selectionCursor.frameDt = std::max(0.0f, dt);
     selectionCursor.time += selectionCursor.frameDt;
     const float duration = std::max(0.001f, ui::WindowAnimationSeconds);
@@ -796,6 +1098,8 @@ void beginUiFrame(float dt, bool gamepadCursorEnabled)
     for (auto& entry : windowStates) {
         entry.second.seen = false;
     }
+    currentNavigationTargets.clear();
+    navigationLayer = 0;
 }
 
 void finishUiFrame(Renderer& renderer)
@@ -821,6 +1125,35 @@ void finishUiFrame(Renderer& renderer)
     }
     for (const std::string& key : finished) {
         windowStates.erase(key);
+    }
+
+    int topLayer = 0;
+    for (const UiNavigationTarget& target : currentNavigationTargets) {
+        topLayer = std::max(topLayer, target.layer);
+    }
+    std::vector<UiNavigationTarget> activeTargets;
+    activeTargets.reserve(currentNavigationTargets.size());
+    for (const UiNavigationTarget& target : currentNavigationTargets) {
+        if (target.layer == topLayer) {
+            activeTargets.push_back(target);
+        }
+    }
+    int focusedIndex = navigationHasFocus
+        ? enabledNavigationTargetIndexForRect(activeTargets, navigationFocusRect)
+        : -1;
+    if (focusedIndex < 0) {
+        focusedIndex = preferredNavigationTargetIndex(activeTargets);
+        if (focusedIndex >= 0) {
+            focusNavigationTarget(activeTargets[static_cast<std::size_t>(focusedIndex)]);
+        } else {
+            navigationHasFocus = false;
+        }
+    }
+    previousNavigationTargets = std::move(activeTargets);
+    if (selectionCursor.enabled &&
+        !selectionCursor.suppressedThisFrame &&
+        focusedIndex >= 0) {
+        setUiSelectionCursorTarget(previousNavigationTargets[static_cast<std::size_t>(focusedIndex)].rect);
     }
     drawUiSelectionCursor(renderer);
 }
@@ -911,9 +1244,14 @@ UiCancelControlScope::~UiCancelControlScope()
     activeCancelState = previous_;
 }
 
+bool UiContext::pointerInside(UiRect rect) const
+{
+    return rect.contains(mouse_);
+}
+
 bool UiContext::hovered(UiRect rect) const
 {
-    return !pointerConsumed_ && rect.contains(mouse_);
+    return pointerActive_ && !pointerConsumed_ && pointerInside(rect);
 }
 
 bool UiContext::pressed(UiRect rect)
@@ -921,9 +1259,42 @@ bool UiContext::pressed(UiRect rect)
     const bool hit = hovered(rect);
     if (hit && mouseLeftPressed_) {
         pointerConsumed_ = true;
+        navigationFocusRect = rect;
+        const int targetIndex = enabledNavigationTargetIndexForRect(previousNavigationTargets, rect);
+        activeNavigationFocusRole = targetIndex >= 0
+            ? previousNavigationTargets[static_cast<std::size_t>(targetIndex)].role
+            : UiNavigationRole::Control;
+        navigationHasFocus = true;
+        return true;
+    }
+    if (uiNavigationActive &&
+        navigationConfirmPressed_ &&
+        !navigationConfirmConsumed_ &&
+        navigationFocused(rect)) {
+        navigationConfirmConsumed_ = true;
         return true;
     }
     return false;
+}
+
+bool UiContext::navigationActive() const
+{
+    return uiNavigationActive;
+}
+
+bool UiContext::navigationFocused(UiRect rect) const
+{
+    return uiNavigationActive && navigationHasFocus && navigationRectsMatch(navigationFocusRect, rect);
+}
+
+bool UiContext::selectionFocused(UiRect rect) const
+{
+    return navigationFocused(rect) || hovered(rect);
+}
+
+UiNavigationRole UiContext::navigationFocusRole() const
+{
+    return activeNavigationFocusRole;
 }
 
 void UiContext::block(UiRect rect)
@@ -954,15 +1325,27 @@ UiRect uiFooterRect(UiRect panel, std::string_view helpText)
     return {{panel.pos.x, panel.pos.y + panel.size.y - height}, {panel.size.x, height}};
 }
 
-UiRect uiBodyRect(UiRect panel)
+UiRect uiBodyRect(UiRect panel, float bottomExtension, float topExtension)
 {
     const float y = panel.pos.y + ui::HeaderHeight;
     const float footerHeight = ui::FooterMaxHeight;
+    const Vec2 baseBodyPos{panel.pos.x + ui::PanelPadding, y + ui::PanelPadding};
+    const float appliedTopExtension = std::clamp(
+        topExtension,
+        0.0f,
+        std::max(0.0f, baseBodyPos.y - panel.pos.y));
+    const Vec2 bodyPos{baseBodyPos.x, baseBodyPos.y - appliedTopExtension};
+    const float baseHeight =
+        panel.size.y - ui::HeaderHeight - footerHeight - ui::PanelPadding * 2.0f;
+    const float maxHeight = std::max(0.0f, panel.pos.y + panel.size.y - bodyPos.y);
     return {
-        {panel.pos.x + ui::PanelPadding, y + ui::PanelPadding},
+        bodyPos,
         {
             panel.size.x - ui::PanelPadding * 2.0f,
-            panel.size.y - ui::HeaderHeight - footerHeight - ui::PanelPadding * 2.0f,
+            std::clamp(
+                baseHeight + bottomExtension + appliedTopExtension,
+                0.0f,
+                maxHeight),
         },
     };
 }
@@ -983,23 +1366,23 @@ UiRect uiSubPanelContentRect(UiRect panel)
     };
 }
 
-UiRect uiBottomLeftButtonRect(UiRect panel, Vec2 size)
+UiRect uiBottomLeftButtonRect(UiRect panel, Vec2 size, float bodyBottomExtension)
 {
-    const UiRect body = uiBodyRect(panel);
+    const UiRect body = uiBodyRect(panel, bodyBottomExtension);
     size.y = ui::ButtonHeight;
     return {{body.pos.x, body.pos.y + body.size.y - size.y}, size};
 }
 
-UiRect uiBottomCenterButtonRect(UiRect panel, Vec2 size)
+UiRect uiBottomCenterButtonRect(UiRect panel, Vec2 size, float bodyBottomExtension)
 {
-    const UiRect body = uiBodyRect(panel);
+    const UiRect body = uiBodyRect(panel, bodyBottomExtension);
     size.y = ui::ButtonHeight;
     return {{panel.pos.x + (panel.size.x - size.x) * 0.5f, body.pos.y + body.size.y - size.y}, size};
 }
 
-UiRect uiBottomRightButtonRect(UiRect panel, Vec2 size)
+UiRect uiBottomRightButtonRect(UiRect panel, Vec2 size, float bodyBottomExtension)
 {
-    const UiRect body = uiBodyRect(panel);
+    const UiRect body = uiBodyRect(panel, bodyBottomExtension);
     size.y = ui::ButtonHeight;
     return {{body.pos.x + body.size.x - size.x, body.pos.y + body.size.y - size.y}, size};
 }
@@ -1297,6 +1680,106 @@ void drawUiGauge(Renderer& renderer, UiRect rect, float progress, const UiGaugeS
     drawCapsuleOutline(renderer, rect, radius, style.outline);
 }
 
+UiSliderResult updateUiSlider(
+    UiContext& ui,
+    const Input& input,
+    UiRect rect,
+    float value,
+    const UiSliderSpec& spec,
+    UiSliderState& state)
+{
+    UiSliderResult result{value, false};
+    const float range = spec.maxValue - spec.minValue;
+    if (range <= 0.0f || rect.size.x <= 0.0f || rect.size.y <= 0.0f) {
+        state.dragging = false;
+        return result;
+    }
+
+    const auto valueAtPointer = [&] {
+        const float normalized =
+            clamp((ui.mouse().x - rect.pos.x) / std::max(1.0f, rect.size.x), 0.0f, 1.0f);
+        float nextValue = spec.minValue + range * normalized;
+        if (spec.step > 0.0f) {
+            const float stepCount = std::round((nextValue - spec.minValue) / spec.step);
+            nextValue = spec.minValue + stepCount * spec.step;
+        }
+        return clamp(nextValue, spec.minValue, spec.maxValue);
+    };
+
+    bool interacting = false;
+    if (state.dragging) {
+        if (input.mouseLeftHeld()) {
+            interacting = true;
+        } else {
+            state.dragging = false;
+        }
+    } else if (
+        input.mouseLeftPressed() &&
+        !ui.pointerConsumed() &&
+        ui.pointerInside(rect)) {
+        state.dragging = true;
+        interacting = true;
+    }
+
+    if (interacting) {
+        result.value = valueAtPointer();
+        result.changed = std::abs(result.value - value) > 0.0001f;
+        ui.consumePointer();
+    }
+    return result;
+}
+
+void drawUiSlider(
+    Renderer& renderer,
+    UiRect rect,
+    float value,
+    const UiSliderSpec& spec,
+    const UiSliderStyle& style)
+{
+    const float range = spec.maxValue - spec.minValue;
+    if (range <= 0.0f || rect.size.x <= 0.0f || rect.size.y <= 0.0f) {
+        return;
+    }
+
+    UiGaugeStyle gaugeStyle = style.gauge;
+    if (spec.step > 0.0f) {
+        gaugeStyle.tickCount = std::max(
+            1,
+            static_cast<int>(std::lround(range / spec.step)));
+    }
+    const float progress = clamp((value - spec.minValue) / range, 0.0f, 1.0f);
+    drawUiGauge(renderer, rect, progress, gaugeStyle);
+
+    const float centerY = rect.pos.y + rect.size.y * 0.5f;
+    const auto drawTick = [&](float tickValue, float halfHeight, Color color) {
+        if (!colorVisible(color) ||
+            tickValue <= spec.minValue ||
+            tickValue >= spec.maxValue) {
+            return;
+        }
+        const float normalized = (tickValue - spec.minValue) / range;
+        const float x = rect.pos.x + rect.size.x * normalized;
+        renderer.drawLine({x, centerY - halfHeight}, {x, centerY + halfHeight}, color);
+    };
+
+    if (spec.majorTickStep > 0.0f) {
+        const float firstTick =
+            std::ceil(spec.minValue / spec.majorTickStep) * spec.majorTickStep;
+        const float halfHeight = std::max(1.0f, rect.size.y * 0.42f);
+        for (float tickValue = firstTick;
+             tickValue < spec.maxValue;
+             tickValue += spec.majorTickStep) {
+            drawTick(tickValue, halfHeight, style.majorTick);
+        }
+    }
+    if (spec.showReference) {
+        drawTick(
+            spec.referenceValue,
+            std::max(1.0f, rect.size.y * 0.68f),
+            style.referenceTick);
+    }
+}
+
 void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, bool hot, const UiButtonStyle& style)
 {
     drawUiButton(renderer, rect, label, 0, hot, style);
@@ -1305,6 +1788,7 @@ void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, bool 
 void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, int iconImageNumber, bool hot, const UiButtonStyle& style)
 {
     rect.size.y = ui::ButtonHeight;
+    registerUiNavigationTarget(rect, UiNavigationRole::Control, hot);
     const bool selected = hot;
     const float scale = selected ? 1.035f : 1.0f;
     const Vec2 center = rect.pos + rect.size * 0.5f;
@@ -1329,6 +1813,7 @@ void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, int i
 
 void drawUiFlexibleButtonFrame(Renderer& renderer, UiRect rect, bool selected, const UiButtonStyle& style)
 {
+    registerUiNavigationTarget(rect, UiNavigationRole::Control, selected);
     const Color tint = selected ? style.imageTintHot : style.imageTint;
     if (drawUiFlexibleButtonImage(renderer, rect, selected, tint)) {
         return;
@@ -1357,6 +1842,7 @@ void drawUiFlexibleButton(Renderer& renderer, UiRect rect, std::string_view labe
 
 void drawUiRectButton(Renderer& renderer, UiRect rect, std::string_view label, bool hot, const UiButtonStyle& style)
 {
+    registerUiNavigationTarget(rect, UiNavigationRole::Control, hot);
     const bool selected = hot;
     const float scale = selected ? 1.035f : 1.0f;
     const Vec2 center = rect.pos + rect.size * 0.5f;
@@ -1388,6 +1874,7 @@ void drawUiSmallSelectButton(
     bool disabled,
     const UiSmallSelectButtonStyle& style)
 {
+    registerUiNavigationTarget(rect, UiNavigationRole::Control, hot, !disabled);
     const Color fill = disabled ? style.fillDisabled : (hot ? style.fillHot : style.fill);
     const Color outline = disabled ? style.outlineDisabled : (hot ? style.outlineHot : style.outline);
     const Color labelColor = disabled ? style.disabledText : style.text;
@@ -1800,6 +2287,7 @@ void drawUiResultDialog(Renderer& renderer, const UiResultDialogState& state, Ui
     if (!state.open) {
         return;
     }
+    UiNavigationLayerScope navigationScope;
     panel = fitUiResultDialogRect(state, panel);
 
     UiWindowScope window(renderer, id, panel, "", "F/Enter OK", UiWindowOptions{true, false});
@@ -1922,6 +2410,7 @@ void drawUiConfirmDialog(Renderer& renderer, const UiConfirmDialogState& state, 
         return;
     }
 
+    UiNavigationLayerScope navigationScope;
     UiWindowScope window(renderer, id, panel, state.title, uiConfirmDialogHelpText(), UiWindowOptions{true, true});
     const UiRect message = uiConfirmDialogMessageRect(panel);
     renderer.drawWrappedText(message.pos, state.message, message.size.x, ui::Text, 2);
@@ -1967,9 +2456,6 @@ UiQuantityDialogResult updateUiQuantityDialog(UiQuantityDialogState& state, UiCo
     if (input.pressed(InputAction::MoveDown) || input.pressed(InputAction::MoveLeft)) {
         adjust(-1);
     }
-    if (input.shortcutCursorDelta() != 0) {
-        adjust(input.shortcutCursorDelta() * state.largeStep);
-    }
     if (input.activeRingDelta() != 0) {
         adjust(input.activeRingDelta() * state.largeStep);
     }
@@ -1988,7 +2474,8 @@ UiQuantityDialogResult updateUiQuantityDialog(UiQuantityDialogState& state, UiCo
         adjust(1);
     }
     ui.emitCursorMoveIfChanged(previousValue, state.value);
-    if (ui.pressed(uiQuantityConfirmButtonRect(panel)) || input.confirmPressed() || input.useItemPressed()) {
+    if (ui.pressed(uiQuantityConfirmButtonRect(panel)) ||
+        (!ui.navigationActive() && (input.confirmPressed() || input.useItemPressed()))) {
         ui.emitSound(UiSoundEvent::Confirm);
         closeUiQuantityDialog(state);
         return UiQuantityDialogResult::Confirmed;
@@ -2012,6 +2499,7 @@ void drawUiQuantityDialog(Renderer& renderer, const UiQuantityDialogState& state
         return;
     }
 
+    UiNavigationLayerScope navigationScope;
     UiWindowScope window(renderer, id, panel, state.title, "↑/↓　+1/-1　Z/X　+10/-10　F/Enter　決定", UiWindowOptions{true, true});
     const UiRect body = uiBodyRect(panel);
     const UiRect valueRect = uiQuantityValueRect(panel);
@@ -2156,7 +2644,10 @@ int updateUiCommandMenu(UiCommandMenuState& state, UiContext& ui, const Input& i
 
     bool hoveredByMouse = false;
     for (int i = 0; i < itemCount; ++i) {
-        if (commandMenuItemRect(state, i).contains(ui.mouse())) {
+        if (ui.navigationFocused(commandMenuItemRect(state, i))) {
+            state.hoveredIndex = i;
+        }
+        if (ui.hovered(commandMenuItemRect(state, i))) {
             state.hoveredIndex = i;
             hoveredByMouse = true;
             break;
@@ -2208,6 +2699,7 @@ void drawUiCommandMenu(Renderer& renderer, const UiCommandMenuState& state, cons
         return;
     }
 
+    UiNavigationLayerScope navigationScope;
     const float t = easeOut(state.animation);
     const Vec2 center = panelCenter(state.panel);
     renderer.pushScreenTransform(center, lerp(0.92f, 1.0f, t), t);
@@ -2218,6 +2710,7 @@ void drawUiCommandMenu(Renderer& renderer, const UiCommandMenuState& state, cons
     for (int i = 0; i < itemCount; ++i) {
         const UiRect rect = commandMenuItemRect(state, i);
         const bool hot = i == state.hoveredIndex;
+        registerUiNavigationTarget(rect, UiNavigationRole::Control, hot, items[i].enabled);
         const Color fill = Color{48, 68, 138, alpha};
         Color text = items[i].enabled ? ui::Text : ui::TextDisabled;
         if (!items[i].enabled) {
@@ -2815,7 +3308,7 @@ int updateUiDropdown(
             const UiRect itemRect = uiDropdownItemRect(buttonRect, i, style);
             UiRect itemHotRect = itemRect;
             itemHotRect.size.x = std::max(0.0f, itemHotRect.size.x - dropdownScrollbarReserve(count, style));
-            if (itemHotRect.contains(ui.mouse())) {
+            if (ui.selectionFocused(itemHotRect)) {
                 state.highlightedIndex = itemIndex;
             }
             if (ui.pressed(itemHotRect)) {
@@ -2890,6 +3383,7 @@ void drawUiDropdown(
         return;
     }
 
+    UiNavigationLayerScope navigationScope;
     const int count = std::max(0, itemCount);
     const UiRect listRect = uiDropdownListRect(buttonRect, count, style);
     renderer.fillRect(listRect.pos, listRect.size, style.fill);
@@ -2917,6 +3411,11 @@ void drawUiDropdown(
         UiRect rowBody = row;
         rowBody.size.x = std::max(0.0f, rowBody.size.x - scrollbarReserve);
         const bool highlighted = itemIndex == state.highlightedIndex;
+        registerUiNavigationTarget(
+            rowBody,
+            UiNavigationRole::Control,
+            highlighted,
+            items[itemIndex].enabled);
         if (highlighted) {
             renderer.fillRect(rowBody.pos, rowBody.size, style.fillHot);
             requestUiSelectionCursor(rowBody);
@@ -2972,6 +3471,9 @@ int updateUiTabs(
     state.hoveredIndex = -1;
 
     for (int i = 0; i < itemCount; ++i) {
+        if (tabItemEnabled(items, i) && ui.navigationFocused(rects[i])) {
+            state.focusedIndex = i;
+        }
         if (tabItemEnabled(items, i) && ui.hovered(rects[i])) {
             state.focusedIndex = i;
             state.hoveredIndex = i;
@@ -3018,6 +3520,16 @@ void drawUiTabs(
     }
 
     constexpr float TabTextOffsetY = 2.0f;
+    const int preferredIndex = state.focusedIndex >= 0 ? state.focusedIndex : selectedIndex;
+    for (int i = 0; i < itemCount; ++i) {
+        UiRect navigationRect = rects[i];
+        navigationRect.size.y = ui::ButtonHeight;
+        registerUiNavigationTarget(
+            navigationRect,
+            UiNavigationRole::Tab,
+            i == preferredIndex,
+            tabItemEnabled(items, i));
+    }
 
     if (renderer.hasUiHorizontalTabTexture()) {
         std::vector<Vec2> imagePositions;
@@ -3226,6 +3738,14 @@ void drawUiSubTabs(
     if (items == nullptr || rects == nullptr || itemCount <= 0) {
         return;
     }
+    const int preferredIndex = state.focusedIndex >= 0 ? state.focusedIndex : selectedIndex;
+    for (int i = 0; i < itemCount; ++i) {
+        registerUiNavigationTarget(
+            rects[i],
+            UiNavigationRole::Tab,
+            i == preferredIndex,
+            tabItemEnabled(items, i));
+    }
 
     UiRect bounds = rects[0];
     for (int i = 1; i < itemCount; ++i) {
@@ -3354,6 +3874,14 @@ void drawUiVerticalTabs(
 {
     if (items == nullptr || rects == nullptr || itemCount <= 0) {
         return;
+    }
+    const int preferredIndex = state.focusedIndex >= 0 ? state.focusedIndex : selectedIndex;
+    for (int i = 0; i < itemCount; ++i) {
+        registerUiNavigationTarget(
+            rects[i],
+            UiNavigationRole::Control,
+            i == preferredIndex,
+            items[i].enabled);
     }
 
     auto itemEnabled = [&](int index) {

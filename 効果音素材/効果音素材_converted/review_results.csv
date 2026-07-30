@@ -1,0 +1,3 @@
+﻿"source","output","detectedsilencems","appliedtrimms","result","reason"
+"剣の素振り3.mp3","0_Swing3.wav","153.946","148.946","PASS","変換前後の波形を比較し無音部分のみの除去と実音の立ち上がり保持を確認"
+"刀を構える.mp3","0_KatanaReady.wav","152.494","147.494","PASS","変換前後の波形を比較し無音部分のみの除去と実音の立ち上がり保持を確認"

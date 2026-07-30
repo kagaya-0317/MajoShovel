@@ -53,6 +53,7 @@ enum class WorldIconId {
     JunkCrabDebrisGear,
     JunkCrabDebrisBattery,
     JunkCrabDebrisPipe,
+    MoneyCoin,
 };
 
 struct WorldIconDefinition {

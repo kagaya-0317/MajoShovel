@@ -400,6 +400,34 @@ bool titlePromptUsesGamepad()
     return input != nullptr && input->lastActiveDevice() == InputDeviceKind::Gamepad;
 }
 
+UiScrollAreaLayout makeTitleCreditsLayout(
+    Renderer& renderer,
+    std::string_view text,
+    float scrollOffset,
+    const UiScrollAreaStyle& style)
+{
+    constexpr float TextPaddingY = 12.0f;
+    const UiRect viewport = titleCreditsViewportRect();
+    const auto contentHeightForWidth = [&](float width) {
+        return renderer.measureWrappedText(text, std::max(1.0f, width), 2).y +
+            TextPaddingY * 2.0f;
+    };
+
+    UiScrollAreaLayout layout = makeUiScrollAreaLayout(
+        viewport,
+        contentHeightForWidth(viewport.size.x),
+        scrollOffset,
+        style);
+    if (layout.scrollable) {
+        layout = makeUiScrollAreaLayout(
+            viewport,
+            contentHeightForWidth(layout.content.size.x),
+            scrollOffset,
+            style);
+    }
+    return layout;
+}
+
 float dotVec2(Vec2 a, Vec2 b)
 {
     return a.x * b.x + a.y * b.y;
@@ -1063,6 +1091,7 @@ constexpr float RingPlaceGridX = RingPlaceScreenX + (RingPlaceDetailX - RingPlac
 
 enum class RingCommandAction {
     Place,
+    Move,
     Remove,
     ToggleProtection,
     Discard,
@@ -1088,6 +1117,8 @@ RingCommandMenuItems ringCommandItems(
     }
 
     if (item == nullptr) {
+        result.items.push_back({"位置を移動", false});
+        result.actions.push_back(RingCommandAction::Move);
         result.items.push_back({"リングから外す", false});
         result.actions.push_back(RingCommandAction::Remove);
         result.items.push_back({"保護", false});
@@ -1101,6 +1132,8 @@ RingCommandMenuItems ringCommandItems(
     const bool protectable = hasObject && !item->instanceId.empty();
     const ItemData* itemData = objectForRingItem(objectCatalog, *item);
     const bool discardable = hasObject && itemData != nullptr && !item->protectionEnabled && !isImportantItem(*itemData);
+    result.items.push_back({"位置を移動", true});
+    result.actions.push_back(RingCommandAction::Move);
     result.items.push_back({"リングから外す", commandCanRemove});
     result.actions.push_back(RingCommandAction::Remove);
     result.items.push_back({item->protectionEnabled ? "保護を解除" : "保護", protectable});
@@ -2259,7 +2292,12 @@ constexpr OperationSettingsActionRow OperationSettingsActionRows[] = {
     {InputAction::OpenOptions, "オプション", 0},
     {InputAction::OpenCredits, "クレジット", 0},
     {InputAction::ThrowActiveRing, "リングを投げる", 1},
-    {InputAction::OffsetRingCenter, "リングずらし", 1},
+    {InputAction::OffsetRingCenter, "リングずらし（ドラッグ）", 1},
+    {InputAction::ShiftRingLeft, "リングずらし：左", 1},
+    {InputAction::ShiftRingRight, "リングずらし：右", 1},
+    {InputAction::ShiftRingUp, "リングずらし：上", 1},
+    {InputAction::ShiftRingDown, "リングずらし：下", 1},
+    {InputAction::RingCommandModifier, "リング一括操作補助", 1},
     {InputAction::UseSelectedItem, "選択アイテム使用", 1},
     {InputAction::PutSelectedItemOnRing, "リングへ入れる", 1},
     {InputAction::GrabOrPlaceItem, "つかむ/置く", 1},
@@ -2277,7 +2315,8 @@ constexpr OperationSettingsActionRow OperationSettingsActionRows[] = {
     {InputAction::DirectShortcut6, "ショートカット6", 2},
     {InputAction::DirectShortcut7, "ショートカット7", 2},
     {InputAction::DirectShortcut8, "ショートカット8", 2},
-    {InputAction::ToggleShortcutRow, "ショートカット列切替", 2},
+    {InputAction::PreviousShortcutRow, "前のショートカット行", 2},
+    {InputAction::NextShortcutRow, "次のショートカット行", 2},
     {InputAction::ToggleDebug, "デバッグ表示", 3},
     {InputAction::ToggleDebugPause, "デバッグ停止", 3},
     {InputAction::TestRestart, "テスト再起動", 3},
@@ -2503,17 +2542,27 @@ UiVerticalTabsStyle optionsVerticalTabStyle()
     return style;
 }
 
-int updateClickedVerticalTabSelection(UiContext& ui, const UiVerticalTabItem* items, const UiRect* rects, int itemCount)
+struct UiVerticalTabPressResult {
+    int index = -1;
+    bool wasSelected = false;
+};
+
+UiVerticalTabPressResult pressedVerticalTab(
+    UiContext& ui,
+    const UiVerticalTabItem* items,
+    const UiRect* rects,
+    int itemCount,
+    int selectedIndex)
 {
     if (items == nullptr || rects == nullptr || itemCount <= 0) {
-        return -1;
+        return {};
     }
     for (int i = 0; i < itemCount; ++i) {
         if (items[i].enabled && ui.pressed(rects[i])) {
-            return i;
+            return {i, i == selectedIndex};
         }
     }
-    return -1;
+    return {};
 }
 
 std::array<UiRect, AudioSettingsRowCount> audioSettingsRowRects()
@@ -2866,9 +2915,19 @@ const char* operationSettingsActionHelpText(InputAction action)
     case InputAction::OpenCredits:
         return "タイトル画面からクレジットを直接開きます。";
     case InputAction::ThrowActiveRing:
-        return "選択中のアクティブリングを投げます。";
+        return "選択中のアクティブリングを、プレイヤーが向いている方向へ投げます。";
     case InputAction::OffsetRingCenter:
-        return "押している間、リング中心をプレイヤーからずらします。";
+        return "マウスでは、押した位置からドラッグした方向と距離に合わせてリング中心をずらします。";
+    case InputAction::ShiftRingLeft:
+        return "リング中心を左へずらします。右スティックの倒し具合に応じて距離が変わります。";
+    case InputAction::ShiftRingRight:
+        return "リング中心を右へずらします。右スティックの倒し具合に応じて距離が変わります。";
+    case InputAction::ShiftRingUp:
+        return "リング中心を上へずらします。右スティックの倒し具合に応じて距離が変わります。";
+    case InputAction::ShiftRingDown:
+        return "リング中心を下へずらします。右スティックの倒し具合に応じて距離が変わります。";
+    case InputAction::RingCommandModifier:
+        return "押しながら「リングへ入れる」を使うと、リング上のアイテムをすべて外します。";
     case InputAction::UseSelectedItem:
         return "ショートカットやアイテム画面で選択中のアイテムを使います。";
     case InputAction::PutSelectedItemOnRing:
@@ -2887,6 +2946,10 @@ const char* operationSettingsActionHelpText(InputAction action)
         return "ショートカット選択を左へ移動します。";
     case InputAction::ShortcutCursorRight:
         return "ショートカット選択を右へ移動します。";
+    case InputAction::PreviousShortcutRow:
+        return "ショートカットの表示行を1つ前へ切り替えます。";
+    case InputAction::NextShortcutRow:
+        return "ショートカットの表示行を1つ次へ切り替えます。";
     case InputAction::DirectShortcut1:
         return "ショートカット1番を直接選びます。";
     case InputAction::DirectShortcut2:
@@ -3013,7 +3076,8 @@ std::string operationSettingsBindingDisplayName(const InputBinding& binding)
 {
     switch (binding.device) {
     case InputBindingDevice::Keyboard:
-        return keyboardScancodeName(binding.code);
+        return inputModifierDisplayPrefix(binding.modifiers) +
+            keyboardScancodeName(binding.code);
     case InputBindingDevice::MouseButton:
         return "Mouse " + mouseButtonName(binding.code);
     case InputBindingDevice::GamepadButton:
@@ -3063,8 +3127,29 @@ std::string operationSettingsKeyboardGlyphLabel(int scancode)
 std::string operationSettingsBindingGlyphToken(const InputBinding& binding)
 {
     switch (binding.device) {
-    case InputBindingDevice::Keyboard:
-        return "{key:" + operationSettingsKeyboardGlyphLabel(binding.code) + "}";
+    case InputBindingDevice::Keyboard: {
+        std::string result;
+        const auto appendModifier = [&](InputModifiers modifier, std::string_view label) {
+            if (!inputModifiersContain(binding.modifiers, modifier)) {
+                return;
+            }
+            if (!result.empty()) {
+                result += '+';
+            }
+            result += "{key:";
+            result += label;
+            result += '}';
+        };
+        appendModifier(InputModifiers::Ctrl, "Ctrl");
+        appendModifier(InputModifiers::Alt, "Alt");
+        appendModifier(InputModifiers::Shift, "Shift");
+        appendModifier(InputModifiers::Gui, "Gui");
+        if (!result.empty()) {
+            result += '+';
+        }
+        result += "{key:" + operationSettingsKeyboardGlyphLabel(binding.code) + "}";
+        return result;
+    }
     case InputBindingDevice::MouseButton:
         if (binding.code == SDL_BUTTON_RIGHT) {
             return "{mouse:right}";
@@ -3105,7 +3190,8 @@ bool operationSettingsBindingSamePhysicalInput(const InputBinding& lhs, const In
 {
     return lhs.device == rhs.device &&
         lhs.code == rhs.code &&
-        lhs.direction == rhs.direction;
+        lhs.direction == rhs.direction &&
+        lhs.modifiers == rhs.modifiers;
 }
 
 void removeOperationSettingsColumnBindings(std::vector<InputBinding>& bindings, int column)
@@ -3257,18 +3343,32 @@ UiSelectableTableResult updateOperationSettingsTableClickSelection(
     const int previousRow = state.selectedRow;
     const int previousColumn = state.selectedColumn;
     bool keyboardSelectionChanged = false;
-    if (input.pressed(InputAction::MoveUp)) {
+    for (int row = 0; row < rowCount; ++row) {
+        const UiRect rowRect = uiSelectableTableRowRect(layout, row, style);
+        if (!uiScrollAreaRectVisible(layout.scroll, rowRect)) {
+            continue;
+        }
+        for (int column = OperationSettingsColumnAction; column <= OperationSettingsColumnGamepad; ++column) {
+            const UiRect cellRect = uiSelectableTableCellRect(layout, columns, columnCount, row, column, style);
+            if (ui.navigationFocused(cellRect)) {
+                state.selectedRow = row;
+                state.selectedColumn = std::max(OperationSettingsColumnKeyboardMouse, column);
+                keyboardSelectionChanged = true;
+            }
+        }
+    }
+    if (!ui.navigationActive() && input.pressed(InputAction::MoveUp)) {
         state.selectedRow = (state.selectedRow + rowCount - 1) % rowCount;
         keyboardSelectionChanged = true;
     }
-    if (input.pressed(InputAction::MoveDown)) {
+    if (!ui.navigationActive() && input.pressed(InputAction::MoveDown)) {
         state.selectedRow = (state.selectedRow + 1) % rowCount;
         keyboardSelectionChanged = true;
     }
-    if (input.pressed(InputAction::MoveLeft)) {
+    if (!ui.navigationActive() && input.pressed(InputAction::MoveLeft)) {
         keyboardSelectionChanged = moveOperationSettingsTableColumn(state, -1) || keyboardSelectionChanged;
     }
-    if (input.pressed(InputAction::MoveRight)) {
+    if (!ui.navigationActive() && input.pressed(InputAction::MoveRight)) {
         keyboardSelectionChanged = moveOperationSettingsTableColumn(state, 1) || keyboardSelectionChanged;
     }
 
@@ -3414,6 +3514,53 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     }
 
     auto& items = spellRing_.items();
+    const auto beginRingItemMove = [this, &items](int itemIndex) {
+        if (itemIndex < 0 || itemIndex >= static_cast<int>(items.size())) {
+            ringStatus_ = "アイテム未選択です";
+            return false;
+        }
+
+        closeUiCommandMenu(ringCommandMenu_);
+        ringCommandItemIndex_ = -1;
+        ringCommandPlaceActive_ = false;
+        ringEmptyPressActive_ = false;
+        ringSlotSelection_ = itemIndex;
+        ringDetailShowsRing_ = false;
+        ringItemMoveModeActive_ = true;
+        ringItemMoveIndex_ = itemIndex;
+        ringItemMoveOriginalAngle_ = items[static_cast<std::size_t>(itemIndex)].localAngle;
+        ringStatus_ = "移動モード";
+        return true;
+    };
+    const auto openRingItemCommandMenu = [this, &items](int itemIndex, Vec2 anchor) {
+        if (itemIndex < 0 || itemIndex >= static_cast<int>(items.size())) {
+            ringStatus_ = "アイテム未選択です";
+            return false;
+        }
+
+        ringSlotSelection_ = itemIndex;
+        ringDetailShowsRing_ = false;
+        ringCommandItemIndex_ = itemIndex;
+        ringCommandPlaceActive_ = false;
+        ringEmptyPressActive_ = false;
+        const SpellRingItem& item = items[static_cast<std::size_t>(itemIndex)];
+        const RingCommandMenuItems menuItems = ringCommandItems(
+            false,
+            &item,
+            objectCatalog_,
+            false,
+            !item.objectId.empty());
+        openUiCommandMenu(
+            ringCommandMenu_,
+            anchor,
+            ringPanelRect(),
+            static_cast<int>(menuItems.items.size()),
+            menuItems.items.data(),
+            180.0f,
+            2);
+        ringStatus_.clear();
+        return true;
+    };
     if (ringSnapActive_) {
         if (ringDragItemIndex_ < 0 || ringDragItemIndex_ >= static_cast<int>(items.size())) {
             ringSnapActive_ = false;
@@ -3525,6 +3672,12 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
             bool commandSucceeded = false;
             switch (action) {
             case RingCommandAction::Place:
+                break;
+            case RingCommandAction::Move:
+                commandSucceeded = beginRingItemMove(ringSlotSelection_);
+                if (!commandSucceeded) {
+                    ui.emitSound(UiSoundEvent::Cancel);
+                }
                 break;
             case RingCommandAction::Remove:
                 commandSucceeded = removeRingItemToInventory(items, ringSlotSelection_, inventory_, objectCatalog_, ringStatus_);
@@ -3659,7 +3812,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         for (int i = 0; i < slotCount; ++i) {
             const UiRect rect = ringPlaceSlotRect(i);
             const bool enabled = ringPlaceSlotEnabled(inventory_, spellRing_, i, ringPlaceTargetAngle_);
-            if (enabled && rect.contains(ui.mouse())) {
+            if (enabled && ui.selectionFocused(rect)) {
                 ringPlaceSelection_ = i;
             }
             if (input.mouseLeftPressed() && rect.contains(ui.mouse()) && !ui.pointerConsumed()) {
@@ -3748,7 +3901,9 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     }
     UiTabsInput ringTabsInput{};
     ringTabsInput.focusDelta = input.activeRingDelta();
-    ringTabsInput.commit = input.confirmPressed() || input.useItemPressed();
+    ringTabsInput.commit =
+        !ui.navigationActive() &&
+        (input.confirmPressed() || input.useItemPressed());
     const int ringTabSelection = updateUiTabs(
         ringTabs_,
         ui,
@@ -3849,25 +4004,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
                 ringSnapActive_ = true;
                 ringStatus_ = snapAngle ? "近い空き位置へ補正しました" : "近くに空きがないため元の位置へ戻しました";
             } else {
-                ringSlotSelection_ = ringDragItemIndex_;
-                ringCommandItemIndex_ = ringDragItemIndex_;
-                ringCommandPlaceActive_ = false;
-                const bool canRemove = !items[static_cast<std::size_t>(ringDragItemIndex_)].objectId.empty();
-                const RingCommandMenuItems menuItems = ringCommandItems(
-                    false,
-                    &items[static_cast<std::size_t>(ringDragItemIndex_)],
-                    objectCatalog_,
-                    false,
-                    canRemove);
-                openUiCommandMenu(
-                    ringCommandMenu_,
-                    input.mouseScreen(),
-                    ringPanelRect(),
-                    static_cast<int>(menuItems.items.size()),
-                    menuItems.items.data(),
-                    180.0f,
-                    2);
-                ringStatus_.clear();
+                openRingItemCommandMenu(ringDragItemIndex_, input.mouseScreen());
             }
             ringDragPending_ = false;
             ringDragActive_ = false;
@@ -3922,7 +4059,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     const int previousRingSlotSelection = ringSlotSelection_;
     for (int i = 0; i < static_cast<int>(items.size()); ++i) {
         const UiRect rect = ringItemUiRect(items[static_cast<std::size_t>(i)], spellRing_, balance_, i, static_cast<int>(items.size()));
-        if (rect.contains(ui.mouse())) {
+        if (ui.selectionFocused(rect)) {
             ringSlotSelection_ = i;
             ringDetailShowsRing_ = false;
         }
@@ -3933,6 +4070,11 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
             ringEmptyPressActive_ = false;
             ringSlotSelection_ = i;
             ringDetailShowsRing_ = false;
+            if (ui.navigationActive()) {
+                openRingItemCommandMenu(i, uiCommandMenuAnchorForSlot(rect));
+                ui.emitCursorMoveIfChanged(previousRingSlotSelection, ringSlotSelection_);
+                return;
+            }
             ringDragPending_ = true;
             ringDragActive_ = false;
             ringDragItemIndex_ = i;
@@ -3960,7 +4102,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     ui.block(ringPanelRect());
 
     const Vec2 selectionDirection = ringPressedDirection(input);
-    if (!items.empty() && lengthSquared(selectionDirection) > 0.0001f) {
+    if (!ui.navigationActive() && !items.empty() && lengthSquared(selectionDirection) > 0.0001f) {
         ringSlotSelection_ = ringItemSelectionByDirection(
             items,
             spellRing_,
@@ -3973,6 +4115,13 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     ui.emitCursorMoveIfChanged(previousRingSlotSelection, ringSlotSelection_);
 
     (void)actualRing;
+
+    if (input.grabOrPlacePressed()) {
+        ui.emitSound(beginRingItemMove(ringSlotSelection_)
+            ? UiSoundEvent::ItemMove
+            : UiSoundEvent::Cancel);
+        return;
+    }
 
     if (input.addRingPressed()) {
         ringDetailShowsRing_ = false;
@@ -4001,13 +4150,16 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     }
 
     if (input.useItemPressed() || input.confirmPressed()) {
-        ringDetailShowsRing_ = false;
         if (ringSlotSelection_ < static_cast<int>(items.size())) {
-            ui.emitSound(UiSoundEvent::Confirm);
-            ringItemMoveModeActive_ = true;
-            ringItemMoveIndex_ = ringSlotSelection_;
-            ringItemMoveOriginalAngle_ = items[static_cast<std::size_t>(ringSlotSelection_)].localAngle;
-            ringStatus_ = "移動モード";
+            const UiRect selectedItemRect = ringItemUiRect(
+                items[static_cast<std::size_t>(ringSlotSelection_)],
+                spellRing_,
+                balance_,
+                ringSlotSelection_,
+                static_cast<int>(items.size()));
+            openRingItemCommandMenu(
+                ringSlotSelection_,
+                uiCommandMenuAnchorForSlot(selectedItemRect));
         } else {
             ui.emitSound(UiSoundEvent::Cancel);
             ringStatus_ = "アイテム未選択です";
@@ -4342,8 +4494,7 @@ void Game::updateOperationSettings(const Input& input, UiContext& ui)
 
     const bool tableCommitted =
         tableResult.pressedColumn >= OperationSettingsColumnKeyboardMouse ||
-        input.confirmPressed() ||
-        input.useItemPressed();
+        (!ui.navigationActive() && (input.confirmPressed() || input.useItemPressed()));
     if (tableCommitted && !rows.empty()) {
         const int row = std::clamp(operationSettingsTable_.selectedRow, 0, static_cast<int>(rows.size()) - 1);
         const int column = std::clamp(
@@ -4400,11 +4551,21 @@ void Game::updateAudioSettings(const Input& input, UiContext& ui)
     const UiRect panel = optionsPanelRect();
     audioSettingsSelection_ = std::clamp(audioSettingsSelection_, 0, AudioSettingsRowCount - 1);
     const int previousSelection = audioSettingsSelection_;
+    const auto values = audioSettingsRowValueTexts(optionsSettings_);
+    const auto tabItems = audioSettingsTabItems(values);
+    const auto tabRects = audioSettingsRowRects();
+    bool settingsRowFocused = !ui.navigationActive();
+    for (int row = 0; row < AudioSettingsRowCount; ++row) {
+        if (ui.navigationFocused(tabRects[static_cast<std::size_t>(row)])) {
+            audioSettingsSelection_ = row;
+            settingsRowFocused = true;
+        }
+    }
 
-    if (input.pressed(InputAction::MoveUp)) {
+    if (!ui.navigationActive() && input.pressed(InputAction::MoveUp)) {
         audioSettingsSelection_ = (audioSettingsSelection_ + AudioSettingsRowCount - 1) % AudioSettingsRowCount;
     }
-    if (input.pressed(InputAction::MoveDown)) {
+    if (!ui.navigationActive() && input.pressed(InputAction::MoveDown)) {
         audioSettingsSelection_ = (audioSettingsSelection_ + 1) % AudioSettingsRowCount;
     }
 
@@ -4413,25 +4574,23 @@ void Game::updateAudioSettings(const Input& input, UiContext& ui)
         applyOptionsSettings(std::string(audioSettingsRowLabel(row)) + " 音量 " + volumePercentText(audioSettingsRowValue(optionsSettings_, row)));
     };
 
-    if (input.pressed(InputAction::MoveLeft)) {
+    if (settingsRowFocused && input.pressed(InputAction::MoveLeft)) {
         applyAudioRow(audioSettingsSelection_, audioSettingsRowValue(optionsSettings_, audioSettingsSelection_) - 0.05f);
         ui.emitSound(UiSoundEvent::Confirm);
     }
-    if (input.pressed(InputAction::MoveRight)) {
+    if (settingsRowFocused && input.pressed(InputAction::MoveRight)) {
         applyAudioRow(audioSettingsSelection_, audioSettingsRowValue(optionsSettings_, audioSettingsSelection_) + 0.05f);
         ui.emitSound(UiSoundEvent::Confirm);
     }
 
-    const auto values = audioSettingsRowValueTexts(optionsSettings_);
-    const auto tabItems = audioSettingsTabItems(values);
-    const auto tabRects = audioSettingsRowRects();
-    const int clickedRow = updateClickedVerticalTabSelection(
+    const UiVerticalTabPressResult pressedTab = pressedVerticalTab(
         ui,
         tabItems.data(),
         tabRects.data(),
-        static_cast<int>(tabItems.size()));
-    if (clickedRow >= 0) {
-        audioSettingsSelection_ = clickedRow;
+        static_cast<int>(tabItems.size()),
+        audioSettingsSelection_);
+    if (pressedTab.index >= 0) {
+        audioSettingsSelection_ = pressedTab.index;
         ui.emitCursorMoveIfChanged(previousSelection, audioSettingsSelection_);
         return;
     }
@@ -4468,11 +4627,21 @@ void Game::updateVideoSettings(const Input& input, UiContext& ui)
     const UiRect panel = optionsPanelRect();
     videoSettingsSelection_ = std::clamp(videoSettingsSelection_, 0, VideoSettingsRowCount - 1);
     const int previousSelection = videoSettingsSelection_;
+    const auto values = videoSettingsRowValueTexts(optionsSettings_);
+    const auto tabItems = videoSettingsTabItems(values);
+    const auto tabRects = videoSettingsRowRects();
+    bool settingsRowFocused = !ui.navigationActive();
+    for (int row = 0; row < VideoSettingsRowCount; ++row) {
+        if (ui.navigationFocused(tabRects[static_cast<std::size_t>(row)])) {
+            videoSettingsSelection_ = row;
+            settingsRowFocused = true;
+        }
+    }
 
-    if (input.pressed(InputAction::MoveUp)) {
+    if (!ui.navigationActive() && input.pressed(InputAction::MoveUp)) {
         videoSettingsSelection_ = (videoSettingsSelection_ + VideoSettingsRowCount - 1) % VideoSettingsRowCount;
     }
-    if (input.pressed(InputAction::MoveDown)) {
+    if (!ui.navigationActive() && input.pressed(InputAction::MoveDown)) {
         videoSettingsSelection_ = (videoSettingsSelection_ + 1) % VideoSettingsRowCount;
     }
 
@@ -4489,45 +4658,45 @@ void Game::updateVideoSettings(const Input& input, UiContext& ui)
             videoSettingsRowValueText(optionsSettings_, VideoSettingsRowBrightness));
     };
 
-    if (input.pressed(InputAction::MoveLeft)) {
+    if (settingsRowFocused && input.pressed(InputAction::MoveLeft)) {
         applyVideoRow(videoSettingsSelection_, -1);
         ui.emitSound(UiSoundEvent::Confirm);
     }
-    if (input.pressed(InputAction::MoveRight) || input.confirmPressed() || input.useItemPressed()) {
+    if (settingsRowFocused &&
+        (input.pressed(InputAction::MoveRight) ||
+            (!ui.navigationActive() && (input.confirmPressed() || input.useItemPressed())))) {
         applyVideoRow(videoSettingsSelection_, 1);
         ui.emitSound(UiSoundEvent::Confirm);
     }
 
-    const auto values = videoSettingsRowValueTexts(optionsSettings_);
-    const auto tabItems = videoSettingsTabItems(values);
-    const auto tabRects = videoSettingsRowRects();
-    const int clickedRow = updateClickedVerticalTabSelection(
-        ui,
-        tabItems.data(),
-        tabRects.data(),
-        static_cast<int>(tabItems.size()));
-    if (clickedRow >= 0) {
-        videoSettingsSelection_ = clickedRow;
-        if (clickedRow != VideoSettingsRowBrightness) {
-            applyVideoRow(clickedRow, 1);
-            ui.emitSound(UiSoundEvent::Confirm);
-        }
+    const UiRect brightnessSlider = videoBrightnessSliderRect();
+    if (input.mouseLeftHeld() &&
+        brightnessSlider.contains(ui.mouse()) &&
+        !ui.pointerConsumed()) {
+        videoSettingsSelection_ = VideoSettingsRowBrightness;
+        applyBrightnessSlider(
+            (ui.mouse().x - brightnessSlider.pos.x) /
+            std::max(1.0f, brightnessSlider.size.x));
+        ui.consumePointer();
         ui.emitCursorMoveIfChanged(previousSelection, videoSettingsSelection_);
         return;
     }
 
-    for (int row = 0; row < VideoSettingsRowCount; ++row) {
-        if (row == VideoSettingsRowBrightness) {
-            const UiRect sliderRect = videoBrightnessSliderRect();
-            if (input.mouseLeftHeld() && sliderRect.contains(ui.mouse()) && !ui.pointerConsumed()) {
-                videoSettingsSelection_ = row;
-                applyBrightnessSlider((ui.mouse().x - sliderRect.pos.x) / std::max(1.0f, sliderRect.size.x));
-                ui.consumePointer();
-                ui.emitCursorMoveIfChanged(previousSelection, videoSettingsSelection_);
-                return;
-            }
-            continue;
+    const UiVerticalTabPressResult pressedTab = pressedVerticalTab(
+        ui,
+        tabItems.data(),
+        tabRects.data(),
+        static_cast<int>(tabItems.size()),
+        videoSettingsSelection_);
+    if (pressedTab.index >= 0) {
+        videoSettingsSelection_ = pressedTab.index;
+        if (pressedTab.wasSelected &&
+            pressedTab.index != VideoSettingsRowBrightness) {
+            applyVideoRow(pressedTab.index, 1);
+            ui.emitSound(UiSoundEvent::Confirm);
         }
+        ui.emitCursorMoveIfChanged(previousSelection, videoSettingsSelection_);
+        return;
     }
 
     ui.emitCursorMoveIfChanged(previousSelection, videoSettingsSelection_);
@@ -4650,7 +4819,7 @@ void Game::updatePauseMenu(const Input& input, UiContext& ui)
     }
     for (int i = 0; i < PauseMenuItemCount; ++i) {
         const UiRect rect = pauseMenuItemRect(i);
-        if (rect.contains(ui.mouse())) {
+        if (ui.selectionFocused(rect)) {
             pauseMenuSelection_ = i;
         }
         if (ui.pressed(rect)) {
@@ -4686,7 +4855,7 @@ void Game::updateGameOverScreen(const Input& input, UiContext& ui, float dt)
 
     for (int i = 0; i < GameOverItemCount; ++i) {
         const UiRect rect = gameOverItemRect(i);
-        if (rect.contains(ui.mouse())) {
+        if (ui.selectionFocused(rect)) {
             gameOverSelection_ = i;
         }
         if (ui.pressed(rect)) {
@@ -4727,7 +4896,7 @@ void Game::updateStageClearScreen(const Input& input, UiContext& ui)
 
     for (int i = 0; i < StageClearItemCount; ++i) {
         const UiRect rect = stageClearItemRect(i);
-        if (rect.contains(ui.mouse())) {
+        if (ui.selectionFocused(rect)) {
             stageClearSelection_ = i;
         }
         if (ui.pressed(rect)) {
@@ -4755,7 +4924,7 @@ void Game::updateAstralResultScreen(const Input& input, UiContext& ui, float dt)
     }
 
     const UiRect button = stageClearItemRect(0);
-    if (button.contains(ui.mouse())) {
+    if (ui.selectionFocused(button)) {
         astralResultSelection_ = 0;
     }
     if (ui.pressed(button) || input.confirmPressed() || input.useItemPressed()) {
@@ -4973,17 +5142,36 @@ void Game::renderTopInfoBar(Renderer& renderer) const
 
     const int textScale = 2;
     const Vec2 textMeasure = renderer.measureText("0", textScale);
-    const float textY = TopInfoBarY + std::max(0.0f, (TopInfoBarHeight - textMeasure.y) * 0.5f) + 6.0f;
+    const auto centeredEntryY = [](float entryHeight) {
+        return TopInfoBarY + (TopInfoBarHeight - entryHeight) * 0.5f;
+    };
+    const float textY = centeredEntryY(textMeasure.y);
     InlineItemTextStyle moneyStyle;
     moneyStyle.text = {246, 230, 174, 255};
     moneyStyle.scale = textScale;
     moneyStyle.iconTextGap = TopInfoBarIconTextGap;
     moneyStyle.iconScale = TopInfoBarIconSize / std::max(1.0f, textMeasure.y);
+    const float moneyPulse = moneyGainFx_.hudPulseStrength();
+    const auto pulseChannel = [moneyPulse](unsigned char base, unsigned char highlight) {
+        return static_cast<unsigned char>(std::clamp(
+            std::lround(lerp(static_cast<float>(base), static_cast<float>(highlight), moneyPulse)),
+            0L,
+            255L));
+    };
+    moneyStyle.text = {
+        pulseChannel(moneyStyle.text.r, 255),
+        pulseChannel(moneyStyle.text.g, 252),
+        pulseChannel(moneyStyle.text.b, 222),
+        255,
+    };
 
     InlineItemTextStyle materialStyle = moneyStyle;
     materialStyle.text = {232, 236, 244, 255};
 
-    const std::string moneyEntry = inlineWorldIconTag(worldIconKey(WorldIconId::MoneyLarge)) + std::to_string(money_) + "G";
+    const std::string moneyEntry =
+        inlineWorldIconTag(worldIconKey(WorldIconId::MoneyLarge)) +
+        std::to_string(moneyGainFx_.displayedMoney(money_)) +
+        "G";
     const Vec2 moneyEntrySize = measureInlineItemText(renderer, moneyEntry, moneyStyle);
     constexpr std::array<TopInfoMaterial, 4> Materials{{
         {MaterialType::OldWoodBuildingMaterial},
@@ -5049,16 +5237,31 @@ void Game::renderTopInfoBar(Renderer& renderer) const
     if (!dungeonInfoEntry.empty()) {
         const float mapInfoGap = !mapName.empty() ? MapDungeonInfoGap : 0.0f;
         const float dungeonInfoX = mapX + renderer.measureText(mapName, textScale).x + mapInfoGap;
-        drawInlineItemText(renderer, objectCatalog_, {dungeonInfoX, textY}, dungeonInfoEntry, dungeonInfoStyle);
+        drawInlineItemText(
+            renderer,
+            objectCatalog_,
+            {dungeonInfoX, centeredEntryY(dungeonInfoSize.y)},
+            dungeonInfoEntry,
+            dungeonInfoStyle);
     }
 
     float x = rightX;
-    drawInlineItemText(renderer, objectCatalog_, {x, textY}, moneyEntry, moneyStyle);
+    drawInlineItemText(
+        renderer,
+        objectCatalog_,
+        {x, centeredEntryY(moneyEntrySize.y)},
+        moneyEntry,
+        moneyStyle);
     x += moneyEntrySize.x;
 
     for (std::size_t i = 0; i < Materials.size(); ++i) {
         x += TopInfoBarGroupGap;
-        drawInlineItemText(renderer, objectCatalog_, {x, textY}, materialEntries[i], materialStyle);
+        drawInlineItemText(
+            renderer,
+            objectCatalog_,
+            {x, centeredEntryY(materialEntrySizes[i].y)},
+            materialEntries[i],
+            materialStyle);
         x += materialEntrySizes[i].x;
     }
 }
@@ -5101,7 +5304,7 @@ void Game::renderTitleScreen(Renderer& renderer) const
     if (titleMenuPage_ == TitleMenuPage::Options) {
         UiCancelControlScope cancelScope(titleCancelState_);
         const char* help = optionsPage_ == OptionsPageOperation
-            ? "Z/X 設定切替  Q/E 分類切替  ↑/↓ 行選択  ←/→ 列選択  F/Enter 変更  Esc 戻る"
+            ? "Z/X 設定切替  {shortcut} 分類切替  ↑/↓ 行選択  ←/→ 列選択  F/Enter 変更  Esc 戻る"
             : (optionsPage_ == OptionsPageAudio
                 ? "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 音量変更  Esc 戻る"
                 : "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 変更  F/Enter 切替  Esc 戻る");
@@ -5119,21 +5322,24 @@ void Game::renderTitleScreen(Renderer& renderer) const
     if (titleMenuPage_ == TitleMenuPage::Credits) {
         UiCancelControlScope cancelScope(titleCancelState_);
         const UiRect panel = titleCreditsPanelRect();
+        UiScrollAreaStyle scrollStyle;
+        const UiScrollAreaLayout layout = makeTitleCreditsLayout(
+            renderer,
+            titleCreditsText_,
+            titleCreditsScrollOffset_,
+            scrollStyle);
+        titleCreditsContentHeight_ = layout.contentHeight;
+        const char* help = layout.scrollable
+            ? "↑/↓ スクロール  Esc 戻る"
+            : "Esc 戻る";
         UiWindowScope window(
             renderer,
             "title.credits",
             panel,
             "クレジット",
-            "↑/↓ スクロール  Esc 戻る",
+            help,
             UiWindowOptions{true, true});
 
-        UiScrollAreaStyle scrollStyle;
-        const UiRect viewport = titleCreditsViewportRect();
-        const float contentWidth = std::max(1.0f, viewport.size.x - scrollStyle.scrollbarWidth - scrollStyle.scrollbarGap - scrollStyle.scrollbarPaddingX);
-        const float contentHeight = renderer.measureWrappedText(titleCreditsText_, contentWidth, 2).y + 24.0f;
-        const UiScrollAreaLayout layout = makeUiScrollAreaLayout(viewport, contentHeight, titleCreditsScrollOffset_, scrollStyle);
-
-        drawUiSubPanel(renderer, viewport);
         renderer.pushClipRect(layout.viewport.pos, layout.viewport.size);
         renderer.drawWrappedText(
             layout.content.pos + Vec2{0.0f, 12.0f - layout.scrollOffset},
@@ -5160,6 +5366,7 @@ void Game::renderTitleScreen(Renderer& renderer) const
     promptStyle.scale = 3;
     promptStyle.iconHeight = 36.0f;
     const UiRect promptRect = titleStartPromptRect();
+    registerUiNavigationTarget(promptRect, UiNavigationRole::Control, true);
     const Vec2 promptSize = measureInputHelpText(renderer, prompt, promptStyle);
     drawInputHelpText(
         renderer,
@@ -5466,7 +5673,7 @@ void Game::renderRingStatusHud(Renderer& renderer) const
     }
 }
 
-void Game::renderFirstItemAcquisitionNotice(Renderer& renderer) const
+void Game::renderFirstItemAcquisitionNotice(Renderer& renderer, float animationSeconds) const
 {
     if (firstItemAcquisitionNotices_.empty()) {
         return;
@@ -5561,12 +5768,13 @@ void Game::renderFirstItemAcquisitionNotice(Renderer& renderer) const
     std::string rawNameText;
     std::string descriptionText;
     std::string subText;
+    std::optional<InventoryUiItemStats> itemStats;
     if (objectNotice) {
         rawNameText = object->name;
         descriptionText = object->description.empty() ? "-" : object->description;
-        char buffer[192];
-        std::snprintf(buffer, sizeof(buffer), "レア度%d", object->rarity);
-        subText = buffer;
+        if (const InventoryObjectInstance* instance = inventory_.objectInstanceById(notice.instanceId)) {
+            itemStats = inventoryUiStatsFromInstance(instance->instance);
+        }
     } else if (notice.kind == AcquisitionNoticeKind::Material) {
         rawNameText = std::string(materialTypeDisplayName(notice.materialType)) + " x" + std::to_string(std::max(1, notice.amount));
         descriptionText = "魔女からのお礼";
@@ -5579,21 +5787,46 @@ void Game::renderFirstItemAcquisitionNotice(Renderer& renderer) const
     const std::string nameText = fittedSingleLineText(renderer, rawNameText, detailWidth, 3);
     const Vec2 nameSize = renderer.measureText(nameText, 3);
 
-    const std::string rarityText = fittedSingleLineText(renderer, subText, detailWidth, 2);
-    const Vec2 raritySize = renderer.measureText(rarityText, 2);
+    const std::string metadataText = objectNotice
+        ? std::string{}
+        : fittedSingleLineText(renderer, subText, detailWidth, 2);
+    const Vec2 raritySize = objectNotice
+        ? measureInventoryUiRarityStars(renderer, object->rarity)
+        : renderer.measureText(metadataText, 2);
+    const std::string weightText = objectNotice
+        ? "重量 " + formatInventoryUiWeightText(*object, itemStats)
+        : std::string{};
+    const Vec2 weightSize = objectNotice ? renderer.measureText(weightText, 2) : Vec2{};
     const Vec2 descriptionSize = renderer.measureWrappedText(descriptionText, detailWidth, 2);
 
     constexpr float NameRarityGap = 8.0f;
     constexpr float RarityDescriptionGap = 12.0f;
+    constexpr float RarityWeightGap = 4.0f;
+    const float metadataHeight = objectNotice
+        ? raritySize.y + RarityWeightGap + weightSize.y
+        : raritySize.y;
     const float detailBlockHeight =
-        nameSize.y + NameRarityGap + raritySize.y + RarityDescriptionGap + descriptionSize.y;
+        nameSize.y + NameRarityGap + metadataHeight + RarityDescriptionGap + descriptionSize.y;
     const float detailTop = imagePanel.pos.y + std::max(0.0f, (imagePanel.size.y - detailBlockHeight) * 0.5f);
     const Vec2 detail{detailX, detailTop};
     const Vec2 rarityPos{detailX, detail.y + nameSize.y + NameRarityGap};
-    const Vec2 descriptionPos{detailX, rarityPos.y + raritySize.y + RarityDescriptionGap};
+    const Vec2 weightPos{
+        detailX,
+        rarityPos.y + raritySize.y + RarityWeightGap,
+    };
+    const Vec2 descriptionPos{detailX, rarityPos.y + metadataHeight + RarityDescriptionGap};
 
     renderer.drawText(detail, nameText, ui::Text, 3);
-    renderer.drawText(rarityPos, rarityText, ui::TextMuted, 2);
+    if (objectNotice) {
+        (void)drawInventoryUiRarityStars(
+            renderer,
+            rarityPos,
+            object->rarity,
+            animationSeconds);
+        renderer.drawText(weightPos, weightText, ui::TextMuted, 2);
+    } else {
+        renderer.drawText(rarityPos, metadataText, ui::TextMuted, 2);
+    }
     renderer.drawWrappedText(
         descriptionPos,
         descriptionText,
@@ -6385,7 +6618,7 @@ void Game::renderDungeonLogs(Renderer& renderer) const
     const int firstIndex = static_cast<int>(dungeonLogs_.size()) - visibleCount;
 
     constexpr int TextScale = 2;
-    const Vec2 textMeasure = renderer.measureText("0", TextScale);
+    const Vec2 fontMeasure = renderer.measureText("0", TextScale);
     for (int i = 0; i < visibleCount; ++i) {
         const DungeonLogEntry& entry = dungeonLogs_[static_cast<std::size_t>(firstIndex + i)];
         const float rowY = y + static_cast<float>(i) * (DungeonLogRowHeight + DungeonLogGap);
@@ -6411,14 +6644,14 @@ void Game::renderDungeonLogs(Renderer& renderer) const
         textStyle.text = {246, 246, 252, textAlpha};
         textStyle.scale = TextScale;
         textStyle.iconTextGap = 4.0f;
-        textStyle.iconScale = TopInfoBarIconSize / std::max(1.0f, textMeasure.y);
+        textStyle.iconScale = TopInfoBarIconSize / std::max(1.0f, fontMeasure.y);
         textStyle.outlineEnabled = true;
         textStyle.outline = {0, 0, 0, textAlpha};
         textStyle.outlinePx = 2;
         message = fittedInlineItemText(renderer, std::move(message), DungeonLogWidth - 26.0f, textStyle);
         const Vec2 textPos{
             x + DungeonLogWidth - 14.0f,
-            rowY + std::max(0.0f, (DungeonLogRowHeight - textMeasure.y) * 0.5f) + 6.0f,
+            rowY + std::max(0.0f, (DungeonLogRowHeight - fontMeasure.y) * 0.5f),
         };
         drawInlineItemTextRightAligned(renderer, objectCatalog_, textPos, message, textStyle);
     }
@@ -6518,7 +6751,7 @@ void Game::renderDungeonControlHelp(Renderer& renderer) const
     const float screenHeight = static_cast<float>(camera_.height());
 
     std::string help =
-        "WASD/方向キー 移動   Q/E アイテム選択   Tab アイテム行切替   F 使用   R リングへ   右長押し 中心ずらし   C リング投げ　Esc メニュー";
+        "WASD/方向キー 移動   {shortcut} アイテム選択   {shortcut-row} アイテム行切替   F 使用   R リングへ   右長押し 中心ずらし   C リング投げ　Esc メニュー";
     bool promptFocused = false;
     if (introTutorialActive()) {
         help = "WASD/方向キー 移動   Esc メニュー";
@@ -6657,19 +6890,21 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     UiCancelControlScope cancelScope(ringCancelState_);
     const int ringCount = unlockedRingCount();
     const int presetSlotCount = unlockedRingPresetSlotCount();
-    std::string RingHelpText;
+    std::string ringHelpText;
     if (ringItemMoveModeActive_) {
-        RingHelpText = "WASD/矢印 位置変更  F/Enter 確定  Esc キャンセル";
+        ringHelpText = "WASD/矢印 位置変更  F/Enter 確定  Esc キャンセル";
     } else {
         if (presetSlotCount > 0) {
             const std::string slotRange = presetSlotCount == 1 ? "1" : "1-" + std::to_string(presetSlotCount);
-            RingHelpText = slotRange + " 呼出  Shift+" + slotRange + " 登録  ";
+            ringHelpText = slotRange + " 呼出  Shift+" + slotRange + " 登録  ";
         }
-        RingHelpText += ringCount > 1
-            ? "Z/X リング  F/Enter 移動  T 整列  R 外す  Shift+R 全部取る  P 保護"
-            : "WASD/矢印 選択  F/Enter 移動  T 整列  R 外す  Shift+R 全部取る  P 保護";
+        ringHelpText += ringCount > 1
+            ? "Z/X リング  F/Enter コマンド  "
+            : "WASD/矢印 選択  F/Enter コマンド  ";
+        ringHelpText += inlineInputActionTag(InputAction::GrabOrPlaceItem) +
+            " 移動  T 整列  R 外す  Shift+R 全部取る  P 保護";
     }
-    UiWindowScope ringWindow(renderer, "ring.manage", panel, "リング", RingHelpText, UiWindowOptions{true, true});
+    UiWindowScope ringWindow(renderer, "ring.manage", panel, "リング", ringHelpText, UiWindowOptions{true, true});
 
     char buffer[192];
     std::array<UiTabItem, SpellRingCount> ringTabs{};
@@ -6723,6 +6958,10 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
         });
     for (int i = 0; i < static_cast<int>(items.size()); ++i) {
         const SpellRingItem& item = items[static_cast<std::size_t>(i)];
+        registerUiNavigationTarget(
+            ringItemUiRect(item, spellRing_, balance_, i, static_cast<int>(items.size())),
+            UiNavigationRole::Control,
+            i == ringSlotSelection_);
         float displayAngle = item.localAngle;
         if (i == ringDragItemIndex_ && (ringDragActive_ || ringSnapActive_)) {
             displayAngle = ringDragDisplayAngle_;
@@ -6765,6 +7004,22 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
             buffer,
             moveMode ? Color{255, 170, 82, 255} : (selected ? Color{255, 230, 150, 255} : Color{174, 182, 198, 255}),
             1);
+    }
+
+    if (ringItemMoveModeActive_ &&
+        ringItemMoveIndex_ >= 0 &&
+        ringItemMoveIndex_ < static_cast<int>(items.size())) {
+        suppressUiSelectionCursor();
+        UiNavigationLayerScope moveNavigationScope;
+        registerUiNavigationTarget(
+            ringItemUiRect(
+                items[static_cast<std::size_t>(ringItemMoveIndex_)],
+                spellRing_,
+                balance_,
+                ringItemMoveIndex_,
+                static_cast<int>(items.size())),
+            UiNavigationRole::Control,
+            true);
     }
 
     const UiRect ringDetailPanel = ringDetailRect();
@@ -6935,6 +7190,10 @@ void Game::renderOperationSettings(Renderer& renderer) const
                 column,
                 tableStyle);
             const bool selectedCell = selectedRow && column == operationSettingsTable_.selectedColumn;
+            registerUiNavigationTarget(
+                cell,
+                UiNavigationRole::Control,
+                selectedCell);
             if (selectedCell) {
                 renderer.fillRect(cell.pos, cell.size, Color{56, 76, 154, 190});
             }
@@ -7177,7 +7436,7 @@ void Game::renderPauseMenu(Renderer& renderer) const
             ? "Z/X でアクティブリング切替  Esc 戻る"
             : (pausePage_ == PauseMenuPage::Options
                 ? (optionsPage_ == OptionsPageOperation
-                    ? "Z/X 設定切替  Q/E 分類切替  ↑/↓ 行選択  ←/→ 列選択  F/Enter 変更  Esc 戻る"
+                    ? "Z/X 設定切替  {shortcut} 分類切替  ↑/↓ 行選択  ←/→ 列選択  F/Enter 変更  Esc 戻る"
                     : (optionsPage_ == OptionsPageAudio
                         ? "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 音量変更  Esc 戻る"
                         : "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 変更  F/Enter 切替  Esc 戻る"))
@@ -8291,7 +8550,7 @@ void Game::render(Renderer& renderer, const Time& time)
 {
     FrameProfileScope renderProfile("Game.render");
     renderer.clear({5, 5, 8, 255});
-    beginUiFrame(time.deltaSeconds(), gamepadUiCursorEnabled_);
+    beginUiFrame(time.deltaSeconds(), navigationUiCursorEnabled_);
     if (mode_ == ScreenMode::OpeningKamishibai) {
         renderOpeningKamishibai(renderer);
         finishUiFrame(renderer);
@@ -8397,7 +8656,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderDebugItemPicker(renderer);
         renderDebugStoryTest(renderer);
         renderPortraitExpressionPicker(renderer);
-        renderFirstItemAcquisitionNotice(renderer);
+        renderFirstItemAcquisitionNotice(renderer, static_cast<float>(time.totalSeconds()));
         renderLevelUpOverlay(renderer);
         finishUiFrame(renderer);
         renderBaseDebugOverlay(renderer, time);
@@ -8681,6 +8940,7 @@ void Game::render(Renderer& renderer, const Time& time)
             entry.draw();
         }
         renderSpellRingForeground(renderer, runtimeItems, itemLights, time.totalSeconds());
+        moneyGainFx_.renderForeground(renderer);
         effects_.renderForeground(renderer);
         effects_.renderDamagePopups(renderer);
         if (playerDeathActive) {
@@ -8863,7 +9123,7 @@ void Game::render(Renderer& renderer, const Time& time)
                 renderDebugStoryTest(renderer);
             }
             renderPortraitExpressionPicker(renderer);
-            renderFirstItemAcquisitionNotice(renderer);
+            renderFirstItemAcquisitionNotice(renderer, static_cast<float>(time.totalSeconds()));
             renderAutoSimulationIntentOverlay(renderer);
         }
     }

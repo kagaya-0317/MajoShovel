@@ -355,6 +355,22 @@ bool bindingMatchesDevice(const InputBinding& binding, InputDeviceKind device)
         binding.device == InputBindingDevice::MouseButton;
 }
 
+void appendBindingModifierGlyphs(std::vector<Glyph>& glyphs, const InputBinding& binding)
+{
+    if (binding.device != InputBindingDevice::Keyboard) {
+        return;
+    }
+    const auto appendModifier = [&](InputModifiers modifier, std::string_view label) {
+        if (inputModifiersContain(binding.modifiers, modifier)) {
+            appendGlyph(glyphs, keyGlyph(std::string(label)));
+        }
+    };
+    appendModifier(InputModifiers::Ctrl, "Ctrl");
+    appendModifier(InputModifiers::Alt, "Alt");
+    appendModifier(InputModifiers::Shift, "Shift");
+    appendModifier(InputModifiers::Gui, "Gui");
+}
+
 std::vector<Glyph> glyphsForActions(const Input* input, std::initializer_list<InputAction> actions)
 {
     std::vector<Glyph> result;
@@ -374,6 +390,7 @@ std::vector<Glyph> glyphsForActions(const Input* input, std::initializer_list<In
                     continue;
                 }
                 if (std::optional<Glyph> glyph = glyphFromBinding(binding)) {
+                    appendBindingModifierGlyphs(result, binding);
                     appendGlyph(result, *glyph);
                     break;
                 }
@@ -418,7 +435,14 @@ std::vector<Glyph> semanticGlyphs(SemanticGlyph semantic, const Input* input)
     case SemanticGlyph::RingThrow:
         return glyphsForActions(input, {InputAction::ThrowActiveRing});
     case SemanticGlyph::RingOffset:
-        return glyphsForActions(input, {InputAction::OffsetRingCenter});
+        return gamepad
+            ? glyphsForActions(input, {
+                InputAction::ShiftRingLeft,
+                InputAction::ShiftRingRight,
+                InputAction::ShiftRingUp,
+                InputAction::ShiftRingDown,
+            })
+            : glyphsForActions(input, {InputAction::OffsetRingCenter});
     case SemanticGlyph::ShortcutCursor:
         return glyphsForActions(input, {InputAction::ShortcutCursorLeft, InputAction::ShortcutCursorRight});
     case SemanticGlyph::RingSwitch:
@@ -431,7 +455,10 @@ std::vector<Glyph> semanticGlyphs(SemanticGlyph semantic, const Input* input)
         return glyphsForActions(input, {InputAction::ArrangeItems});
     case SemanticGlyph::RingRemoveAll:
         if (gamepad) {
-            return glyphsForActions(input, {InputAction::OffsetRingCenter, InputAction::PutSelectedItemOnRing});
+            return glyphsForActions(input, {
+                InputAction::RingCommandModifier,
+                InputAction::PutSelectedItemOnRing,
+            });
         } else {
             std::vector<Glyph> result{keyGlyph("Shift")};
             std::vector<Glyph> removeGlyphs = glyphsForActions(input, {InputAction::PutSelectedItemOnRing});
@@ -439,7 +466,10 @@ std::vector<Glyph> semanticGlyphs(SemanticGlyph semantic, const Input* input)
             return result;
         }
     case SemanticGlyph::ShortcutRow:
-        return glyphsForActions(input, {InputAction::ToggleShortcutRow});
+        return glyphsForActions(input, {
+            InputAction::PreviousShortcutRow,
+            InputAction::NextShortcutRow,
+        });
     case SemanticGlyph::Inventory:
         return glyphsForActions(input, {InputAction::OpenInventory});
     case SemanticGlyph::Pause:
@@ -481,6 +511,10 @@ bool matchExplicitTag(std::string_view text, std::size_t offset, const Input* in
         outGlyphs = semanticGlyphs(SemanticGlyph::Move, input);
     } else if (body == "nav") {
         outGlyphs = semanticGlyphs(SemanticGlyph::NavigateAll, input);
+    } else if (body == "shortcut") {
+        outGlyphs = semanticGlyphs(SemanticGlyph::ShortcutCursor, input);
+    } else if (body == "shortcut-row") {
+        outGlyphs = semanticGlyphs(SemanticGlyph::ShortcutRow, input);
     } else if (body.rfind("act:", 0) == 0) {
         if (std::optional<InputAction> action = parseInputAction(body.substr(4))) {
             outGlyphs = glyphsForActions(input, {*action});

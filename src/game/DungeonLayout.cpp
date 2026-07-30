@@ -302,7 +302,7 @@ DungeonLayout makeIntroTutorialLayout(const DungeonGenerationContext& context)
         {77.0f, 2.0f},
     };
     layout.specialRoomAnchors = {
-        {SpecialRoomType::SafeCavern, {0.0f, 0.0f}, 4.2f},
+        {SpecialRoomType::SafeCavern, {0.0f, 0.0f}, DungeonStartCavernRadiusTiles},
         {SpecialRoomType::EnemyRoom, {29.0f, 0.0f}, 5.6f},
         {SpecialRoomType::EnemyRoom, {54.0f, 2.0f}, 5.4f},
     };

@@ -84,6 +84,13 @@ private:
         FadingIn,
     };
 
+    struct SpeakingPortraitMotion {
+        std::string speakerId;
+        float cycleElapsedSeconds = 0.0f;
+        bool active = false;
+        bool started = false;
+    };
+
     [[nodiscard]] const DialogueStep* currentStep() const;
     [[nodiscard]] const DialogueLine* currentLine() const;
     [[nodiscard]] int currentLineGlyphCount() const;
@@ -98,6 +105,11 @@ private:
     void clearRightPortraitTarget(bool immediate);
     void updateRightPortrait(float dt);
     void applyPortraitExpressionStep(const DialogueStep& step);
+    void resetSpeakingPortraitMotion();
+    void updateSpeakingPortraitMotion(float dt);
+    [[nodiscard]] bool speakingPortraitReady() const;
+    [[nodiscard]] bool speakingPortraitMotionBlocksAdvance() const;
+    [[nodiscard]] float speakingPortraitOffsetY(std::string_view speakerId) const;
     void renderMonicaCall(Renderer& renderer, int screenWidth, int screenHeight, const DialogueLine* line) const;
 
     DialogueSequence sequence_;
@@ -112,11 +124,13 @@ private:
     std::vector<std::pair<std::string, int>> portraitExpressionVariants_;
     float rightPortraitFade_ = 0.0f;
     RightPortraitTransition rightPortraitTransition_ = RightPortraitTransition::Stable;
+    SpeakingPortraitMotion speakingPortraitMotion_;
     bool active_ = false;
     bool closing_ = false;
     bool portraitsHidden_ = false;
     bool portraitsHidePersistent_ = false;
     bool advanceHoldActive_ = false;
+    bool advanceAfterSpeakingPortraitMotion_ = false;
 };
 
 }

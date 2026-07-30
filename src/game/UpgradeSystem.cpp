@@ -18,8 +18,9 @@ UiRect panelRect()
     return {{192.0f, 70.0f}, {896.0f, 524.0f}};
 }
 
-constexpr Vec2 LevelUpCardSize{310.0f, 238.0f};
+constexpr Vec2 LevelUpCardSize{310.0f, 278.0f};
 constexpr float LevelUpCardGap = -38.0f;
+constexpr float LevelUpCardContentOffsetY = 20.0f;
 
 int clampedUnlockedRingCount(int unlockedRingCount)
 {
@@ -213,12 +214,12 @@ void drawUpgradePrompt(Renderer& renderer, UiRect panel, int unlockedRingCount)
 std::string levelUpHelpText(int unlockedRingCount, bool ringSelected)
 {
     if (clampedUnlockedRingCount(unlockedRingCount) <= 1) {
-        return "Q/E カード選択  F/Enter OK";
+        return "←/→ カード選択  F/Enter OK";
     }
     if (!ringSelected) {
         return "Z/X リング選択  F/Enter 決定";
     }
-    return "Z/X リング選択  Q/E カード選択  F/Enter OK";
+    return "Z/X リング選択  ←/→ カード選択  F/Enter OK";
 }
 
 void drawUpgradeValueLine(
@@ -304,7 +305,10 @@ std::optional<RingLevelUpgradeSelection> UpgradeSystem::update(
             return std::nullopt;
         }
         tabsInput.focusDelta = input.activeRingDelta();
-        tabsInput.commit = !ringSelected && (input.confirmPressed() || input.useItemPressed());
+        tabsInput.commit =
+            !ringSelected &&
+            !ui.navigationActive() &&
+            (input.confirmPressed() || input.useItemPressed());
 
         const int ringSelection = updateUiTabs(
             ringTabs_,
@@ -333,6 +337,9 @@ std::optional<RingLevelUpgradeSelection> UpgradeSystem::update(
 
     for (int i = 0; i < 3; ++i) {
         const UiRect rect = optionRect(i, ringCount);
+        if (ui.navigationFocused(rect)) {
+            selectedOption_ = i;
+        }
         if (ui.pressed(rect)) {
             if (selectedOption_ != i) {
                 ui.emitSound(UiSoundEvent::TabSwitch);
@@ -342,10 +349,10 @@ std::optional<RingLevelUpgradeSelection> UpgradeSystem::update(
     }
 
     int move = 0;
-    if (input.pressed(InputAction::MoveLeft) || input.shortcutCursorDelta() < 0) {
+    if (!ui.navigationActive() && input.pressed(InputAction::MoveLeft)) {
         --move;
     }
-    if (input.pressed(InputAction::MoveRight) || input.shortcutCursorDelta() > 0) {
+    if (!ui.navigationActive() && input.pressed(InputAction::MoveRight)) {
         ++move;
     }
     if (move != 0) {
@@ -441,6 +448,8 @@ void UpgradeSystem::render(
     renderer.pushScreenTransform({0.0f, 0.0f}, 1.0f, clamp(cardFade_, 0.0f, 1.0f));
     for (int i = 0; i < 3; ++i) {
         const UiRect card = optionRect(i, ringCount);
+        UiRect content = card;
+        content.pos.y += LevelUpCardContentOffsetY;
         const bool selected = i == selectedOption_;
         UiButtonStyle cardStyle;
         cardStyle.imageTint = {232, 232, 238, 245};
@@ -450,12 +459,12 @@ void UpgradeSystem::render(
         cardStyle.outline = {104, 94, 128, 255};
         cardStyle.outlineHot = ui::WindowBorder;
         drawUiFlexibleButtonFrame(renderer, card, selected, cardStyle);
-        drawCenteredText(renderer, card, card.pos.y + 42.0f, upgradeName(i), ui::Text, 3);
-        drawCenteredText(renderer, card, card.pos.y + 90.0f, upgradeDescription(i), ui::Text, 2);
+        drawCenteredText(renderer, content, content.pos.y + 42.0f, upgradeName(i), ui::Text, 3);
+        drawCenteredText(renderer, content, content.pos.y + 90.0f, upgradeDescription(i), ui::Text, 2);
         drawUpgradeValueLine(
             renderer,
-            card,
-            card.pos.y + 134.0f,
+            content,
+            content.pos.y + 134.0f,
             upgradeCurrentValueText(i, spellRing, ringIndex, balance),
             upgradeNextValueText(i, spellRing, ringIndex, points, balance),
             selected ? ui::Text : ui::TextMuted,
@@ -463,8 +472,8 @@ void UpgradeSystem::render(
         const int currentStage = upgradeStageForOption(i, points);
         drawCenteredText(
             renderer,
-            card,
-            card.pos.y + 182.0f,
+            content,
+            content.pos.y + 182.0f,
             "強化回数：" + std::to_string(currentStage),
             selected ? ui::Text : ui::TextMuted,
             2);

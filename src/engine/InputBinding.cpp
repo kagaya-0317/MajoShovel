@@ -26,9 +26,13 @@ constexpr ActionNameEntry ActionNames[] = {
     {InputAction::MoveRight, "MoveRight"},
     {InputAction::MoveUp, "MoveUp"},
     {InputAction::MoveDown, "MoveDown"},
-    {InputAction::AimPointer, "AimPointer"},
     {InputAction::ThrowActiveRing, "ThrowActiveRing"},
     {InputAction::OffsetRingCenter, "OffsetRingCenter"},
+    {InputAction::ShiftRingLeft, "ShiftRingLeft"},
+    {InputAction::ShiftRingRight, "ShiftRingRight"},
+    {InputAction::ShiftRingUp, "ShiftRingUp"},
+    {InputAction::ShiftRingDown, "ShiftRingDown"},
+    {InputAction::RingCommandModifier, "RingCommandModifier"},
     {InputAction::ShortcutCursorLeft, "ShortcutCursorLeft"},
     {InputAction::ShortcutCursorRight, "ShortcutCursorRight"},
     {InputAction::DirectShortcut1, "DirectShortcut1"},
@@ -39,6 +43,8 @@ constexpr ActionNameEntry ActionNames[] = {
     {InputAction::DirectShortcut6, "DirectShortcut6"},
     {InputAction::DirectShortcut7, "DirectShortcut7"},
     {InputAction::DirectShortcut8, "DirectShortcut8"},
+    {InputAction::PreviousShortcutRow, "PreviousShortcutRow"},
+    {InputAction::NextShortcutRow, "NextShortcutRow"},
     {InputAction::ToggleShortcutRow, "ToggleShortcutRow"},
     {InputAction::UseSelectedItem, "UseSelectedItem"},
     {InputAction::Confirm, "Confirm"},
@@ -115,11 +121,16 @@ std::optional<int> parseInt(std::string_view text)
     return std::nullopt;
 }
 
-void addKeyboard(InputBindingMap& bindings, InputAction action, SDL_Scancode scancode)
+void addKeyboard(
+    InputBindingMap& bindings,
+    InputAction action,
+    SDL_Scancode scancode,
+    InputModifiers modifiers = InputModifiers::None)
 {
     bindings[inputActionIndex(action)].push_back({
         .device = InputBindingDevice::Keyboard,
         .code = static_cast<int>(scancode),
+        .modifiers = modifiers,
     });
 }
 
@@ -180,6 +191,11 @@ bool requiresBinding(InputAction action)
     case InputAction::MoveRight:
     case InputAction::MoveUp:
     case InputAction::MoveDown:
+    case InputAction::ShiftRingLeft:
+    case InputAction::ShiftRingRight:
+    case InputAction::ShiftRingUp:
+    case InputAction::ShiftRingDown:
+    case InputAction::RingCommandModifier:
     case InputAction::Confirm:
     case InputAction::Cancel:
     case InputAction::Pause:
@@ -242,6 +258,66 @@ std::optional<InputBindingDevice> parseInputBindingDevice(std::string_view name)
     return std::nullopt;
 }
 
+std::string_view inputModifierName(InputModifiers modifier)
+{
+    switch (modifier) {
+    case InputModifiers::Shift: return "shift";
+    case InputModifiers::Ctrl: return "ctrl";
+    case InputModifiers::Alt: return "alt";
+    case InputModifiers::Gui: return "gui";
+    case InputModifiers::None: return "none";
+    }
+    return "none";
+}
+
+std::optional<InputModifiers> parseInputModifier(std::string_view name)
+{
+    const std::string normalized = lowerAscii(name);
+    if (normalized == "shift") {
+        return InputModifiers::Shift;
+    }
+    if (normalized == "ctrl" || normalized == "control") {
+        return InputModifiers::Ctrl;
+    }
+    if (normalized == "alt") {
+        return InputModifiers::Alt;
+    }
+    if (normalized == "gui" || normalized == "win" || normalized == "meta") {
+        return InputModifiers::Gui;
+    }
+    if (normalized == "none") {
+        return InputModifiers::None;
+    }
+    return std::nullopt;
+}
+
+std::string inputModifierDisplayPrefix(InputModifiers modifiers)
+{
+    std::string result;
+    const auto append = [&](InputModifiers modifier, std::string_view label) {
+        if (inputModifiersContain(modifiers, modifier)) {
+            result += label;
+            result += '+';
+        }
+    };
+    append(InputModifiers::Ctrl, "Ctrl");
+    append(InputModifiers::Alt, "Alt");
+    append(InputModifiers::Shift, "Shift");
+    append(InputModifiers::Gui, "Gui");
+    return result;
+}
+
+int inputModifierCount(InputModifiers modifiers)
+{
+    std::uint8_t bits = static_cast<std::uint8_t>(modifiers);
+    int count = 0;
+    while (bits != 0) {
+        count += bits & 1u;
+        bits >>= 1u;
+    }
+    return count;
+}
+
 InputBindingMap defaultInputBindings()
 {
     InputBindingMap bindings{};
@@ -254,8 +330,16 @@ InputBindingMap defaultInputBindings()
     addKeyboard(bindings, InputAction::MoveUp, SDL_SCANCODE_UP);
     addKeyboard(bindings, InputAction::MoveDown, SDL_SCANCODE_S);
     addKeyboard(bindings, InputAction::MoveDown, SDL_SCANCODE_DOWN);
-    addKeyboard(bindings, InputAction::ShortcutCursorLeft, SDL_SCANCODE_Q);
-    addKeyboard(bindings, InputAction::ShortcutCursorRight, SDL_SCANCODE_E);
+    addKeyboard(
+        bindings,
+        InputAction::ShortcutCursorLeft,
+        SDL_SCANCODE_LEFT,
+        InputModifiers::Shift);
+    addKeyboard(
+        bindings,
+        InputAction::ShortcutCursorRight,
+        SDL_SCANCODE_RIGHT,
+        InputModifiers::Shift);
     addKeyboard(bindings, InputAction::DirectShortcut1, SDL_SCANCODE_1);
     addKeyboard(bindings, InputAction::DirectShortcut2, SDL_SCANCODE_2);
     addKeyboard(bindings, InputAction::DirectShortcut3, SDL_SCANCODE_3);
@@ -264,6 +348,16 @@ InputBindingMap defaultInputBindings()
     addKeyboard(bindings, InputAction::DirectShortcut6, SDL_SCANCODE_6);
     addKeyboard(bindings, InputAction::DirectShortcut7, SDL_SCANCODE_7);
     addKeyboard(bindings, InputAction::DirectShortcut8, SDL_SCANCODE_8);
+    addKeyboard(
+        bindings,
+        InputAction::PreviousShortcutRow,
+        SDL_SCANCODE_UP,
+        InputModifiers::Shift);
+    addKeyboard(
+        bindings,
+        InputAction::NextShortcutRow,
+        SDL_SCANCODE_DOWN,
+        InputModifiers::Shift);
     addKeyboard(bindings, InputAction::ToggleShortcutRow, SDL_SCANCODE_TAB);
     addKeyboard(bindings, InputAction::UseSelectedItem, SDL_SCANCODE_F);
     addKeyboard(bindings, InputAction::Confirm, SDL_SCANCODE_RETURN);
@@ -305,6 +399,7 @@ InputBindingMap defaultInputBindings()
     addGamepadButton(bindings, InputAction::OpenCredits, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
     addGamepadButton(bindings, InputAction::ShortcutCursorLeft, SDL_GAMEPAD_BUTTON_DPAD_LEFT);
     addGamepadButton(bindings, InputAction::ShortcutCursorRight, SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
+    addGamepadButton(bindings, InputAction::NextShortcutRow, SDL_GAMEPAD_BUTTON_DPAD_UP);
     addGamepadButton(bindings, InputAction::ToggleShortcutRow, SDL_GAMEPAD_BUTTON_DPAD_UP);
     addGamepadButton(bindings, InputAction::PutSelectedItemOnRing, SDL_GAMEPAD_BUTTON_DPAD_DOWN);
 
@@ -312,7 +407,11 @@ InputBindingMap defaultInputBindings()
     addGamepadAxis(bindings, InputAction::MoveRight, SDL_GAMEPAD_AXIS_LEFTX, 1, StickDigitalThreshold);
     addGamepadAxis(bindings, InputAction::MoveUp, SDL_GAMEPAD_AXIS_LEFTY, -1, StickDigitalThreshold);
     addGamepadAxis(bindings, InputAction::MoveDown, SDL_GAMEPAD_AXIS_LEFTY, 1, StickDigitalThreshold);
-    addGamepadAxis(bindings, InputAction::OffsetRingCenter, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 1, TriggerDigitalThreshold);
+    addGamepadAxis(bindings, InputAction::ShiftRingLeft, SDL_GAMEPAD_AXIS_RIGHTX, -1, StickDigitalThreshold);
+    addGamepadAxis(bindings, InputAction::ShiftRingRight, SDL_GAMEPAD_AXIS_RIGHTX, 1, StickDigitalThreshold);
+    addGamepadAxis(bindings, InputAction::ShiftRingUp, SDL_GAMEPAD_AXIS_RIGHTY, -1, StickDigitalThreshold);
+    addGamepadAxis(bindings, InputAction::ShiftRingDown, SDL_GAMEPAD_AXIS_RIGHTY, 1, StickDigitalThreshold);
+    addGamepadAxis(bindings, InputAction::RingCommandModifier, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 1, TriggerDigitalThreshold);
     addGamepadAxis(bindings, InputAction::ThrowActiveRing, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 1, TriggerDigitalThreshold);
 
     return bindings;
@@ -329,6 +428,15 @@ InputBindingMap sanitizeInputBindings(InputBindingMap bindings)
             }),
             actionBindings.end());
         for (InputBinding& binding : actionBindings) {
+            constexpr std::uint8_t ValidModifierBits =
+                static_cast<std::uint8_t>(InputModifiers::Shift) |
+                static_cast<std::uint8_t>(InputModifiers::Ctrl) |
+                static_cast<std::uint8_t>(InputModifiers::Alt) |
+                static_cast<std::uint8_t>(InputModifiers::Gui);
+            binding.modifiers = binding.device == InputBindingDevice::Keyboard
+                ? static_cast<InputModifiers>(
+                    static_cast<std::uint8_t>(binding.modifiers) & ValidModifierBits)
+                : InputModifiers::None;
             if (binding.device == InputBindingDevice::GamepadAxis) {
                 binding.direction = binding.direction < 0 ? -1 : 1;
                 binding.threshold = std::clamp(binding.threshold, 0.05f, 1.0f);
@@ -350,7 +458,8 @@ bool inputBindingEquals(const InputBinding& lhs, const InputBinding& rhs)
     return lhs.device == rhs.device &&
         lhs.code == rhs.code &&
         lhs.direction == rhs.direction &&
-        std::fabs(lhs.threshold - rhs.threshold) < 0.0001f;
+        std::fabs(lhs.threshold - rhs.threshold) < 0.0001f &&
+        lhs.modifiers == rhs.modifiers;
 }
 
 bool inputActionRequiresBinding(InputAction action)
@@ -362,7 +471,9 @@ std::string inputBindingDisplayName(const InputBinding& binding)
 {
     switch (binding.device) {
     case InputBindingDevice::Keyboard:
-        return "Key:" + keyboardScancodeName(binding.code);
+        return "Key:" +
+            inputModifierDisplayPrefix(binding.modifiers) +
+            keyboardScancodeName(binding.code);
     case InputBindingDevice::MouseButton:
         return "Mouse:" + mouseButtonName(binding.code);
     case InputBindingDevice::GamepadButton:

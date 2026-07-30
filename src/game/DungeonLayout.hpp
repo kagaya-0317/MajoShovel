@@ -8,6 +8,8 @@
 
 namespace majo {
 
+inline constexpr float DungeonStartCavernRadiusTiles = 3.2f;
+
 struct DungeonTile {
     int x = 0;
     int y = 0;

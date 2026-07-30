@@ -85,6 +85,7 @@ struct WorldDropItem {
 
 struct WorldDropPickupEvent {
     WorldDropKind kind = WorldDropKind::Object;
+    Vec2 position{};
     std::string id;
     std::string instanceId;
     std::string name;

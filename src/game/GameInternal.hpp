@@ -296,6 +296,7 @@ constexpr float BaseEditHandleSize = 12.0f;
 constexpr float BaseEditHandleHitPadding = 8.0f;
 constexpr float RingObjectImageMaxSize = 48.0f;
 constexpr Vec2 RingItemUiRectSize{54.0f, 54.0f};
+constexpr Vec2 RingItemProtectionLabelOffset{0.0f, -12.0f};
 constexpr float RingItemBottomLabelExtraHeight = 30.0f;
 constexpr float ObjectImageScaleMin = 0.25f;
 constexpr float ObjectImageScaleMax = 4.0f;
@@ -3098,7 +3099,12 @@ void drawRingItemShape(
         visualCenter - RingItemUiRectSize * 0.5f,
         RingItemUiRectSize,
     };
-    drawInventoryUiProtectionLabel(renderer, itemRect);
+    drawInventoryUiProtectionLabel(
+        renderer,
+        itemRect,
+        InventoryUiProtectionLabelStyle{
+            .offset = RingItemProtectionLabelOffset,
+        });
 }
 
 bool drawRingItemObjectImage(
@@ -3177,7 +3183,7 @@ const char* ringShapeDisplayName(RingShape shape)
     switch (shape) {
     case RingShape::Circle: return "円";
     case RingShape::FigureEight: return "8の字";
-    case RingShape::Comet: return "彗星";
+    case RingShape::Comet: return "すい星";
     }
     return "円";
 }
@@ -3573,7 +3579,7 @@ void logSpellRingShapeExtensionAudit()
     logError("=== Spell ring shape extension pre-audit ===");
     logError("[audit] orbit_calc: SpellRingSystem::update computes SpellRingItem::worldPosition via getRingItemWorldPosition().");
     logError("[audit] render/dig/hit/light/projectile: Game::render, DiggingSystem, EnemySystem, ProjectileSystem consume SpellRingItem::worldPosition.");
-    logError("[audit] throw/offset: SpellRingSystem::center is driven by Player::spellRingShift (Input::ringOffsetHeld) and throw state transitions.");
+    logError("[audit] throw/offset: SpellRingSystem::center is driven by Player::spellRingShift (Input::ringOffsetHeld / ringShiftAxis) and throw state transitions.");
     logError("[audit] ring_ui: Ring screen placement uses localAngle and findNearestRingPathParam()/getRingItemWorldPosition().");
     logError("[audit] save_load: ring lines persist item type/objectId/localAngle/instance data; load normalizes angles and falls back invalid item type to Object.");
     logError("[audit] ring_shape_save: ring_shape_1..3 keys persist RingShape; unknown/invalid values fall back to the ring's default shape.");

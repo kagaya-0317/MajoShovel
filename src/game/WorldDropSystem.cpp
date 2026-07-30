@@ -20,6 +20,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <limits>
 #include <random>
 #include <string_view>
 #include <utility>
@@ -1117,6 +1118,7 @@ int WorldDropSystem::update(
 
         bool pickedUp = false;
         WorldDropPickupEvent pickupEvent;
+        pickupEvent.position = elevatedDrawPosition(drop.position, drop.altitude);
         bool hasPickupEvent = false;
         if (drop.kind == WorldDropKind::Object) {
             if (drop.instance) {
@@ -1160,12 +1162,15 @@ int WorldDropSystem::update(
                 }
             }
         } else if (drop.kind == WorldDropKind::Money) {
-            money = std::max(0, money + std::max(0, drop.quantity));
+            const int safeMoney = std::max(0, money);
+            const int availableCapacity = std::numeric_limits<int>::max() - safeMoney;
+            const int addedAmount = std::min(std::max(0, drop.quantity), availableCapacity);
+            money = safeMoney + addedAmount;
             pickedUp = true;
             pickupEvent.kind = drop.kind;
             pickupEvent.id = drop.id;
-            pickupEvent.quantity = std::max(0, drop.quantity);
-            hasPickupEvent = true;
+            pickupEvent.quantity = addedAmount;
+            hasPickupEvent = addedAmount > 0;
         } else if (drop.kind == WorldDropKind::Material) {
             MaterialType materialType = MaterialType::Count;
             if (materialTypeFromSaveName(drop.id, materialType)) {
@@ -1183,7 +1188,7 @@ int WorldDropSystem::update(
         }
 
         if (pickedUp) {
-            if (effects != nullptr) {
+            if (effects != nullptr && drop.kind != WorldDropKind::Money) {
                 effects->spawnDropPickup(elevatedDrawPosition(drop.position, drop.altitude), player.position - drop.position);
             }
             if (pickupEvents != nullptr && hasPickupEvent && pickupEvent.quantity > 0) {

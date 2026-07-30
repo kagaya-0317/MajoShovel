@@ -124,6 +124,7 @@ add_executable(MajoShovel
     src/game/ObjectVisualPose.cpp
     src/game/ScaledImageRenderer.cpp
     src/game/WorldIconRenderer.cpp
+    src/game/MoneyGainFxSystem.cpp
     src/game/WorldDropSystem.cpp
     src/game/EffectSystem.cpp
     src/game/Collision.cpp

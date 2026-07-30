@@ -172,8 +172,25 @@ constexpr float AudioCueEditPaneGap = 14.0f;
 constexpr float AudioCueEditCueListWidth = 330.0f;
 constexpr float AudioCueEditDetailWidth = 330.0f;
 constexpr float AudioCueEditButtonAreaHeight = 64.0f;
-constexpr float AudioCueEditRowHeight = 44.0f;
-constexpr float AudioCueEditRowGap = 4.0f;
+constexpr float AudioCueEditBodyBottomExtension = 40.0f;
+constexpr float AudioCueEditBodyTopExtension = 30.0f;
+constexpr float AudioCueEditCueRowHeight = 44.0f;
+constexpr float AudioCueEditCueRowGap = 4.0f;
+constexpr float AudioCueEditFileRowHeight = 30.0f;
+constexpr float AudioCueEditFileRowGap = 3.0f;
+constexpr float AudioCueEditSliderHeight = 20.0f;
+constexpr float AudioCueEditVolumeSliderOffsetY = 176.0f;
+constexpr float AudioCueEditPitchSliderOffsetY = 248.0f;
+constexpr float AudioCueEditVolumeMinPercent = 0.0f;
+constexpr float AudioCueEditVolumeMaxPercent = 200.0f;
+constexpr float AudioCueEditPitchMinPercent = 50.0f;
+constexpr float AudioCueEditPitchMaxPercent = 200.0f;
+constexpr float AudioCueEditSliderStepPercent = 5.0f;
+constexpr float AudioCueEditSliderMajorTickPercent = 25.0f;
+constexpr float AudioCueEditSliderReferencePercent = 100.0f;
+constexpr std::uint64_t AudioCueEditDoubleClickTicks = 420;
+constexpr float AudioCueEditPitchMin = -100.0f;
+constexpr float AudioCueEditPitchMax = 100.0f;
 constexpr int EnemyTestMagnetDropCount = 7;
 constexpr float EnemyTestMagnetDropMinRadius = 72.0f;
 constexpr float EnemyTestMagnetDropMaxRadius = 178.0f;
@@ -667,7 +684,6 @@ struct AudioCueEditLayout {
     UiRect cueList{};
     UiRect fileList{};
     UiRect detail{};
-    float rowPitch = AudioCueEditRowHeight + AudioCueEditRowGap;
 };
 
 struct AudioCueManifestRow {
@@ -698,13 +714,23 @@ UiScrollAreaStyle debugListScrollStyle(float wheelStep = 48.0f)
     return style;
 }
 
-UiScrollableListStyle audioCueEditListStyle()
+UiScrollableListStyle audioCueEditCueListStyle()
 {
     UiScrollableListStyle style;
-    style.rowHeight = AudioCueEditRowHeight;
-    style.rowGap = AudioCueEditRowGap;
+    style.rowHeight = AudioCueEditCueRowHeight;
+    style.rowGap = AudioCueEditCueRowGap;
     style.rowInsetX = 8.0f;
     style.scroll = debugListScrollStyle(36.0f);
+    return style;
+}
+
+UiScrollableListStyle audioCueEditFileListStyle()
+{
+    UiScrollableListStyle style;
+    style.rowHeight = AudioCueEditFileRowHeight;
+    style.rowGap = AudioCueEditFileRowGap;
+    style.rowInsetX = 8.0f;
+    style.scroll = debugListScrollStyle(AudioCueEditFileRowHeight + AudioCueEditFileRowGap);
     return style;
 }
 
@@ -1630,7 +1656,10 @@ AudioCueEditLayout makeAudioCueEditLayout(int screenWidth, int screenHeight)
         (static_cast<float>(screenHeight) - height) * 0.5f,
     }, {width, height}};
 
-    const UiRect body = uiBodyRect(layout.panel);
+    const UiRect body = uiBodyRect(
+        layout.panel,
+        AudioCueEditBodyBottomExtension,
+        AudioCueEditBodyTopExtension);
     const float contentHeight = std::max(120.0f, body.size.y - AudioCueEditButtonAreaHeight);
     layout.cueList = {body.pos, {AudioCueEditCueListWidth, contentHeight}};
     layout.detail = {{
@@ -1985,7 +2014,10 @@ UiRect objectImageScaleSearchCountRect(const ObjectImageScaleLayout& layout)
 
 UiRect audioCueEditCloseButtonRect(UiRect panel)
 {
-    return uiBottomLeftButtonRect(panel, {130.0f, ui::ButtonHeight});
+    return uiBottomLeftButtonRect(
+        panel,
+        {130.0f, ui::ButtonHeight},
+        AudioCueEditBodyBottomExtension);
 }
 
 UiRect audioCueEditRescanButtonRect(UiRect panel)
@@ -1996,7 +2028,7 @@ UiRect audioCueEditRescanButtonRect(UiRect panel)
 
 UiRect audioCueEditPreviewButtonRect(UiRect panel)
 {
-    const UiRect body = uiBodyRect(panel);
+    const UiRect body = uiBodyRect(panel, AudioCueEditBodyBottomExtension);
     return {{body.pos.x + body.size.x - 404.0f, body.pos.y + body.size.y - ui::ButtonHeight}, {126.0f, ui::ButtonHeight}};
 }
 
@@ -2008,7 +2040,32 @@ UiRect audioCueEditApplyButtonRect(UiRect panel)
 
 UiRect audioCueEditSaveButtonRect(UiRect panel)
 {
-    return uiBottomRightButtonRect(panel, {128.0f, ui::ButtonHeight});
+    return uiBottomRightButtonRect(
+        panel,
+        {128.0f, ui::ButtonHeight},
+        AudioCueEditBodyBottomExtension);
+}
+
+UiRect audioCueEditSliderRect(UiRect detailPanel, float offsetY)
+{
+    const UiRect content = uiSubPanelContentRect(detailPanel);
+    return {{
+        content.pos.x,
+        content.pos.y + offsetY,
+    }, {
+        content.size.x,
+        AudioCueEditSliderHeight,
+    }};
+}
+
+UiRect audioCueEditVolumeSliderRect(UiRect detailPanel)
+{
+    return audioCueEditSliderRect(detailPanel, AudioCueEditVolumeSliderOffsetY);
+}
+
+UiRect audioCueEditPitchSliderRect(UiRect detailPanel)
+{
+    return audioCueEditSliderRect(detailPanel, AudioCueEditPitchSliderOffsetY);
 }
 
 void keepDebugItemPickerSelectionVisible(
@@ -2047,9 +2104,19 @@ void keepDebugStoryTestSelectionVisible(
         debugStoryTestListStyle());
 }
 
-void keepAudioCueEditSelectionVisible(UiRect list, int selectedIndex, int itemCount, float& scrollOffset)
+void keepAudioCueEditSelectionVisible(
+    UiRect list,
+    int selectedIndex,
+    int itemCount,
+    float& scrollOffset,
+    const UiScrollableListStyle& style)
 {
-    keepUiScrollableListItemVisible(audioCueEditListViewport(list), selectedIndex, itemCount, scrollOffset, audioCueEditListStyle());
+    keepUiScrollableListItemVisible(
+        audioCueEditListViewport(list),
+        selectedIndex,
+        itemCount,
+        scrollOffset,
+        style);
 }
 
 UiRect debugItemPickerAddButtonRect(UiRect panel)
@@ -2190,6 +2257,124 @@ std::string audioCueDisplayName(const AudioCueEditEntry& entry)
     return entry.displayName.empty() ? entry.id : entry.displayName;
 }
 
+float audioCueEditPitchScale(float pitch)
+{
+    const float clamped = std::clamp(pitch, AudioCueEditPitchMin, AudioCueEditPitchMax);
+    return std::pow(2.0f, clamped / 100.0f);
+}
+
+float audioCueEditPitchPercent(float pitch)
+{
+    return audioCueEditPitchScale(pitch) * 100.0f;
+}
+
+float audioCueEditPitchForPercent(float percent)
+{
+    const float clamped = std::clamp(
+        percent,
+        AudioCueEditPitchMinPercent,
+        AudioCueEditPitchMaxPercent);
+    return 100.0f * std::log2(clamped / 100.0f);
+}
+
+std::string audioCueEditPercentText(float percent)
+{
+    return std::to_string(static_cast<int>(std::lround(percent))) + "%";
+}
+
+UiSliderSpec audioCueEditVolumeSliderSpec()
+{
+    return {
+        .minValue = AudioCueEditVolumeMinPercent,
+        .maxValue = AudioCueEditVolumeMaxPercent,
+        .step = AudioCueEditSliderStepPercent,
+        .majorTickStep = AudioCueEditSliderMajorTickPercent,
+        .showReference = true,
+        .referenceValue = AudioCueEditSliderReferencePercent,
+    };
+}
+
+UiSliderSpec audioCueEditPitchSliderSpec()
+{
+    return {
+        .minValue = AudioCueEditPitchMinPercent,
+        .maxValue = AudioCueEditPitchMaxPercent,
+        .step = AudioCueEditSliderStepPercent,
+        .majorTickStep = AudioCueEditSliderMajorTickPercent,
+        .showReference = true,
+        .referenceValue = AudioCueEditSliderReferencePercent,
+    };
+}
+
+UiSliderStyle audioCueEditSliderStyle(bool pitch)
+{
+    UiSliderStyle style;
+    style.gauge.tick = {255, 255, 255, 34};
+    style.gauge.fill.start = pitch
+        ? Color{196, 146, 255, 235}
+        : Color{108, 206, 236, 235};
+    style.gauge.fill.end = pitch
+        ? Color{255, 206, 132, 235}
+        : Color{190, 246, 220, 235};
+    return style;
+}
+
+std::string audioCueEditFileName(std::string_view path)
+{
+    if (path.empty()) {
+        return "-";
+    }
+    const std::string name = std::filesystem::path(std::string(path)).filename().string();
+    return name.empty() ? std::string(path) : name;
+}
+
+void drawAudioCueEditSlider(
+    Renderer& renderer,
+    UiRect slider,
+    std::string_view label,
+    float percent,
+    const UiSliderSpec& spec,
+    const UiSliderStyle& style)
+{
+    constexpr float LabelOffsetY = 30.0f;
+    constexpr float ScaleOffsetY = 8.0f;
+    const Vec2 labelPos{slider.pos.x, slider.pos.y - LabelOffsetY};
+    renderer.drawText(labelPos, label, ui::Text, 2);
+
+    const std::string valueText = audioCueEditPercentText(percent);
+    const Vec2 valueSize = renderer.measureText(valueText, 2);
+    renderer.drawText(
+        {slider.pos.x + slider.size.x - valueSize.x, labelPos.y},
+        valueText,
+        Color{255, 230, 150, 255},
+        2);
+
+    drawUiSlider(renderer, slider, percent, spec, style);
+
+    const float scaleY = slider.pos.y + slider.size.y + ScaleOffsetY;
+    const auto drawScaleLabel = [&](float value, float normalized, bool centered) {
+        const std::string text = audioCueEditPercentText(value);
+        const Vec2 size = renderer.measureText(text, 1);
+        float x = slider.pos.x + slider.size.x * normalized;
+        if (centered) {
+            x -= size.x * 0.5f;
+        } else if (normalized >= 1.0f) {
+            x -= size.x;
+        }
+        renderer.drawText({x, scaleY}, text, ui::TextMuted, 1);
+    };
+    drawScaleLabel(spec.minValue, 0.0f, false);
+    if (spec.showReference &&
+        spec.referenceValue > spec.minValue &&
+        spec.referenceValue < spec.maxValue) {
+        drawScaleLabel(
+            spec.referenceValue,
+            (spec.referenceValue - spec.minValue) / (spec.maxValue - spec.minValue),
+            true);
+    }
+    drawScaleLabel(spec.maxValue, 1.0f, false);
+}
+
 int audioCueEditFileIndexForPath(const std::vector<AudioCueFileEntry>& files, std::string path)
 {
     const std::string normalized = lowerAscii(normalizeAudioRelativePath(trimAscii(std::move(path))));
@@ -2213,14 +2398,25 @@ AudioCueEditEntry parseAudioCueManifestEntry(const std::vector<std::string>& fie
     if (fields.size() >= 3) {
         entry.path = normalizeAudioRelativePath(trimAscii(fields[2]));
     }
-    if (fields.size() >= 7) {
-        entry.displayName = trimAscii(fields[6]);
-    }
     parseFloatOrDefault(fieldOrEmpty(fields, 3), entry.volume, 1.0f);
-    entry.volume = clamp(entry.volume, 0.0f, 1.0f);
+    entry.volume = clamp(
+        entry.volume,
+        AudioCueEditVolumeMinPercent / 100.0f,
+        AudioCueEditVolumeMaxPercent / 100.0f);
     entry.loop = parseBoolOrDefault(fieldOrEmpty(fields, 4), entry.type == "bgm");
     parseFloatOrDefault(fieldOrEmpty(fields, 5), entry.cooldownMs, 0.0f);
     entry.cooldownMs = std::max(0.0f, entry.cooldownMs);
+    float parsedPitch = 0.0f;
+    const bool hasPitchColumn =
+        fields.size() >= 7 && parseFloatOrDefault(fieldOrEmpty(fields, 6), parsedPitch, 0.0f);
+    if (hasPitchColumn) {
+        entry.pitch = std::clamp(parsedPitch, AudioCueEditPitchMin, AudioCueEditPitchMax);
+    }
+    if (fields.size() >= 8) {
+        entry.displayName = trimAscii(fields[7]);
+    } else if (fields.size() >= 7 && !hasPitchColumn) {
+        entry.displayName = trimAscii(fields[6]);
+    }
     return entry;
 }
 
@@ -2278,7 +2474,7 @@ bool writeAudioCueManifestRows(const std::vector<AudioCueManifestRow>& rows, std
     }
 
     file << "\xEF\xBB\xBF";
-    file << "id\ttype\tpath\tvolume\tloop\tcooldown_ms\tdisplay_name\n";
+    file << "id\ttype\tpath\tvolume\tloop\tcooldown_ms\tpitch\tdisplay_name\n";
     for (const AudioCueManifestRow& row : rows) {
         if (!row.valid || row.entry.id.empty()) {
             continue;
@@ -2290,6 +2486,7 @@ bool writeAudioCueManifestRows(const std::vector<AudioCueManifestRow>& rows, std
             << formatAudioFloat(row.entry.volume) << '\t'
             << (row.entry.loop ? "true" : "false") << '\t'
             << formatAudioFloat(row.entry.cooldownMs) << '\t'
+            << formatAudioFloat(row.entry.pitch) << '\t'
             << row.entry.displayName << '\n';
     }
 
@@ -2991,6 +3188,7 @@ std::size_t debugStoryTestDocsOrderIndex(std::string_view eventId)
         "tutorial_capture_net",
         "tutorial_ring_shift",
         "tutorial_warp",
+        "tutorial_ring_overweight",
         "stage_01_warp_all_found",
         "stage_01_boss_before",
         "stage_01_boss_after",
@@ -4360,7 +4558,7 @@ void Game::updateObjectImageScaleEditScreen(const Input& input, UiContext& ui)
         adjustSelectedScale(-1);
     }
 
-    const int wheel = input.shortcutCursorDelta();
+    const int wheel = input.mouseWheelDelta();
     if (wheel != 0) {
         int hoveredIndex = -1;
         for (int i = 0; i < itemCount; ++i) {
@@ -7316,6 +7514,9 @@ bool Game::saveAudioCueManifestFromEdit(std::string& message)
 
 void Game::rebuildAudioCueFileList()
 {
+    audioCueEditLastFileClickIndex_ = -1;
+    audioCueEditLastFileClickTicks_ = 0;
+
     std::string previousPath;
     if (audioCueEditFileIndex_ >= 0 && audioCueEditFileIndex_ < static_cast<int>(audioCueEditFiles_.size())) {
         previousPath = audioCueEditFiles_[static_cast<std::size_t>(audioCueEditFileIndex_)].relativePath;
@@ -7423,6 +7624,8 @@ void Game::enterAudioCueEditMode(AudioCueEditMode editMode)
     audioCueEditFileScrollOffset_ = 0.0f;
     audioCueEditCueScrollState_ = {};
     audioCueEditFileScrollState_ = {};
+    audioCueEditVolumeSliderState_ = {};
+    audioCueEditPitchSliderState_ = {};
     audioCueEditCancelState_ = {};
 
     rebuildAudioCueFileList();
@@ -7467,6 +7670,7 @@ void Game::previewSelectedAudioCueFile()
     if (audioCueEditCueIndex_ >= 0 && audioCueEditCueIndex_ < static_cast<int>(audioCueEditEntries_.size())) {
         const AudioCueEditEntry& cue = audioCueEditEntries_[static_cast<std::size_t>(audioCueEditCueIndex_)];
         options.volume = cue.volume;
+        options.pitchScale = audioCueEditPitchScale(cue.pitch);
         options.loop = cue.loop;
         options.cooldownSeconds = cue.cooldownMs / 1000.0f;
     } else {
@@ -7510,6 +7714,7 @@ void Game::applySelectedAudioCueFile()
 
     AudioCueOptions options;
     options.volume = cue.volume;
+    options.pitchScale = audioCueEditPitchScale(cue.pitch);
     options.loop = cue.loop;
     options.cooldownSeconds = cue.cooldownMs / 1000.0f;
     const std::filesystem::path clipPath = std::filesystem::path(std::string(AudioCueEditAudioRoot)) / std::filesystem::path(file.relativePath);
@@ -7538,16 +7743,21 @@ void Game::updateAudioCueEditScreen(const Input& input, UiContext& ui)
     const AudioCueEditLayout layout = makeAudioCueEditLayout(camera_.width(), camera_.height());
     const int cueCount = static_cast<int>(audioCueEditEntries_.size());
     const int fileCount = static_cast<int>(audioCueEditFiles_.size());
-    const UiScrollableListStyle listStyle = audioCueEditListStyle();
+    const UiScrollableListStyle cueListStyle = audioCueEditCueListStyle();
+    const UiScrollableListStyle fileListStyle = audioCueEditFileListStyle();
     const UiRect cueViewport = audioCueEditListViewport(layout.cueList);
     const UiRect fileViewport = audioCueEditListViewport(layout.fileList);
+    const auto resetFileDoubleClick = [this] {
+        audioCueEditLastFileClickIndex_ = -1;
+        audioCueEditLastFileClickTicks_ = 0;
+    };
     UiScrollAreaLayout cueList = updateUiScrollableList(
         ui,
         input,
         cueViewport,
         cueCount,
         audioCueEditCueScrollOffset_,
-        listStyle,
+        cueListStyle,
         &audioCueEditCueScrollState_);
     UiScrollAreaLayout fileList = updateUiScrollableList(
         ui,
@@ -7555,10 +7765,53 @@ void Game::updateAudioCueEditScreen(const Input& input, UiContext& ui)
         fileViewport,
         fileCount,
         audioCueEditFileScrollOffset_,
-        listStyle,
+        fileListStyle,
         &audioCueEditFileScrollState_);
     bool keepCueSelectionVisible = false;
     bool keepFileSelectionVisible = false;
+    bool previewAfterParameterChange = false;
+
+    if (audioCueEditCueIndex_ >= 0 && audioCueEditCueIndex_ < cueCount) {
+        AudioCueEditEntry& cue =
+            audioCueEditEntries_[static_cast<std::size_t>(audioCueEditCueIndex_)];
+        const UiSliderResult volumeResult = updateUiSlider(
+            ui,
+            input,
+            audioCueEditVolumeSliderRect(layout.detail),
+            cue.volume * 100.0f,
+            audioCueEditVolumeSliderSpec(),
+            audioCueEditVolumeSliderState_);
+        if (volumeResult.changed) {
+            cue.volume = volumeResult.value / 100.0f;
+            audioCueEditDirty_ = true;
+            audioCueEditStatus_ = "音量: " + audioCueEditPercentText(volumeResult.value);
+            previewAfterParameterChange = true;
+        }
+
+        if (audioCueEditMode_ == AudioCueEditMode::Se) {
+            const UiSliderResult pitchResult = updateUiSlider(
+                ui,
+                input,
+                audioCueEditPitchSliderRect(layout.detail),
+                audioCueEditPitchPercent(cue.pitch),
+                audioCueEditPitchSliderSpec(),
+                audioCueEditPitchSliderState_);
+            if (pitchResult.changed) {
+                cue.pitch = audioCueEditPitchForPercent(pitchResult.value);
+                audioCueEditDirty_ = true;
+                audioCueEditStatus_ = "ピッチ: " + audioCueEditPercentText(pitchResult.value);
+                previewAfterParameterChange = true;
+            }
+        } else {
+            audioCueEditPitchSliderState_ = {};
+        }
+    } else {
+        audioCueEditVolumeSliderState_ = {};
+        audioCueEditPitchSliderState_ = {};
+    }
+    if (previewAfterParameterChange) {
+        previewSelectedAudioCueFile();
+    }
 
     if (uiCancelRequested(audioCueEditCancelState_, input, ui, layout.panel) ||
         ui.pressed(audioCueEditCloseButtonRect(layout.panel))) {
@@ -7597,11 +7850,12 @@ void Game::updateAudioCueEditScreen(const Input& input, UiContext& ui)
     }
 
     for (int i = 0; i < cueCount; ++i) {
-        const UiRect rect = uiScrollableListItemRect(cueList, i, listStyle);
+        const UiRect rect = uiScrollableListItemRect(cueList, i, cueListStyle);
         if (!uiScrollAreaRectVisible(cueList, rect)) {
             continue;
         }
         if (cueViewport.contains(ui.mouse()) && ui.pressed(rect)) {
+            resetFileDoubleClick();
             audioCueEditCueIndex_ = i;
             const int fileIndex = audioCueEditFileIndexForPath(audioCueEditFiles_, audioCueEditEntries_[static_cast<std::size_t>(i)].path);
             if (fileIndex >= 0) {
@@ -7614,13 +7868,27 @@ void Game::updateAudioCueEditScreen(const Input& input, UiContext& ui)
     }
 
     for (int i = 0; i < fileCount; ++i) {
-        const UiRect rect = uiScrollableListItemRect(fileList, i, listStyle);
+        const UiRect rect = uiScrollableListItemRect(fileList, i, fileListStyle);
         if (!uiScrollAreaRectVisible(fileList, rect)) {
             continue;
         }
         if (fileViewport.contains(ui.mouse()) && ui.pressed(rect)) {
+            const std::uint64_t nowTicks = SDL_GetTicks();
+            const bool doubleClicked =
+                audioCueEditLastFileClickIndex_ == i &&
+                audioCueEditLastFileClickTicks_ != 0 &&
+                nowTicks >= audioCueEditLastFileClickTicks_ &&
+                nowTicks - audioCueEditLastFileClickTicks_ <= AudioCueEditDoubleClickTicks;
             audioCueEditFileIndex_ = i;
-            audioCueEditStatus_ = audioCueEditFiles_[static_cast<std::size_t>(i)].relativePath;
+            if (doubleClicked) {
+                audioCueEditLastFileClickIndex_ = -1;
+                audioCueEditLastFileClickTicks_ = 0;
+                previewSelectedAudioCueFile();
+            } else {
+                audioCueEditLastFileClickIndex_ = i;
+                audioCueEditLastFileClickTicks_ = nowTicks;
+                audioCueEditStatus_ = audioCueEditFiles_[static_cast<std::size_t>(i)].relativePath;
+            }
             break;
         }
     }
@@ -7629,6 +7897,7 @@ void Game::updateAudioCueEditScreen(const Input& input, UiContext& ui)
         (input.pressed(InputAction::MoveRight) ? 1 : 0) -
         (input.pressed(InputAction::MoveLeft) ? 1 : 0);
     if (cueDelta != 0 && cueCount > 0) {
+        resetFileDoubleClick();
         audioCueEditCueIndex_ = std::clamp(audioCueEditCueIndex_ + cueDelta, 0, cueCount - 1);
         keepCueSelectionVisible = true;
         const int fileIndex = audioCueEditFileIndexForPath(audioCueEditFiles_, audioCueEditEntries_[static_cast<std::size_t>(audioCueEditCueIndex_)].path);
@@ -7642,15 +7911,26 @@ void Game::updateAudioCueEditScreen(const Input& input, UiContext& ui)
         (input.pressed(InputAction::MoveDown) ? 1 : 0) -
         (input.pressed(InputAction::MoveUp) ? 1 : 0);
     if (fileDelta != 0 && fileCount > 0) {
+        resetFileDoubleClick();
         audioCueEditFileIndex_ = std::clamp(audioCueEditFileIndex_ + fileDelta, 0, fileCount - 1);
         keepFileSelectionVisible = true;
     }
 
     if (keepCueSelectionVisible) {
-        keepAudioCueEditSelectionVisible(layout.cueList, audioCueEditCueIndex_, cueCount, audioCueEditCueScrollOffset_);
+        keepAudioCueEditSelectionVisible(
+            layout.cueList,
+            audioCueEditCueIndex_,
+            cueCount,
+            audioCueEditCueScrollOffset_,
+            cueListStyle);
     }
     if (keepFileSelectionVisible) {
-        keepAudioCueEditSelectionVisible(layout.fileList, audioCueEditFileIndex_, fileCount, audioCueEditFileScrollOffset_);
+        keepAudioCueEditSelectionVisible(
+            layout.fileList,
+            audioCueEditFileIndex_,
+            fileCount,
+            audioCueEditFileScrollOffset_,
+            fileListStyle);
     }
 }
 
@@ -7666,7 +7946,7 @@ void Game::renderAudioCueEditScreen(Renderer& renderer) const
         audioCueEditMode_ == AudioCueEditMode::Bgm ? "audio.cue_edit.bgm" : "audio.cue_edit.se",
         layout.panel,
         title,
-        "F適用 / Space試聴 / Ctrl+S保存 / Esc戻る",
+        "ゲージをドラッグ / F適用 / Space・ダブルクリック試聴 / Ctrl+S保存 / Esc戻る",
         UiWindowOptions{true, true});
 
     drawUiSubPanel(renderer, layout.cueList);
@@ -7678,20 +7958,21 @@ void Game::renderAudioCueEditScreen(Renderer& renderer) const
 
     const int cueCount = static_cast<int>(audioCueEditEntries_.size());
     const int fileCount = static_cast<int>(audioCueEditFiles_.size());
-    const UiScrollableListStyle listStyle = audioCueEditListStyle();
+    const UiScrollableListStyle cueListStyle = audioCueEditCueListStyle();
+    const UiScrollableListStyle fileListStyle = audioCueEditFileListStyle();
     const UiScrollAreaLayout cueList = makeUiScrollableListLayout(
         audioCueEditListViewport(layout.cueList),
         cueCount,
         audioCueEditCueScrollOffset_,
-        listStyle);
+        cueListStyle);
     const UiScrollAreaLayout fileList = makeUiScrollableListLayout(
         audioCueEditListViewport(layout.fileList),
         fileCount,
         audioCueEditFileScrollOffset_,
-        listStyle);
+        fileListStyle);
     renderer.pushClipRect(cueList.viewport.pos, cueList.viewport.size);
     for (int i = 0; i < cueCount; ++i) {
-        const UiRect rect = uiScrollableListItemRect(cueList, i, listStyle);
+        const UiRect rect = uiScrollableListItemRect(cueList, i, cueListStyle);
         if (!uiScrollAreaRectVisible(cueList, rect)) {
             continue;
         }
@@ -7711,7 +7992,7 @@ void Game::renderAudioCueEditScreen(Renderer& renderer) const
 
     renderer.pushClipRect(fileList.viewport.pos, fileList.viewport.size);
     for (int i = 0; i < fileCount; ++i) {
-        const UiRect rect = uiScrollableListItemRect(fileList, i, listStyle);
+        const UiRect rect = uiScrollableListItemRect(fileList, i, fileListStyle);
         if (!uiScrollAreaRectVisible(fileList, rect)) {
             continue;
         }
@@ -7721,15 +8002,18 @@ void Game::renderAudioCueEditScreen(Renderer& renderer) const
         renderer.drawRect(rect.pos, rect.size, selected ? Color{170, 240, 190, 255} : Color{76, 88, 112, 255});
 
         const AudioCueFileEntry& file = audioCueEditFiles_[static_cast<std::size_t>(i)];
-        renderer.drawText(rect.pos + Vec2{10.0f, 6.0f}, fittedSingleLineText(renderer, file.name, rect.size.x - 20.0f, 2), selected ? Color{202, 255, 216, 255} : ui::Text, 2);
-        renderer.drawText(rect.pos + Vec2{10.0f, 28.0f}, fittedSingleLineText(renderer, file.relativePath, rect.size.x - 20.0f, 1), ui::TextMuted, 1);
+        renderer.drawText(
+            rect.pos + Vec2{10.0f, 5.0f},
+            fittedSingleLineText(renderer, file.name, rect.size.x - 20.0f, 2),
+            selected ? Color{202, 255, 216, 255} : ui::Text,
+            2);
     }
     renderer.popClipRect();
     if (fileCount == 0) {
         renderer.drawText(layout.fileList.pos + Vec2{18.0f, 54.0f}, "WAVがありません", ui::TextDisabled, 2);
     }
-    drawUiScrollAreaFrame(renderer, cueList, listStyle.scroll);
-    drawUiScrollAreaFrame(renderer, fileList, listStyle.scroll);
+    drawUiScrollAreaFrame(renderer, cueList, cueListStyle.scroll);
+    drawUiScrollAreaFrame(renderer, fileList, fileListStyle.scroll);
 
     const AudioCueEditEntry* cue = nullptr;
     const AudioCueFileEntry* file = nullptr;
@@ -7740,20 +8024,61 @@ void Game::renderAudioCueEditScreen(Renderer& renderer) const
         file = &audioCueEditFiles_[static_cast<std::size_t>(audioCueEditFileIndex_)];
     }
 
-    float y = drawUiDetailHeader(renderer, layout.detail, "選択内容");
-    drawUiDetailLine(renderer, layout.detail, y, "種類", audioCueEditTypeText(audioCueEditMode_));
-    drawUiDetailLine(renderer, layout.detail, y, "表示名", cue != nullptr ? audioCueDisplayName(*cue) : "未選択");
-    drawUiDetailLine(renderer, layout.detail, y, "内部ID", cue != nullptr ? cue->id : "-");
-    drawUiDetailLine(renderer, layout.detail, y, "現在", cue != nullptr ? cue->path : "-");
-    drawUiDetailLine(renderer, layout.detail, y, "候補", file != nullptr ? file->relativePath : "-");
+    const UiRect detailContent = uiSubPanelContentRect(layout.detail);
+    const std::string detailTitle = cue != nullptr ? audioCueDisplayName(*cue) : "cue未選択";
+    renderer.drawText(
+        detailContent.pos,
+        fittedSingleLineText(renderer, detailTitle, detailContent.size.x, 3),
+        ui::Text,
+        3);
+    renderer.drawText(
+        detailContent.pos + Vec2{0.0f, 40.0f},
+        cue != nullptr ? cue->id : "左の一覧からcueを選択",
+        ui::TextMuted,
+        1);
+
+    const auto drawFileSelection = [&](float offsetY, std::string_view label, std::string value) {
+        renderer.drawText(
+            detailContent.pos + Vec2{0.0f, offsetY},
+            label,
+            ui::TextMuted,
+            1);
+        renderer.drawText(
+            detailContent.pos + Vec2{0.0f, offsetY + 18.0f},
+            fittedSingleLineText(renderer, value, detailContent.size.x, 2),
+            ui::Text,
+            2);
+    };
+    drawFileSelection(
+        60.0f,
+        "現在",
+        cue != nullptr ? audioCueEditFileName(cue->path) : "-");
+    drawFileSelection(
+        102.0f,
+        "候補",
+        file != nullptr ? file->name : "-");
+    drawUiSeparator(
+        renderer,
+        {{detailContent.pos.x, detailContent.pos.y + 140.0f}, {detailContent.size.x, 1.0f}},
+        {255, 255, 255, 54});
+
     if (cue != nullptr) {
-        drawUiDetailLine(renderer, layout.detail, y, "volume", formatAudioFloat(cue->volume));
-        drawUiDetailLine(renderer, layout.detail, y, "loop", cue->loop ? "true" : "false");
-        drawUiDetailLine(renderer, layout.detail, y, "cooldown", formatAudioFloat(cue->cooldownMs) + " ms");
-    }
-    if (file != nullptr) {
-        const float kib = static_cast<float>(file->fileSize) / 1024.0f;
-        drawUiDetailLine(renderer, layout.detail, y, "size", formatAudioFloat(kib) + " KiB");
+        drawAudioCueEditSlider(
+            renderer,
+            audioCueEditVolumeSliderRect(layout.detail),
+            "音量",
+            cue->volume * 100.0f,
+            audioCueEditVolumeSliderSpec(),
+            audioCueEditSliderStyle(false));
+        if (audioCueEditMode_ == AudioCueEditMode::Se) {
+            drawAudioCueEditSlider(
+                renderer,
+                audioCueEditPitchSliderRect(layout.detail),
+                "ピッチ",
+                audioCueEditPitchPercent(cue->pitch),
+                audioCueEditPitchSliderSpec(),
+                audioCueEditSliderStyle(true));
+        }
     }
 
     const bool canPreview = file != nullptr;
@@ -7972,7 +8297,7 @@ void Game::updateDebugNamedSaveUi(const Input& input, UiContext& ui)
 
     const float maxScroll = debugNamedSaveLoadMaxScroll(layout, itemCount);
     debugNamedLoadScrollOffset_ = clamp(debugNamedLoadScrollOffset_, 0.0f, maxScroll);
-    const int wheel = input.shortcutCursorDelta();
+    const int wheel = input.mouseWheelDelta();
     if (wheel != 0) {
         debugNamedLoadScrollOffset_ = clamp(
             debugNamedLoadScrollOffset_ + static_cast<float>(wheel) * 42.0f,
@@ -8320,7 +8645,7 @@ void Game::updateDebugItemPicker(const Input& input, UiContext& ui)
         }
     }
 
-    const int wheel = input.shortcutCursorDelta();
+    const int wheel = input.mouseWheelDelta();
     if (wheel != 0) {
         debugItemPickerScrollOffset_ = clamp(
             debugItemPickerScrollOffset_ + static_cast<float>(wheel) * 48.0f,
@@ -9428,6 +9753,7 @@ void Game::enterEnemyTestMode()
     digging_ = DiggingSystem{};
     effects_ = EffectSystem{};
     captureAbsorbAnimations_.clear();
+    moneyGainFx_.clear();
     groundLines_ = GroundLineSystem{};
     wetGround_ = WetGroundSystem{};
     enemies_ = EnemySystem{};
@@ -9749,6 +10075,7 @@ void Game::clearEnemyTestArena()
     projectiles_ = ProjectileSystem{};
     effects_ = EffectSystem{};
     captureAbsorbAnimations_.clear();
+    moneyGainFx_.clear();
     groundLines_ = GroundLineSystem{};
     wetGround_ = WetGroundSystem{};
     magic_ = MagicSystem{};

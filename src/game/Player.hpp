@@ -1,7 +1,6 @@
 ﻿#pragma once
 
 #include "engine/Input.hpp"
-#include "engine/Camera.hpp"
 #include "engine/Math.hpp"
 #include "data/RuntimeBalance.hpp"
 #include "game/CharacterSprite.hpp"
@@ -100,7 +99,6 @@ struct Player {
     [[nodiscard]] float effectiveRadius(float baseRadius) const;
     void update(
         const Input& input,
-        const Camera& camera,
         TileMap& map,
         float dt,
         bool paused,

@@ -2091,6 +2091,7 @@ bool Game::loadSaveData(const std::filesystem::path& path)
     refreshEquipmentModifiers();
     refreshOrbitEffects();
     money_ = std::max(0, loadedMoney);
+    moneyGainFx_.clear();
     playTimeSeconds_ = std::max(0.0, loadedPlayTimeSeconds);
     astralHighScore_ = std::max(0, loadedAstralHighScore);
     astralEchoStarCount_ = std::max(std::clamp(loadedAstralEchoStarCount, 0, 9999999), loadAstralEchoMetaStarCount());

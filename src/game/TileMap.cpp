@@ -17,7 +17,6 @@ namespace majo {
 
 namespace {
 
-constexpr float StartCavernRadius = 3.2f;
 constexpr float GoalCavernRadius = 9.0f;
 constexpr float RoguelikeGoalCavernRadius = 3.4f;
 constexpr float WarpCavernRadius = 4.1f;
@@ -1717,7 +1716,7 @@ TerrainDebugInfo TileMap::terrainInfoForTile(int tx, int ty, const Tile* tile) c
         } else {
             generatedType = mixedTreasureWallTile(fineNoise, broadNoise);
         }
-    } else if (metrics.distanceFromStart <= StartCavernRadius + (widthNoise - 0.5f) * 0.8f) {
+    } else if (metrics.distanceFromStart <= DungeonStartCavernRadiusTiles + (widthNoise - 0.5f) * 0.8f) {
         generatedType = TileType::Empty;
     } else if (distanceFromWarp <= WarpCavernRadius) {
         generatedType = TileType::Empty;

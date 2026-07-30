@@ -12,6 +12,7 @@
 #include "game/SpecialObjectRules.hpp"
 
 #include <cmath>
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -364,6 +365,7 @@ bool drawDungeonEventWitchNpcSprite(
     Vec2 center,
     int frameIndex,
     unsigned char alpha,
+    std::optional<bool> flipHorizontalOverride,
     bool inInteractionRange,
     bool hovered)
 {
@@ -391,7 +393,7 @@ bool drawDungeonEventWitchNpcSprite(
     options.anchorPosition = anchorPosition;
     options.scale = DungeonEventWitchNpcScale;
     options.tint = {255, 255, 255, alpha};
-    options.flipHorizontal = visual->defaultFlipHorizontal;
+    options.flipHorizontal = flipHorizontalOverride.value_or(visual->defaultFlipHorizontal);
     options.outlineEnabled = ArtworkOutlineEnabled;
     options.outlineColor = inInteractionRange
         ? (hovered ? DungeonInspectableHoverOutlineColor : DungeonInspectableOutlineColor)
@@ -529,7 +531,6 @@ constexpr std::string_view IntroTutorialCoinBagObjectId = "item_coin_bag";
 constexpr std::string_view IntroTutorialIronSwordObjectId = "item_iron_sword";
 constexpr std::string_view IntroTutorialSlimeGroup = "intro_slime";
 constexpr std::string_view IntroTutorialMushroomGroup = "intro_mushroom";
-constexpr float IntroTutorialSecondEnemyEncounterRadiusTiles = 4.8f;
 constexpr int IntroTutorialSlimeCombatLockLeftTiles = 8;
 constexpr int IntroTutorialSlimeCombatLockRightTiles = 14;
 constexpr int IntroTutorialSlimeCombatLockVerticalTiles = 7;
@@ -655,6 +656,28 @@ BossArenaShape bossArenaShapeForBoss(std::string_view stageId, std::string_view 
 bool validDungeonFocusPosition(Vec2 position)
 {
     return std::isfinite(position.x) && std::isfinite(position.y);
+}
+
+void facePlayerToward(Player& player, Vec2 targetWorldPos)
+{
+    const Vec2 direction = targetWorldPos - player.position;
+    if (!validDungeonFocusPosition(direction) || lengthSquared(direction) <= 0.0001f) {
+        return;
+    }
+    player.facing = normalize(direction);
+    player.updateSpriteFlipFromFacing();
+}
+
+void faceDungeonEventWitchNpcToward(Game::DungeonEventInstance& event, Vec2 targetWorldPos)
+{
+    const Vec2 direction = targetWorldPos - tileWorldCenter(event.focusTile);
+    if (!validDungeonFocusPosition(direction) ||
+        std::abs(direction.x) <= CharacterSpriteHorizontalFacingEpsilon) {
+        return;
+    }
+    event.npcFlipHorizontal = characterSpriteFlipHorizontalFromFacing(
+        direction,
+        event.npcFlipHorizontal.value_or(false));
 }
 
 float dungeonFocusEase(float t)
@@ -948,6 +971,25 @@ DungeonTile introTutorialRelativeTile(DungeonTile origin, int dx, int dy)
     return DungeonTile{origin.x + dx, origin.y + dy};
 }
 
+constexpr int IntroTutorialFirstRubbleWallLengthTiles = 5;
+constexpr int IntroTutorialPostWallCorridorLengthTiles = 8;
+
+int introTutorialStartCavernExtentTiles()
+{
+    return static_cast<int>(std::ceil(DungeonStartCavernRadiusTiles));
+}
+
+int introTutorialFirstRubbleWallStartOffsetTiles()
+{
+    return introTutorialStartCavernExtentTiles() + 1;
+}
+
+int introTutorialPostWallCorridorStartOffsetTiles()
+{
+    return introTutorialFirstRubbleWallStartOffsetTiles() +
+        IntroTutorialFirstRubbleWallLengthTiles;
+}
+
 std::uint32_t introTutorialTerrainHash(std::uint32_t seed, int dx, int dy, std::uint32_t salt)
 {
     std::uint32_t h = seed ^ salt;
@@ -1002,13 +1044,16 @@ TileType introTutorialExitWallTile(std::uint32_t seed, int dx, int dy)
 
 void applyIntroTutorialStartPocket(TileMap& tileMap, DungeonTile startTile, std::uint32_t seed)
 {
-    for (int dy = -4; dy <= 4; ++dy) {
-        for (int dx = -4; dx <= 4; ++dx) {
-            const bool rightOpenPocket = dx >= 0 && dx <= 4 && std::abs(dy) <= 2;
-            const bool shallowLeftNotch = dx == -1 && dy == 0;
+    const int cavernExtentTiles = introTutorialStartCavernExtentTiles();
+    const float cavernRadiusSq = DungeonStartCavernRadiusTiles * DungeonStartCavernRadiusTiles;
+    for (int dy = -cavernExtentTiles; dy <= cavernExtentTiles; ++dy) {
+        for (int dx = -cavernExtentTiles; dx <= cavernExtentTiles; ++dx) {
+            const float distanceSq = static_cast<float>(dx * dx + dy * dy);
+            const bool insideStartCavern = distanceSq <= cavernRadiusSq;
+            const bool approachToFirstWall = dx == cavernExtentTiles && std::abs(dy) <= 2;
             tileMap.setTileOverride(
                 introTutorialRelativeTile(startTile, dx, dy),
-                rightOpenPocket || shallowLeftNotch
+                insideStartCavern || approachToFirstWall
                     ? TileType::Empty
                     : introTutorialDeadEndWallTile(seed, dx, dy));
         }
@@ -1017,7 +1062,10 @@ void applyIntroTutorialStartPocket(TileMap& tileMap, DungeonTile startTile, std:
 
 void applyIntroTutorialFirstRubbleWall(TileMap& tileMap, DungeonTile startTile, std::uint32_t seed)
 {
-    for (int dx = 5; dx <= 9; ++dx) {
+    const int wallStartOffsetTiles = introTutorialFirstRubbleWallStartOffsetTiles();
+    for (int dx = wallStartOffsetTiles;
+         dx < wallStartOffsetTiles + IntroTutorialFirstRubbleWallLengthTiles;
+         ++dx) {
         for (int dy = -2; dy <= 2; ++dy) {
             tileMap.setTileOverride(
                 introTutorialRelativeTile(startTile, dx, dy),
@@ -1028,7 +1076,10 @@ void applyIntroTutorialFirstRubbleWall(TileMap& tileMap, DungeonTile startTile, 
 
 void applyIntroTutorialPostWallCorridor(TileMap& tileMap, DungeonTile startTile)
 {
-    for (int dx = 10; dx <= 17; ++dx) {
+    const int corridorStartOffsetTiles = introTutorialPostWallCorridorStartOffsetTiles();
+    for (int dx = corridorStartOffsetTiles;
+         dx < corridorStartOffsetTiles + IntroTutorialPostWallCorridorLengthTiles;
+         ++dx) {
         tileMap.setTileOverride(introTutorialRelativeTile(startTile, dx, 0), TileType::Empty);
         tileMap.setTileOverride(introTutorialRelativeTile(startTile, dx, -1), TileType::Empty);
         tileMap.setTileOverride(introTutorialRelativeTile(startTile, dx, 1), TileType::Empty);
@@ -4475,6 +4526,7 @@ void Game::retryAfterGameOver()
     enemies_.clearTemporaryState();
     effects_ = EffectSystem{};
     captureAbsorbAnimations_.clear();
+    moneyGainFx_.clear();
     groundLines_ = GroundLineSystem{};
     wetGround_ = WetGroundSystem{};
     projectiles_ = ProjectileSystem{};
@@ -4688,6 +4740,7 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
     resetInPlace(enemies_);
     resetInPlace(effects_);
     captureAbsorbAnimations_.clear();
+    moneyGainFx_.clear();
     resetInPlace(groundLines_);
     resetInPlace(wetGround_);
     ringTrailEffectTimer_ = 0.0f;
@@ -4808,7 +4861,6 @@ void Game::startIntroTutorialDungeon()
     introTutorialLightTutorialQueued_ = false;
     introTutorialFirstEnemySpawned_ = false;
     introTutorialSecondEnemySpawned_ = false;
-    introTutorialSecondEnemyEncountered_ = false;
     introTutorialEnemyEncounterQueued_ = false;
     introTutorialEnemyDefeatedQueued_ = false;
     introTutorialChestFoundQueued_ = false;
@@ -4819,7 +4871,6 @@ void Game::startIntroTutorialDungeon()
     introTutorialMidwayDialogueQueued_ = false;
     introTutorialExitDialogueQueued_ = false;
     introTutorialFirstEnemyRuntimeId_ = 0;
-    introTutorialSecondEnemyRuntimeId_ = 0;
     introTutorialChestLootObjectId_.clear();
     introTutorialChestLootInstanceId_.clear();
     introTutorialFirstEnemyTile_ = {29, 0};
@@ -4843,7 +4894,7 @@ void Game::startIntroTutorialDungeon()
         .roguelike = false,
     });
 
-    player_.position = tileWorldCenter(DungeonTile{dungeonLayout_.startTile.x + 2, dungeonLayout_.startTile.y});
+    player_.position = tileWorldCenter(dungeonLayout_.startTile);
     player_.facing = {1.0f, 0.0f};
     player_.minimumHpAfterDamage = 1;
     player_.xpToNext = playerXpToNextForLevel(player_.level, balance_);
@@ -5262,25 +5313,6 @@ bool Game::updateIntroTutorial(const Input& input, float)
         }
         if (secondEnemyNode != nullptr && secondEnemyNode->spawned) {
             introTutorialSecondEnemySpawned_ = true;
-            if (!introTutorialSecondEnemyEncountered_) {
-                const float encounterRadius =
-                    IntroTutorialSecondEnemyEncounterRadiusTiles * static_cast<float>(balance::TileSize);
-                if (distanceSquared(player_.position, tileWorldCenter(introTutorialSecondEnemyTile_)) <=
-                    encounterRadius * encounterRadius) {
-                    const float resolveRadius =
-                        IntroTutorialEnemyResolveRadiusTiles * static_cast<float>(balance::TileSize);
-                    const bool detected = (introTutorialSecondEnemyRuntimeId_ > 0 &&
-                        enemies_.forceDetectRuntimeEnemy(introTutorialSecondEnemyRuntimeId_, player_.position, true)) ||
-                        enemies_.forceDetectEnemyNear(
-                            tileWorldCenter(introTutorialSecondEnemyTile_),
-                            resolveRadius,
-                            player_.position,
-                            true);
-                    if (detected) {
-                        introTutorialSecondEnemyEncountered_ = true;
-                    }
-                }
-            }
         }
         if (introTutorialSecondEnemySpawned_ &&
             !introTutorialSecondChestPlaced_ &&
@@ -5338,7 +5370,6 @@ void Game::completeIntroTutorialAndReturnToBase()
     introTutorialLightTutorialQueued_ = false;
     introTutorialFirstEnemySpawned_ = false;
     introTutorialSecondEnemySpawned_ = false;
-    introTutorialSecondEnemyEncountered_ = false;
     introTutorialEnemyEncounterQueued_ = false;
     introTutorialEnemyDefeatedQueued_ = false;
     introTutorialChestFoundQueued_ = false;
@@ -5349,7 +5380,6 @@ void Game::completeIntroTutorialAndReturnToBase()
     introTutorialMidwayDialogueQueued_ = false;
     introTutorialExitDialogueQueued_ = false;
     introTutorialFirstEnemyRuntimeId_ = 0;
-    introTutorialSecondEnemyRuntimeId_ = 0;
     introTutorialChestLootObjectId_.clear();
     introTutorialChestLootInstanceId_.clear();
 
@@ -5357,6 +5387,7 @@ void Game::completeIntroTutorialAndReturnToBase()
     enemies_ = EnemySystem{};
     effects_ = EffectSystem{};
     captureAbsorbAnimations_.clear();
+    moneyGainFx_.clear();
     groundLines_ = GroundLineSystem{};
     wetGround_ = WetGroundSystem{};
     ringTrailEffectTimer_ = 0.0f;
@@ -5516,6 +5547,7 @@ bool Game::restoreDungeonState(bool useLatestWarpPoint)
     resetInPlace(retrySnapshot_);
     effects_ = EffectSystem{};
     captureAbsorbAnimations_.clear();
+    moneyGainFx_.clear();
     groundLines_ = GroundLineSystem{};
     wetGround_ = WetGroundSystem{};
     projectiles_ = ProjectileSystem{};
@@ -6249,6 +6281,305 @@ void Game::initializeDungeonEventInstancesFromLayout()
     dungeonEventDiscoveryCooldown_ = 0.0f;
 }
 
+bool Game::spawnDungeonEventEnemy(
+    DungeonEventInstance& event,
+    Vec2 position,
+    bool sleeping,
+    bool bossVariant,
+    int* outRuntimeId)
+{
+    const Vec2 eventCenter = tileWorldCenter(event.centerTile);
+    const int depthRank = currentStageIsRoguelike()
+        ? roguelikeDepthRankForWorldPosition(eventCenter)
+        : lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, eventCenter);
+    const bool spawnSleeping = sleeping || !event.discovered;
+
+    EventEnemySpawnOptions options;
+    options.dungeonEventId = event.id;
+    options.stageId = currentStageId_;
+    options.depthRank = depthRank;
+    options.allowNearPlayer = true;
+    options.detectedOnSpawn = !spawnSleeping;
+    options.fixedPosition = false;
+    options.sleeping = spawnSleeping;
+    options.bossVariant = bossVariant;
+    if (bossVariant) {
+        options.hpMultiplier = 2.5f;
+        options.contactDamageMultiplier = 1.5f;
+        options.radiusMultiplier = 1.5f;
+        options.xpMultiplier = 3.0f;
+    }
+
+    int runtimeId = 0;
+    if (!enemies_.spawnEventEnemy(
+            tileMap_,
+            position,
+            player_.position,
+            runtimeBalanceForDungeon(),
+            enemyCatalog_,
+            options,
+            &runtimeId)) {
+        return false;
+    }
+
+    event.spawnedEnemyRuntimeIds.push_back(runtimeId);
+    ++event.encounterSpawnCount;
+    if (outRuntimeId != nullptr) {
+        *outRuntimeId = runtimeId;
+    }
+    return true;
+}
+
+void Game::ensureDungeonEventEncounterPrepared(DungeonEventInstance& event)
+{
+    if (event.completed || event.encounterSpawned) {
+        return;
+    }
+    if (dungeonEventEncounterSpawnsEnemies(event.kind) && !event.discovered) {
+        return;
+    }
+
+    const float tileSize = static_cast<float>(balance::TileSize);
+    const DungeonTile centerTile = event.centerTile;
+    event.encounterSpawnCount = 0;
+    event.spawnedEnemyRuntimeIds.clear();
+    switch (event.kind) {
+    case DungeonEventKind::SleepingEnemyTreasure: {
+        event.rewardTile = dungeonEventOffsetTile(centerTile, 0, -2);
+        const bool lowDifficulty = currentStageId_ == "stage_01_stardust";
+        scheduleDungeonEventChestReveal(
+            event,
+            {event.rewardTile},
+            lowDifficulty ? LootChestKind::Common : LootChestKind::Rare);
+        event.rewardSpawned = true;
+        constexpr std::array<DungeonTile, 6> Offsets{{
+            {-2, 0},
+            {2, 0},
+            {-1, 2},
+            {1, 2},
+            {-2, -1},
+            {2, -1},
+        }};
+        const int sleepingCount =
+            currentStageId_ == "stage_03_star_core" || currentStageId_ == "stage_04_astral_mine" ? 6 :
+            currentStageId_ == "stage_01_stardust" ? 3 :
+            4;
+        for (int i = 0; i < sleepingCount; ++i) {
+            const DungeonTile offset = Offsets[static_cast<std::size_t>(i)];
+            spawnDungeonEventEnemy(
+                event,
+                tileWorldCenter(dungeonEventOffsetTile(centerTile, offset.x, offset.y)),
+                true,
+                false);
+        }
+        event.encounterSpawned = true;
+        break;
+    }
+    case DungeonEventKind::MonsterSwarmRoom: {
+        event.rewardTile = dungeonEventOffsetTile(centerTile, 0, -3);
+        const int swarmCount =
+            currentStageId_ == "stage_04_astral_mine" ? 10 :
+            currentStageId_ == "stage_01_stardust" ? 6 :
+            8;
+        int spawnedCount = 0;
+        const auto trySpawnAt = [&](Vec2 position) {
+            if (spawnedCount >= swarmCount) {
+                return;
+            }
+            if (spawnDungeonEventEnemy(event, position, false, false)) {
+                ++spawnedCount;
+            }
+        };
+        for (DungeonTile offset : MonsterSwarmSpawnOffsets) {
+            trySpawnAt(tileWorldCenter(dungeonEventOffsetTile(centerTile, offset.x, offset.y)));
+        }
+        for (int i = 0; i < swarmCount * 2 && spawnedCount < swarmCount; ++i) {
+            const float angle = (Pi * 2.0f) * (static_cast<float>(i) / static_cast<float>(swarmCount));
+            const float radius = tileSize * (i < swarmCount ? 2.0f : 2.75f);
+            trySpawnAt(tileWorldCenter(centerTile) + fromAngle(angle) * radius);
+        }
+        if (spawnedCount <= 0) {
+            event.encounterSpawnCount = 0;
+            event.spawnedEnemyRuntimeIds.clear();
+            break;
+        }
+        event.activated = true;
+        event.encounterSpawned = true;
+        break;
+    }
+    case DungeonEventKind::NestRoom: {
+        if (event.nestHoles.empty()) {
+            const int holeRange = currentStageId_ == "stage_04_astral_mine" ? 2 : 1;
+            const int holeCount =
+                1 + static_cast<int>(std::hash<std::string>{}(event.id) % static_cast<std::size_t>(holeRange + 1));
+            for (int i = 0; i < holeCount; ++i) {
+                const float angle = (Pi * 2.0f) * (static_cast<float>(i) / static_cast<float>(holeCount));
+                const Vec2 holeWorld = tileWorldCenter(centerTile) + fromAngle(angle) * (tileSize * 1.8f);
+                DungeonEventNestHole hole;
+                hole.tile = roundDungeonTile({
+                    static_cast<float>(tileMap_.worldToTile(holeWorld.x)),
+                    static_cast<float>(tileMap_.worldToTile(holeWorld.y)),
+                });
+                hole.maxHp = 18;
+                hole.hp = hole.maxHp;
+                hole.spawnCooldown = 0.8f + static_cast<float>(i) * 0.6f;
+                event.nestHoles.push_back(std::move(hole));
+            }
+        }
+        for (DungeonEventNestHole& hole : event.nestHoles) {
+            for (int i = 0; i < 2; ++i) {
+                int runtimeId = 0;
+                if (spawnDungeonEventEnemy(
+                        event,
+                        tileWorldCenter(hole.tile) + fromAngle(static_cast<float>(i) * Pi) * tileSize,
+                        false,
+                        false,
+                        &runtimeId)) {
+                    hole.spawnedEnemyRuntimeIds.push_back(runtimeId);
+                }
+            }
+        }
+        event.activated = true;
+        event.encounterSpawned = true;
+        break;
+    }
+    case DungeonEventKind::BossMonsterRoom: {
+        event.rewardTile = dungeonEventOffsetTile(centerTile, 0, -3);
+        constexpr std::array<DungeonTile, 3> Offsets{{
+            {-2, 1},
+            {2, 1},
+            {0, 2},
+        }};
+        for (DungeonTile offset : Offsets) {
+            spawnDungeonEventEnemy(
+                event,
+                tileWorldCenter(dungeonEventOffsetTile(centerTile, offset.x, offset.y)),
+                false,
+                false);
+        }
+        spawnDungeonEventEnemy(event, tileWorldCenter(centerTile), false, true, &event.bossEnemyRuntimeId);
+        event.activated = true;
+        event.encounterSpawned = true;
+        break;
+    }
+    case DungeonEventKind::GlowingRockRoom: {
+        if (event.eventObjects.empty()) {
+            const std::size_t seed = std::hash<std::string>{}(event.id);
+            const int rockCount = 3 + static_cast<int>(seed % 3u);
+            event.rewardTile = dungeonEventOffsetTile(centerTile, 0, -3);
+            for (int i = 0; i < rockCount; ++i) {
+                const float angle = (Pi * 2.0f) * (static_cast<float>(i) / static_cast<float>(rockCount)) +
+                    static_cast<float>((seed >> 8) & 0xFFu) * 0.001f;
+                DungeonEventObject rock;
+                rock.kind = DungeonEventObjectKind::GlowingRock;
+                rock.tile = dungeonEventObjectTile(centerTile, angle, 2.0f);
+                rock.maxHp = 10;
+                rock.hp = rock.maxHp;
+                event.eventObjects.push_back(std::move(rock));
+            }
+        }
+        event.encounterSpawned = true;
+        break;
+    }
+    case DungeonEventKind::ElectricCircuitRoom: {
+        if (event.eventObjects.empty()) {
+            const std::size_t seed = std::hash<std::string>{}(event.id);
+            const int receiverCount = 2 + static_cast<int>(seed % 3u);
+            event.rewardTile = dungeonEventOffsetTile(centerTile, 0, -3);
+            for (int i = 0; i < receiverCount; ++i) {
+                const float angle = (Pi * 2.0f) * (static_cast<float>(i) / static_cast<float>(receiverCount)) +
+                    static_cast<float>((seed >> 10) & 0xFFu) * 0.001f;
+                DungeonEventObject receiver;
+                receiver.kind = DungeonEventObjectKind::ElectricReceiver;
+                receiver.tile = dungeonEventObjectTile(centerTile, angle, 2.0f);
+                receiver.maxHp = 1;
+                receiver.hp = receiver.maxHp;
+                event.eventObjects.push_back(std::move(receiver));
+            }
+        }
+        event.encounterSpawned = true;
+        break;
+    }
+    case DungeonEventKind::CoinRoom:
+        if (event.discovered) {
+            event.encounterSpawned = true;
+            completeDungeonEvent(event, std::nullopt);
+        }
+        break;
+    case DungeonEventKind::BuriedWitch:
+        event.rewardTile = centerTile;
+        event.eventObjects.clear();
+        event.encounterSpawned = true;
+        break;
+    case DungeonEventKind::LostBaggageWitch: {
+        if (event.eventObjects.empty()) {
+            event.rewardTile = centerTile;
+            DungeonEventObject baggage;
+            baggage.kind = DungeonEventObjectKind::LostBaggage;
+            baggage.tile = dungeonEventLostBaggageTile(event);
+            baggage.maxHp = 1;
+            baggage.hp = baggage.maxHp;
+            event.eventObjects.push_back(std::move(baggage));
+        }
+        event.encounterSpawned = true;
+        break;
+    }
+    case DungeonEventKind::ItemRequestWitch:
+        event.rewardTile = centerTile;
+        if (event.requestKey.empty()) {
+            event.requestKey = dungeonEventItemRequestKeyFor(event);
+        }
+        event.encounterSpawned = true;
+        break;
+    case DungeonEventKind::SurroundedWitch: {
+        event.rewardTile = centerTile;
+        constexpr std::array<DungeonTile, 3> Offsets{{
+            {-2, 0},
+            {2, 0},
+            {0, 2},
+        }};
+        for (DungeonTile offset : Offsets) {
+            spawnDungeonEventEnemy(
+                event,
+                tileWorldCenter(dungeonEventOffsetTile(centerTile, offset.x, offset.y)),
+                false,
+                false);
+        }
+        event.activated = true;
+        event.encounterSpawned = true;
+        break;
+    }
+    case DungeonEventKind::ColdWitchCampfire: {
+        if (event.eventObjects.empty()) {
+            event.rewardTile = centerTile;
+            DungeonEventObject campfire;
+            campfire.kind = DungeonEventObjectKind::Campfire;
+            campfire.tile = dungeonEventOffsetTile(centerTile, 1, 1);
+            campfire.maxHp = 1;
+            campfire.hp = campfire.maxHp;
+            event.eventObjects.push_back(std::move(campfire));
+        }
+        event.encounterSpawned = true;
+        break;
+    }
+    case DungeonEventKind::HeavyRockWitch: {
+        if (event.eventObjects.empty()) {
+            event.rewardTile = centerTile;
+            DungeonEventObject rock;
+            rock.kind = DungeonEventObjectKind::HeavyRock;
+            rock.tile = dungeonEventOffsetTile(centerTile, 1, 0);
+            rock.maxHp = 34;
+            rock.hp = rock.maxHp;
+            event.eventObjects.push_back(std::move(rock));
+        }
+        event.encounterSpawned = true;
+        break;
+    }
+    default:
+        break;
+    }
+}
+
 void Game::updateDungeonEvents(float dt, double totalSeconds)
 {
     (void)totalSeconds;
@@ -6262,42 +6593,6 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
     }
 
     const float tileSize = static_cast<float>(balance::TileSize);
-    const RuntimeBalance dungeonBalance = runtimeBalanceForDungeon();
-    const auto eventDepthRank = [this](const DungeonEventInstance& event) {
-        const Vec2 center = tileWorldCenter(event.centerTile);
-        if (currentStageIsRoguelike()) {
-            return roguelikeDepthRankForWorldPosition(center);
-        }
-        return lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, center);
-    };
-    const auto spawnEnemy = [&](DungeonEventInstance& event, Vec2 position, bool sleeping, bool bossVariant, int* outRuntimeId = nullptr) {
-        const bool spawnSleeping = sleeping || !event.discovered;
-        EventEnemySpawnOptions options;
-        options.dungeonEventId = event.id;
-        options.stageId = currentStageId_;
-        options.depthRank = eventDepthRank(event);
-        options.allowNearPlayer = true;
-        options.detectedOnSpawn = !spawnSleeping;
-        options.fixedPosition = false;
-        options.sleeping = spawnSleeping;
-        options.bossVariant = bossVariant;
-        if (bossVariant) {
-            options.hpMultiplier = 2.5f;
-            options.contactDamageMultiplier = 1.5f;
-            options.radiusMultiplier = 1.5f;
-            options.xpMultiplier = 3.0f;
-        }
-        int runtimeId = 0;
-        if (!enemies_.spawnEventEnemy(tileMap_, position, player_.position, dungeonBalance, enemyCatalog_, options, &runtimeId)) {
-            return false;
-        }
-        event.spawnedEnemyRuntimeIds.push_back(runtimeId);
-        if (outRuntimeId != nullptr) {
-            *outRuntimeId = runtimeId;
-        }
-        ++event.encounterSpawnCount;
-        return true;
-    };
     const auto chestOpenedAt = [&](DungeonTile tile) {
         return std::any_of(chestNodes_.begin(), chestNodes_.end(), [tile](const ChestNode& node) {
             return dungeonEventSameTile(node.tile, tile) && node.opened;
@@ -6310,6 +6605,22 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
     };
     const auto activeEventEnemies = [&](const DungeonEventInstance& event) {
         return enemies_.activeDungeonEventEnemyCount(event.id);
+    };
+    const auto resolveWitchObjectiveAwaitingReward = [&](
+                                                        DungeonEventInstance& event,
+                                                        std::string logMessage,
+                                                        std::string logMergeKey) {
+        if (event.objectiveResolved) {
+            return false;
+        }
+        event.objectiveResolved = true;
+        pushDungeonLog(std::move(logMessage), std::move(logMergeKey));
+        if (!hiddenRouteNpcAttackActive()) {
+            pushImportantDungeonNotice(
+                "魔女の頼みを解決した！話しかけてみよう！",
+                "dungeon_event_witch_resolved:" + event.id);
+        }
+        return true;
     };
     const auto playerNearTile = [&](DungeonTile tile, float radiusTiles) {
         const float radius = std::max(0.0f, radiusTiles) * tileSize;
@@ -6403,230 +6714,7 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
             continue;
         }
 
-        if (!event.encounterSpawned) {
-            if (dungeonEventEncounterSpawnsEnemies(event.kind) && !event.discovered) {
-                continue;
-            }
-            const DungeonTile centerTile = event.centerTile;
-            event.encounterSpawnCount = 0;
-            event.spawnedEnemyRuntimeIds.clear();
-            switch (event.kind) {
-            case DungeonEventKind::SleepingEnemyTreasure: {
-                event.rewardTile = dungeonEventOffsetTile(centerTile, 0, -2);
-                const bool lowDifficulty = currentStageId_ == "stage_01_stardust";
-                ensureDungeonEventChest(event, event.rewardTile, lowDifficulty ? LootChestKind::Common : LootChestKind::Rare);
-                event.rewardSpawned = true;
-                constexpr std::array<DungeonTile, 6> Offsets{{
-                    {-2, 0},
-                    {2, 0},
-                    {-1, 2},
-                    {1, 2},
-                    {-2, -1},
-                    {2, -1},
-                }};
-                const int sleepingCount =
-                    currentStageId_ == "stage_03_star_core" || currentStageId_ == "stage_04_astral_mine" ? 6 :
-                    currentStageId_ == "stage_01_stardust" ? 3 :
-                    4;
-                for (int i = 0; i < sleepingCount; ++i) {
-                    const DungeonTile offset = Offsets[static_cast<std::size_t>(i)];
-                    spawnEnemy(event, tileWorldCenter(dungeonEventOffsetTile(centerTile, offset.x, offset.y)), true, false);
-                }
-                event.encounterSpawned = true;
-                break;
-            }
-            case DungeonEventKind::MonsterSwarmRoom: {
-                event.rewardTile = dungeonEventOffsetTile(centerTile, 0, -3);
-                const int SwarmCount =
-                    currentStageId_ == "stage_04_astral_mine" ? 10 :
-                    currentStageId_ == "stage_01_stardust" ? 6 :
-                    8;
-                int spawnedCount = 0;
-                const auto trySpawnAt = [&](Vec2 position) {
-                    if (spawnedCount >= SwarmCount) {
-                        return;
-                    }
-                    if (spawnEnemy(event, position, false, false)) {
-                        ++spawnedCount;
-                    }
-                };
-                for (DungeonTile offset : MonsterSwarmSpawnOffsets) {
-                    trySpawnAt(tileWorldCenter(dungeonEventOffsetTile(centerTile, offset.x, offset.y)));
-                }
-                for (int i = 0; i < SwarmCount * 2 && spawnedCount < SwarmCount; ++i) {
-                    const float angle = (Pi * 2.0f) * (static_cast<float>(i) / static_cast<float>(SwarmCount));
-                    const float radius = tileSize * (i < SwarmCount ? 2.0f : 2.75f);
-                    trySpawnAt(tileWorldCenter(centerTile) + fromAngle(angle) * radius);
-                }
-                if (spawnedCount <= 0) {
-                    event.encounterSpawnCount = 0;
-                    event.spawnedEnemyRuntimeIds.clear();
-                    break;
-                }
-                event.activated = true;
-                event.encounterSpawned = true;
-                break;
-            }
-            case DungeonEventKind::NestRoom: {
-                if (event.nestHoles.empty()) {
-                    const int holeRange = currentStageId_ == "stage_04_astral_mine" ? 2 : 1;
-                    const int holeCount = 1 + static_cast<int>(std::hash<std::string>{}(event.id) % static_cast<std::size_t>(holeRange + 1));
-                    for (int i = 0; i < holeCount; ++i) {
-                        const float angle = (Pi * 2.0f) * (static_cast<float>(i) / static_cast<float>(holeCount));
-                        const Vec2 holeWorld = tileWorldCenter(centerTile) + fromAngle(angle) * (tileSize * 1.8f);
-                        DungeonEventNestHole hole;
-                        hole.tile = roundDungeonTile({
-                            static_cast<float>(tileMap_.worldToTile(holeWorld.x)),
-                            static_cast<float>(tileMap_.worldToTile(holeWorld.y)),
-                        });
-                        hole.maxHp = 18;
-                        hole.hp = hole.maxHp;
-                        hole.spawnCooldown = 0.8f + static_cast<float>(i) * 0.6f;
-                        event.nestHoles.push_back(std::move(hole));
-                    }
-                }
-                for (DungeonEventNestHole& hole : event.nestHoles) {
-                    for (int i = 0; i < 2; ++i) {
-                        int runtimeId = 0;
-                        if (spawnEnemy(event, tileWorldCenter(hole.tile) + fromAngle(static_cast<float>(i) * Pi) * tileSize, false, false, &runtimeId)) {
-                            hole.spawnedEnemyRuntimeIds.push_back(runtimeId);
-                        }
-                    }
-                }
-                event.activated = true;
-                event.encounterSpawned = true;
-                break;
-            }
-            case DungeonEventKind::BossMonsterRoom: {
-                event.rewardTile = dungeonEventOffsetTile(centerTile, 0, -3);
-                constexpr std::array<DungeonTile, 3> Offsets{{
-                    {-2, 1},
-                    {2, 1},
-                    {0, 2},
-                }};
-                for (DungeonTile offset : Offsets) {
-                    spawnEnemy(event, tileWorldCenter(dungeonEventOffsetTile(centerTile, offset.x, offset.y)), false, false);
-                }
-                spawnEnemy(event, tileWorldCenter(centerTile), false, true, &event.bossEnemyRuntimeId);
-                event.activated = true;
-                event.encounterSpawned = true;
-                break;
-            }
-            case DungeonEventKind::GlowingRockRoom: {
-                if (event.eventObjects.empty()) {
-                    const std::size_t seed = std::hash<std::string>{}(event.id);
-                    const int rockCount = 3 + static_cast<int>(seed % 3u);
-                    event.rewardTile = dungeonEventOffsetTile(centerTile, 0, -3);
-                    for (int i = 0; i < rockCount; ++i) {
-                        const float angle = (Pi * 2.0f) * (static_cast<float>(i) / static_cast<float>(rockCount)) +
-                            static_cast<float>((seed >> 8) & 0xFFu) * 0.001f;
-                        DungeonEventObject rock;
-                        rock.kind = DungeonEventObjectKind::GlowingRock;
-                        rock.tile = dungeonEventObjectTile(centerTile, angle, 2.0f);
-                        rock.maxHp = 10;
-                        rock.hp = rock.maxHp;
-                        event.eventObjects.push_back(std::move(rock));
-                    }
-                }
-                event.encounterSpawned = true;
-                break;
-            }
-            case DungeonEventKind::ElectricCircuitRoom: {
-                if (event.eventObjects.empty()) {
-                    const std::size_t seed = std::hash<std::string>{}(event.id);
-                    const int receiverCount = 2 + static_cast<int>(seed % 3u);
-                    event.rewardTile = dungeonEventOffsetTile(centerTile, 0, -3);
-                    for (int i = 0; i < receiverCount; ++i) {
-                        const float angle = (Pi * 2.0f) * (static_cast<float>(i) / static_cast<float>(receiverCount)) +
-                            static_cast<float>((seed >> 10) & 0xFFu) * 0.001f;
-                        DungeonEventObject receiver;
-                        receiver.kind = DungeonEventObjectKind::ElectricReceiver;
-                        receiver.tile = dungeonEventObjectTile(centerTile, angle, 2.0f);
-                        receiver.maxHp = 1;
-                        receiver.hp = receiver.maxHp;
-                        event.eventObjects.push_back(std::move(receiver));
-                    }
-                }
-                event.encounterSpawned = true;
-                break;
-            }
-            case DungeonEventKind::CoinRoom:
-                if (event.discovered) {
-                    event.encounterSpawned = true;
-                    completeDungeonEvent(event, std::nullopt);
-                }
-                break;
-            case DungeonEventKind::BuriedWitch: {
-                event.rewardTile = centerTile;
-                event.eventObjects.clear();
-                event.encounterSpawned = true;
-                break;
-            }
-            case DungeonEventKind::LostBaggageWitch: {
-                if (event.eventObjects.empty()) {
-                    event.rewardTile = centerTile;
-                    DungeonEventObject baggage;
-                    baggage.kind = DungeonEventObjectKind::LostBaggage;
-                    baggage.tile = dungeonEventLostBaggageTile(event);
-                    baggage.maxHp = 1;
-                    baggage.hp = baggage.maxHp;
-                    event.eventObjects.push_back(std::move(baggage));
-                }
-                event.encounterSpawned = true;
-                break;
-            }
-            case DungeonEventKind::ItemRequestWitch: {
-                event.rewardTile = centerTile;
-                if (event.requestKey.empty()) {
-                    event.requestKey = dungeonEventItemRequestKeyFor(event);
-                }
-                event.encounterSpawned = true;
-                break;
-            }
-            case DungeonEventKind::SurroundedWitch: {
-                event.rewardTile = centerTile;
-                constexpr std::array<DungeonTile, 3> Offsets{{
-                    {-2, 0},
-                    {2, 0},
-                    {0, 2},
-                }};
-                for (DungeonTile offset : Offsets) {
-                    spawnEnemy(event, tileWorldCenter(dungeonEventOffsetTile(centerTile, offset.x, offset.y)), false, false);
-                }
-                event.activated = true;
-                event.encounterSpawned = true;
-                break;
-            }
-            case DungeonEventKind::ColdWitchCampfire: {
-                if (event.eventObjects.empty()) {
-                    event.rewardTile = centerTile;
-                    DungeonEventObject campfire;
-                    campfire.kind = DungeonEventObjectKind::Campfire;
-                    campfire.tile = dungeonEventOffsetTile(centerTile, 1, 1);
-                    campfire.maxHp = 1;
-                    campfire.hp = campfire.maxHp;
-                    event.eventObjects.push_back(std::move(campfire));
-                }
-                event.encounterSpawned = true;
-                break;
-            }
-            case DungeonEventKind::HeavyRockWitch: {
-                if (event.eventObjects.empty()) {
-                    event.rewardTile = centerTile;
-                    DungeonEventObject rock;
-                    rock.kind = DungeonEventObjectKind::HeavyRock;
-                    rock.tile = dungeonEventOffsetTile(centerTile, 1, 0);
-                    rock.maxHp = 34;
-                    rock.hp = rock.maxHp;
-                    event.eventObjects.push_back(std::move(rock));
-                }
-                event.encounterSpawned = true;
-                break;
-            }
-            default:
-                break;
-            }
-        }
+        ensureDungeonEventEncounterPrepared(event);
 
         if (!event.discovered || event.completed) {
             continue;
@@ -6706,7 +6794,7 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
                 const int activeHoleEnemies = enemies_.activeRuntimeEnemyCount(hole.spawnedEnemyRuntimeIds);
                 if (hole.spawnCooldown <= 0.0f && activeHoleEnemies < 3 && activeEventEnemies(event) < 9) {
                     int runtimeId = 0;
-                    if (spawnEnemy(event, tileWorldCenter(hole.tile), false, false, &runtimeId)) {
+                    if (spawnDungeonEventEnemy(event, tileWorldCenter(hole.tile), false, false, &runtimeId)) {
                         hole.spawnedEnemyRuntimeIds.push_back(runtimeId);
                     }
                     hole.spawnCooldown = 4.0f;
@@ -6791,9 +6879,11 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
         }
 
         if (event.kind == DungeonEventKind::BuriedWitch) {
-            if (buriedWitchRocksCleared(tileMap_, event.centerTile) && !event.objectiveResolved) {
-                event.objectiveResolved = true;
-                pushDungeonLog("魔女を助け出せそう", "dungeon_event_witch_ready:" + event.id);
+            if (buriedWitchRocksCleared(tileMap_, event.centerTile)) {
+                resolveWitchObjectiveAwaitingReward(
+                    event,
+                    "魔女を助け出せそう",
+                    "dungeon_event_witch_ready:" + event.id);
             }
             continue;
         }
@@ -6806,8 +6896,10 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
                 if (playerNearTile(object.tile, 1.5f)) {
                     object.destroyed = true;
                     event.activated = true;
-                    event.objectiveResolved = true;
-                    pushDungeonLog("落とし物を拾った", "dungeon_event_baggage_pickup:" + event.id);
+                    resolveWitchObjectiveAwaitingReward(
+                        event,
+                        "落とし物を拾った",
+                        "dungeon_event_baggage_pickup:" + event.id);
                     playAudioSe("se.pickup");
                 }
             }
@@ -6825,9 +6917,11 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
         }
 
         if (event.kind == DungeonEventKind::SurroundedWitch) {
-            if (event.activated && activeEventEnemies(event) <= 0 && !event.objectiveResolved) {
-                event.objectiveResolved = true;
-                pushDungeonLog("囲まれた魔女を助けた", "dungeon_event_witch_ready:" + event.id);
+            if (event.activated && activeEventEnemies(event) <= 0) {
+                resolveWitchObjectiveAwaitingReward(
+                    event,
+                    "囲まれた魔女を助けた",
+                    "dungeon_event_witch_ready:" + event.id);
             }
             continue;
         }
@@ -6848,9 +6942,11 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
                 std::any_of(event.eventObjects.begin(), event.eventObjects.end(), [](const DungeonEventObject& object) {
                     return object.kind == DungeonEventObjectKind::Campfire && object.powered;
                 });
-            if (lit && !event.objectiveResolved) {
-                event.objectiveResolved = true;
-                pushDungeonLog("魔女が温まれそう", "dungeon_event_witch_ready:" + event.id);
+            if (lit) {
+                resolveWitchObjectiveAwaitingReward(
+                    event,
+                    "魔女が温まれそう",
+                    "dungeon_event_witch_ready:" + event.id);
             }
             continue;
         }
@@ -6882,10 +6978,12 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
             const bool rockCleared = !event.eventObjects.empty() &&
                 std::all_of(event.eventObjects.begin(), event.eventObjects.end(), [](const DungeonEventObject& object) {
                     return object.kind != DungeonEventObjectKind::HeavyRock || object.destroyed;
-            });
-            if (rockCleared && !event.objectiveResolved) {
-                event.objectiveResolved = true;
-                pushDungeonLog("重い岩をどかした", "dungeon_event_witch_ready:" + event.id);
+                });
+            if (rockCleared) {
+                resolveWitchObjectiveAwaitingReward(
+                    event,
+                    "重い岩をどかした",
+                    "dungeon_event_witch_ready:" + event.id);
             }
             continue;
         }
@@ -7069,6 +7167,12 @@ bool Game::updateDungeonEventNpcInteraction(const Input& input, UiContext& ui)
     }
 
     DungeonEventInstance& event = *target;
+    const auto finishNpcInteraction = [&]() {
+        faceDungeonEventWitchNpcToward(event, player_.position);
+        ui.emitSound(UiSoundEvent::Confirm);
+        ui.consumePointer();
+        return true;
+    };
     if (event.kind == DungeonEventKind::ItemRequestWitch && event.requestKey.empty()) {
         event.requestKey = dungeonEventItemRequestKeyFor(event);
     }
@@ -7086,9 +7190,7 @@ bool Game::updateDungeonEventNpcInteraction(const Input& input, UiContext& ui)
         phase = DungeonEventNpcDialoguePhase::Request;
     } else if (event.kind == DungeonEventKind::ItemRequestWitch) {
         openDungeonEventItemRequestUi(event);
-        ui.emitSound(UiSoundEvent::Confirm);
-        ui.consumePointer();
-        return true;
+        return finishNpcInteraction();
     } else {
         phase = DungeonEventNpcDialoguePhase::Progress;
     }
@@ -7097,9 +7199,7 @@ bool Game::updateDungeonEventNpcInteraction(const Input& input, UiContext& ui)
         if (!startDungeonEventWitchRewardDialogue(event)) {
             return false;
         }
-        ui.emitSound(UiSoundEvent::Confirm);
-        ui.consumePointer();
-        return true;
+        return finishNpcInteraction();
     }
 
     const std::string storyEventId = dungeonEventNpcStoryEventId(event.kind, phase);
@@ -7117,9 +7217,7 @@ bool Game::updateDungeonEventNpcInteraction(const Input& input, UiContext& ui)
         return false;
     }
 
-    ui.emitSound(UiSoundEvent::Confirm);
-    ui.consumePointer();
-    return true;
+    return finishNpcInteraction();
 }
 
 std::optional<Game::DungeonEventRewardRequest> Game::dungeonEventWitchRewardRequest(DungeonEventKind kind) const
@@ -7288,20 +7386,15 @@ void Game::updateDungeonEventItemRequestUi(const Input& input, UiContext& ui)
 
     const int previousSelection = dungeonEventItemRequestUi_.selection;
     const int columns = std::max(1, layout.grid.columns);
-    if (input.pressed(InputAction::MoveLeft)) {
-        dungeonEventItemRequestUi_.selection = std::max(0, dungeonEventItemRequestUi_.selection - 1);
-    }
-    if (input.pressed(InputAction::MoveRight)) {
+    if (!ui.navigationActive() || ui.navigationFocusRole() == UiNavigationRole::Grid) {
+        const int dx =
+            (input.pressed(InputAction::MoveRight) ? 1 : 0) -
+            (input.pressed(InputAction::MoveLeft) ? 1 : 0);
+        const int dy =
+            (input.pressed(InputAction::MoveDown) ? 1 : 0) -
+            (input.pressed(InputAction::MoveUp) ? 1 : 0);
         dungeonEventItemRequestUi_.selection =
-            std::min(slotCount - 1, dungeonEventItemRequestUi_.selection + 1);
-    }
-    if (input.pressed(InputAction::MoveUp)) {
-        dungeonEventItemRequestUi_.selection =
-            std::max(0, dungeonEventItemRequestUi_.selection - columns);
-    }
-    if (input.pressed(InputAction::MoveDown)) {
-        dungeonEventItemRequestUi_.selection =
-            std::min(slotCount - 1, dungeonEventItemRequestUi_.selection + columns);
+            moveUiGridSelection(dungeonEventItemRequestUi_.selection, slotCount, columns, dx, dy);
     }
     if (input.shortcutCursorDelta() != 0) {
         dungeonEventItemRequestUi_.selection = std::clamp(
@@ -7313,7 +7406,7 @@ void Game::updateDungeonEventItemRequestUi(const Input& input, UiContext& ui)
     int clickedSlot = -1;
     for (int slotIndex = 0; slotIndex < slotCount; ++slotIndex) {
         const UiRect slotRect = inventoryUiScreenSlotRect(layout, slotIndex);
-        if (ui.hovered(slotRect)) {
+        if (ui.selectionFocused(slotRect)) {
             dungeonEventItemRequestUi_.selection = slotIndex;
         }
         if (ui.pressed(slotRect)) {
@@ -7531,11 +7624,12 @@ bool Game::updateDungeonEventDiscovery(float dt)
     }
 
     event->discovered = true;
+    const Vec2 eventWorldPos = tileWorldCenter(event->focusTile);
     if (dungeonEventKindUsesDiscoveryFocus(event->kind)) {
         const std::string seenFlag = dungeonEventDiscoverySeenFlag(event->kind);
         DungeonFocusRequest request;
         request.eventKind = dungeonEventKindId(event->kind);
-        request.focusWorldPos = tileWorldCenter(event->focusTile);
+        request.focusWorldPos = eventWorldPos;
         request.discoveryStoryEventId =
             dungeonEventKindHasDiscoveryDialogue(event->kind) && !hasStoryFlag(seenFlag)
                 ? dungeonEventDiscoveryStoryEventId(event->kind)
@@ -7546,6 +7640,8 @@ bool Game::updateDungeonEventDiscovery(float dt)
             return false;
         }
     }
+    facePlayerToward(player_, eventWorldPos);
+    ensureDungeonEventEncounterPrepared(*event);
     if (dungeonEventEnemiesWakeOnDiscovery(event->kind)) {
         enemies_.wakeDungeonEventEnemies(event->id);
     }
@@ -7601,6 +7697,7 @@ void Game::appendDungeonEventRenderEntries(
                     kind = event.kind,
                     completed = event.completed,
                     discovered = event.discovered,
+                    npcFlipHorizontal = event.npcFlipHorizontal,
                     inInteractionRange = dungeonInspectableInRange(center, DungeonEventNpcInspectSize),
                     hovered = hoveredDungeonEventNpcId_ == event.id,
                     frameIndex = characterSpriteIdleFrameIndex(static_cast<float>(totalSeconds)),
@@ -7634,6 +7731,7 @@ void Game::appendDungeonEventRenderEntries(
                         center,
                         frameIndex,
                         alpha,
+                        npcFlipHorizontal,
                         inInteractionRange,
                         hovered);
                     if (!spriteDrawn) {
@@ -7907,10 +8005,11 @@ bool Game::spawnDungeonEventReward(DungeonEventInstance& event, const DungeonEve
     }
     case DungeonEventRewardKind::MoneyDrop: {
         const int amount = std::max(1, request.amount);
-        money_ = std::max(0, money_ + amount);
-        ++runStats_.acquiredItems;
-        recordRewardMoneyAcquisitionNotice(amount);
-        spawned = true;
+        const int addedAmount = grantDungeonMoney(amount, center);
+        spawned = addedAmount > 0;
+        if (addedAmount > 0) {
+            recordRewardMoneyAcquisitionNotice(addedAmount);
+        }
         break;
     }
     }
@@ -9724,6 +9823,22 @@ bool Game::spawnRewardNodeWorldDrop(
         false);
 }
 
+int Game::grantDungeonMoney(int amount, Vec2 origin)
+{
+    amount = std::max(0, amount);
+    const int availableCapacity = std::numeric_limits<int>::max() - std::max(0, money_);
+    const int addedAmount = std::min(amount, availableCapacity);
+    if (addedAmount <= 0) {
+        return 0;
+    }
+
+    money_ = std::max(0, money_) + addedAmount;
+    ++runStats_.acquiredItems;
+    moneyGainFx_.spawn(addedAmount, origin);
+    appendMoneyPickupLog(addedAmount);
+    return addedAmount;
+}
+
 void Game::updateExposedRewardNodes()
 {
     const float pickupRadiusSq = RewardPickupRadius * RewardPickupRadius;
@@ -9751,8 +9866,7 @@ void Game::updateExposedRewardNodes()
         if (distanceSquared(player_.position, tileWorldCenter(node.tile)) > pickupRadiusSq) {
             continue;
         }
-        worldDrops_.spawnMoneyDrop(node.amount, tileWorldCenter(node.tile), runStats_.elapsedSeconds);
-        node.collected = true;
+        node.collected = grantDungeonMoney(node.amount, tileWorldCenter(node.tile));
     }
 }
 
@@ -9788,9 +9902,10 @@ void Game::revealRewardNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles
                 node.tile.x != tile.x || node.tile.y != tile.y) {
                 continue;
             }
-            worldDrops_.spawnMoneyDrop(node.amount, tileWorldCenter(node.tile), runStats_.elapsedSeconds);
-            node.collected = true;
-            discoveredReward = true;
+            if (grantDungeonMoney(node.amount, tileWorldCenter(node.tile))) {
+                node.collected = true;
+                discoveredReward = true;
+            }
         }
     }
     if (discoveredReward) {
@@ -9844,15 +9959,6 @@ void Game::materializeExposedPlacementDrops(bool allowGeneratedRewardLoot)
         const Vec2 center = tileWorldCenter(node.tile);
         if (spawnRewardNodeWorldDrop(node, center, "ExposedRewardPlacement", allowGeneratedRewardLoot)) {
             node.spawned = true;
-            node.collected = true;
-        }
-    }
-
-    for (MoneyNode& node : moneyNodes_) {
-        if (node.collected || node.visibility != PlacementVisibility::Exposed) {
-            continue;
-        }
-        if (worldDrops_.spawnMoneyDrop(node.amount, tileWorldCenter(node.tile), runStats_.elapsedSeconds)) {
             node.collected = true;
         }
     }
@@ -10985,7 +11091,7 @@ void Game::spawnChestLoot(ChestNode& node)
         std::uniform_int_distribution<int> moneyDistribution(minMoney, maxMoney);
         const int amount = scaledLootAmount(moneyDistribution(rng), totalMultiplier);
         const Vec2 target = safeLootLandingPosition(center, rng);
-        worldDrops_.spawnMoneyDrop(amount, target, runStats_.elapsedSeconds, makeWorldLootJumpMotion(center, rng));
+        grantDungeonMoney(amount, target);
     }
 
     std::bernoulli_distribution materialChance(balance_.lootMaterialChance);
@@ -11196,11 +11302,7 @@ void Game::destroyCrateNode(CrateNode& node)
         std::uniform_int_distribution<int> moneyDistribution(5, 20);
         const int amount = scaledLootAmount(moneyDistribution(rng), totalMultiplier);
         const Vec2 moneyTarget = safeLootLandingPosition(center, rng);
-        worldDrops_.spawnMoneyDrop(
-            amount,
-            moneyTarget,
-            runStats_.elapsedSeconds,
-            makeWorldLootJumpMotion(center, rng));
+        grantDungeonMoney(amount, moneyTarget);
     }
 
     std::bernoulli_distribution bonusChance(balance_.crateBonusChance);
@@ -11693,7 +11795,7 @@ void Game::updateExposedEnemyNodes()
             spawned = enemies_.spawnFixedNodeEnemy(tileMap_, center, player_.position, balance_, enemyCatalog_, false, nullptr, currentStageId_, lootDepthRank);
         }
         if (spawned) {
-            if (introTutorialFixedNode) {
+            if (introTutorialSlimeNode) {
                 const float resolveRadius =
                     IntroTutorialEnemyResolveRadiusTiles * static_cast<float>(balance::TileSize);
                 const bool manualSet = spawnedRuntimeId > 0 &&
@@ -11701,8 +11803,6 @@ void Game::updateExposedEnemyNodes()
                 if (!manualSet) {
                     enemies_.setManualDetectionOnlyNear(center, resolveRadius, true);
                 }
-            }
-            if (introTutorialSlimeNode) {
                 introTutorialFirstEnemyRuntimeId_ = spawnedRuntimeId;
                 if (spawnedRuntimeId > 0) {
                     enemies_.setRuntimeEnemyMovementLeash(
@@ -11710,8 +11810,6 @@ void Game::updateExposedEnemyNodes()
                         center,
                         IntroTutorialSlimeLeashRadiusTiles * static_cast<float>(balance::TileSize));
                 }
-            } else if (introTutorialMushroomNode) {
-                introTutorialSecondEnemyRuntimeId_ = spawnedRuntimeId;
             }
             node.spawned = true;
         }
@@ -13388,6 +13486,7 @@ void Game::restoreRetrySnapshot()
     carveBossArenaAroundSpawnPoint();
     effects_ = EffectSystem{};
     captureAbsorbAnimations_.clear();
+    moneyGainFx_.clear();
     groundLines_ = GroundLineSystem{};
     wetGround_ = WetGroundSystem{};
     magic_ = MagicSystem{};
@@ -13570,6 +13669,7 @@ bool Game::restoreDebugRoguelikeRunSnapshot()
     carveBossArenaAroundSpawnPoint();
     effects_ = EffectSystem{};
     captureAbsorbAnimations_.clear();
+    moneyGainFx_.clear();
     groundLines_ = GroundLineSystem{};
     wetGround_ = WetGroundSystem{};
     projectiles_ = ProjectileSystem{};
@@ -13949,44 +14049,49 @@ void Game::handleRingItemAddedEvents()
              mode_ == ScreenMode::Ring) &&
             pauseReturnMode_ == ScreenMode::Playing) ||
         (mode_ == ScreenMode::LevelUp && levelUpReturnMode_ == ScreenMode::Playing);
-    if (!dungeonContext) {
-        return;
-    }
 
     for (const RingItemAddedEvent& event : events) {
         if (!event.overweight) {
             continue;
         }
-        pushImportantDungeonNotice(
-            std::string(ringDisplayName(event.ringIndex, unlockedRingCount())) + " が重量オーバーだ！",
-            "ring_overweight:" + std::to_string(event.ringIndex));
+        queueStoryEventForTrigger("tutorial:ring_overweight");
+        if (dungeonContext) {
+            pushImportantDungeonNotice(
+                std::string(ringDisplayName(event.ringIndex, unlockedRingCount())) + " が重量オーバーだ！",
+                "ring_overweight:" + std::to_string(event.ringIndex));
+        }
     }
 }
 
-void Game::appendPickupLogs(const std::vector<WorldDropPickupEvent>& pickupEvents)
+void Game::appendMoneyPickupLog(int amount)
 {
     const auto moneyLogLabel = [](int amount) {
         return inlineWorldIconTag(worldIconKey(moneyWorldIconForAmount(amount))) + " お金";
     };
 
+    const int quantity = std::max(1, amount);
+    for (DungeonLogEntry& entry : dungeonLogs_) {
+        if (entry.mergeKey != "money" || entry.count <= 0 || entry.age > DungeonLogMergeSeconds) {
+            continue;
+        }
+        entry.count = static_cast<int>(std::min<std::int64_t>(
+            std::numeric_limits<int>::max(),
+            static_cast<std::int64_t>(entry.count) + quantity));
+        entry.label = moneyLogLabel(entry.count);
+        entry.suffix = " を入手";
+        entry.age = 0.0f;
+        entry.lifetime = DungeonLogLifetime;
+        return;
+    }
+    pushCountedDungeonLog(moneyLogLabel(quantity), quantity, " を入手", "money");
+}
+
+void Game::appendPickupLogs(const std::vector<WorldDropPickupEvent>& pickupEvents)
+{
     for (const WorldDropPickupEvent& event : pickupEvents) {
         const int quantity = std::max(1, event.quantity);
         if (event.kind == WorldDropKind::Money) {
-            bool merged = false;
-            for (DungeonLogEntry& entry : dungeonLogs_) {
-                if (entry.mergeKey == "money" && entry.count > 0 && entry.age <= DungeonLogMergeSeconds) {
-                    entry.count += quantity;
-                    entry.label = moneyLogLabel(entry.count);
-                    entry.suffix = " を入手";
-                    entry.age = 0.0f;
-                    entry.lifetime = DungeonLogLifetime;
-                    merged = true;
-                    break;
-                }
-            }
-            if (!merged) {
-                pushCountedDungeonLog(moneyLogLabel(quantity), quantity, " を入手", "money");
-            }
+            appendMoneyPickupLog(quantity);
         } else if (event.kind == WorldDropKind::Material) {
             MaterialType materialType = MaterialType::Count;
             const bool knownMaterial = materialTypeFromSaveName(event.id, materialType);
@@ -14089,11 +14194,9 @@ void Game::handleRingItemBreakEvents(std::vector<EffectDiscoveryEvent>* discover
                     }
                 } else if (effect.effectKey == "break_coin_spill") {
                     const int amount = objectBreakCoinSpillAmount(*object, effect.value);
-                    if (worldDrops_.spawnMoneyDrop(
+                    if (grantDungeonMoney(
                             amount,
-                            safeLootLandingPosition(event.position, rng),
-                            runStats_.elapsedSeconds,
-                            makeWorldLootJumpMotion(event.position, rng))) {
+                            safeLootLandingPosition(event.position, rng))) {
                         effects_.spawnAreaPulse(event.position, 38.0f, {246, 214, 108, 142});
                         appendObjectEffectDiscovery(discoveryEvents, encyclopedia_, *object, "break_coin_spill", event.position);
                     }

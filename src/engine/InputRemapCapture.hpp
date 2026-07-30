@@ -34,6 +34,7 @@ private:
     bool active_ = false;
     InputAction action_ = InputAction::Count;
     InputRemapCaptureDeviceGroup deviceGroup_ = InputRemapCaptureDeviceGroup::KeyboardMouse;
+    SDL_Scancode pendingModifierScancode_ = SDL_SCANCODE_UNKNOWN;
 };
 
 }

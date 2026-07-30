@@ -35,6 +35,7 @@
 #include "game/LevelSystem.hpp"
 #include "game/MagicFxSystem.hpp"
 #include "game/MagicSystem.hpp"
+#include "game/MoneyGainFxSystem.hpp"
 #include "game/OpeningMetaSave.hpp"
 #include "game/RingPresetSystem.hpp"
 #include "game/RingLevelUpgrade.hpp"
@@ -238,6 +239,7 @@ struct AudioCueEditEntry {
     std::string type;
     std::string path;
     float volume = 1.0f;
+    float pitch = 0.0f;
     bool loop = false;
     float cooldownMs = 0.0f;
 };
@@ -343,6 +345,7 @@ public:
         bool rewardSpawned = false;
         bool bossDefeated = false;
         bool npcRequestKnown = false;
+        std::optional<bool> npcFlipHorizontal;
         bool objectiveResolved = false;
         bool rewardClaimed = false;
         int bossEnemyRuntimeId = 0;
@@ -1678,6 +1681,13 @@ private:
     static std::string dungeonEventDiscoverySeenFlag(DungeonEventKind kind);
     static std::string dungeonEventDiscoveryStoryEventId(DungeonEventKind kind);
     void initializeDungeonEventInstancesFromLayout();
+    bool spawnDungeonEventEnemy(
+        DungeonEventInstance& event,
+        Vec2 position,
+        bool sleeping,
+        bool bossVariant,
+        int* outRuntimeId = nullptr);
+    void ensureDungeonEventEncounterPrepared(DungeonEventInstance& event);
     void updateDungeonEvents(float dt, double totalSeconds);
     void handleDungeonEventEnemyEvent(const EnemyEvent& enemyEvent);
     DungeonEventInstance* nearbyDungeonEventNpc();
@@ -1763,6 +1773,7 @@ private:
         std::string_view sourceLabel,
         bool allowGeneratedRewardLoot);
     void initializeRewardNodesFromLayout();
+    int grantDungeonMoney(int amount, Vec2 origin);
     void updateExposedRewardNodes();
     void revealRewardNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
     void updateExposedMoonFragmentNodes();
@@ -2156,6 +2167,7 @@ private:
     void pushCountedDungeonLog(std::string label, int amount, std::string suffix, std::string mergeKey);
     void updateDungeonLogs(float dt);
     void handleRingItemAddedEvents();
+    void appendMoneyPickupLog(int amount);
     void appendPickupLogs(const std::vector<WorldDropPickupEvent>& pickupEvents);
     void handleRingItemBreakEvents(std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr);
     void recordCapturedMonsterRingBreak(std::string_view objectId);
@@ -2196,7 +2208,7 @@ private:
     void renderPauseMenu(Renderer& renderer) const;
     void renderRingScreen(Renderer& renderer, float totalTime) const;
     void renderRingStatusHud(Renderer& renderer) const;
-    void renderFirstItemAcquisitionNotice(Renderer& renderer) const;
+    void renderFirstItemAcquisitionNotice(Renderer& renderer, float animationSeconds) const;
     UiRect dungeonMinimapRect() const;
     UiRect dungeonMapOverlayPanelRect() const;
     UiRect dungeonMapOverlayViewportRect() const;
@@ -2256,6 +2268,7 @@ private:
     DiggingSystem digging_;
     EffectDispatcher effectDispatcher_;
     EffectSystem effects_;
+    MoneyGainFxSystem moneyGainFx_;
     EnemySystem enemies_;
     ProjectileSystem projectiles_;
     MagicSystem magic_;
@@ -2542,6 +2555,10 @@ private:
     float audioCueEditFileScrollOffset_ = 0.0f;
     UiScrollAreaState audioCueEditCueScrollState_{};
     UiScrollAreaState audioCueEditFileScrollState_{};
+    UiSliderState audioCueEditVolumeSliderState_{};
+    UiSliderState audioCueEditPitchSliderState_{};
+    int audioCueEditLastFileClickIndex_ = -1;
+    std::uint64_t audioCueEditLastFileClickTicks_ = 0;
     bool audioCueEditDirty_ = false;
     std::string audioCueEditStatus_;
     std::string audioCueEditPreviousBgmCue_;
@@ -2621,6 +2638,7 @@ private:
     TitleMenuPage titleMenuPage_ = TitleMenuPage::Main;
     std::string titleCreditsText_;
     float titleCreditsScrollOffset_ = 0.0f;
+    mutable float titleCreditsContentHeight_ = 0.0f;
     UiScrollAreaState titleCreditsScrollState_{};
     mutable UiCancelControlState titleCancelState_{};
     PauseMenuPage pausePage_ = PauseMenuPage::Main;
@@ -2696,7 +2714,6 @@ private:
     bool introTutorialLightTutorialQueued_ = false;
     bool introTutorialFirstEnemySpawned_ = false;
     bool introTutorialSecondEnemySpawned_ = false;
-    bool introTutorialSecondEnemyEncountered_ = false;
     bool introTutorialEnemyEncounterQueued_ = false;
     bool introTutorialEnemyDefeatedQueued_ = false;
     bool introTutorialChestFoundQueued_ = false;
@@ -2707,7 +2724,6 @@ private:
     bool introTutorialMidwayDialogueQueued_ = false;
     bool introTutorialExitDialogueQueued_ = false;
     int introTutorialFirstEnemyRuntimeId_ = 0;
-    int introTutorialSecondEnemyRuntimeId_ = 0;
     std::string introTutorialChestLootObjectId_;
     std::string introTutorialChestLootInstanceId_;
     DungeonTile introTutorialFirstEnemyTile_{};
@@ -2872,7 +2888,7 @@ private:
     bool debugPaused_ = false;
     bool autoReloadBlocked_ = false;
     bool hotReloadEnabled_ = false;
-    bool gamepadUiCursorEnabled_ = false;
+    bool navigationUiCursorEnabled_ = false;
     float hotReloadPollTimer_ = 0.0f;
     AudioEngine* audio_ = nullptr;
     std::string activeAudioBgmCue_;

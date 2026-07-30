@@ -758,7 +758,7 @@ void applyCoinDropChanceInvocation(const EffectInvocation& invocation)
 
     const EffectContext& context = *invocation.context;
     Enemy* enemy = context.hitTarget != nullptr ? context.hitTarget : context.targetEntity;
-    if (enemy == nullptr || context.worldDrops == nullptr) {
+    if (enemy == nullptr || (!context.grantMoney && context.worldDrops == nullptr)) {
         return;
     }
 
@@ -776,11 +776,16 @@ void applyCoinDropChanceInvocation(const EffectInvocation& invocation)
 
     static std::mt19937 amountRng{std::random_device{}()};
     std::uniform_int_distribution<int> amountDist(1, 3);
-    if (context.worldDrops->spawnMoneyDrop(
-            amountDist(amountRng),
-            scatterEffectDropPosition(enemy->position, amountRng),
+    const int amount = amountDist(amountRng);
+    const Vec2 position = scatterEffectDropPosition(enemy->position, amountRng);
+    const bool granted = context.grantMoney
+        ? context.grantMoney(amount, position)
+        : context.worldDrops->spawnMoneyDrop(
+            amount,
+            position,
             context.dropSpawnedAtSeconds,
-            makeEffectDropJumpMotion(enemy->position, amountRng))) {
+            makeEffectDropJumpMotion(enemy->position, amountRng));
+    if (granted) {
         recordEffectDiscovery(
             invocation,
             invocation.effect == "hit_coin_spill" ? "敵から小銭をこぼさせる" : "敵から少額のお金を落とす");

@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <array>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -13,9 +14,13 @@ enum class InputAction {
     MoveRight,
     MoveUp,
     MoveDown,
-    AimPointer,
     ThrowActiveRing,
     OffsetRingCenter,
+    ShiftRingLeft,
+    ShiftRingRight,
+    ShiftRingUp,
+    ShiftRingDown,
+    RingCommandModifier,
     ShortcutCursorLeft,
     ShortcutCursorRight,
     DirectShortcut1,
@@ -26,6 +31,8 @@ enum class InputAction {
     DirectShortcut6,
     DirectShortcut7,
     DirectShortcut8,
+    PreviousShortcutRow,
+    NextShortcutRow,
     ToggleShortcutRow,
     UseSelectedItem,
     Confirm,
@@ -64,11 +71,39 @@ enum class InputBindingDevice {
     GamepadAxis,
 };
 
+enum class InputModifiers : std::uint8_t {
+    None = 0,
+    Shift = 1 << 0,
+    Ctrl = 1 << 1,
+    Alt = 1 << 2,
+    Gui = 1 << 3,
+};
+
+constexpr InputModifiers operator|(InputModifiers lhs, InputModifiers rhs)
+{
+    return static_cast<InputModifiers>(
+        static_cast<std::uint8_t>(lhs) |
+        static_cast<std::uint8_t>(rhs));
+}
+
+constexpr InputModifiers& operator|=(InputModifiers& lhs, InputModifiers rhs)
+{
+    lhs = lhs | rhs;
+    return lhs;
+}
+
+constexpr bool inputModifiersContain(InputModifiers active, InputModifiers required)
+{
+    return (static_cast<std::uint8_t>(active) & static_cast<std::uint8_t>(required)) ==
+        static_cast<std::uint8_t>(required);
+}
+
 struct InputBinding {
     InputBindingDevice device = InputBindingDevice::Keyboard;
     int code = 0;
     int direction = 0;
     float threshold = 0.5f;
+    InputModifiers modifiers = InputModifiers::None;
 };
 
 using InputBindingMap = std::array<std::vector<InputBinding>, InputActionCount>;
@@ -78,6 +113,10 @@ std::optional<InputAction> parseInputAction(std::string_view name);
 
 std::string_view inputBindingDeviceName(InputBindingDevice device);
 std::optional<InputBindingDevice> parseInputBindingDevice(std::string_view name);
+std::string_view inputModifierName(InputModifiers modifier);
+std::optional<InputModifiers> parseInputModifier(std::string_view name);
+std::string inputModifierDisplayPrefix(InputModifiers modifiers);
+int inputModifierCount(InputModifiers modifiers);
 
 InputBindingMap defaultInputBindings();
 InputBindingMap sanitizeInputBindings(InputBindingMap bindings);

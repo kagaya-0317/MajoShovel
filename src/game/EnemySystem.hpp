@@ -20,6 +20,7 @@
 #include "game/ProjectileSystem.hpp"
 #include "game/TileMap.hpp"
 #include <array>
+#include <functional>
 #include <random>
 #include <optional>
 #include <string>
@@ -254,6 +255,7 @@ public:
         const EnemyCatalog& enemyCatalog,
         const ObjectCatalog& objectCatalog,
         WorldDropSystem& worldDrops,
+        const std::function<bool(int, Vec2)>& grantMoney,
         Vec2 playerLight,
         const std::vector<LightSource>& extraLights,
         const EffectDispatcher& effectDispatcher,

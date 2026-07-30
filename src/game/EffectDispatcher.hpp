@@ -68,6 +68,7 @@ struct EffectContext {
     GroundLineSystem* groundLines = nullptr;
     MagicSystem* magic = nullptr;
     WorldDropSystem* worldDrops = nullptr;
+    std::function<bool(int, Vec2)> grantMoney;
     const ObjectCatalog* objectCatalog = nullptr;
     std::vector<TerrainHitTile>* terrainHitTiles = nullptr;
     std::vector<Vec2>* terrainOpenedTiles = nullptr;

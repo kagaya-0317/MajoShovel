@@ -9221,6 +9221,7 @@ void EnemySystem::update(
     const EnemyCatalog& enemyCatalog,
     const ObjectCatalog& objectCatalog,
     WorldDropSystem& worldDrops,
+    const std::function<bool(int, Vec2)>& grantMoney,
     Vec2 playerLight,
     const std::vector<LightSource>& extraLights,
     const EffectDispatcher& effectDispatcher,
@@ -10392,6 +10393,7 @@ void EnemySystem::update(
                 context.enemies = this;
                 context.magic = &magic;
                 context.worldDrops = &worldDrops;
+                context.grantMoney = grantMoney;
                 context.objectCatalog = &objectCatalog;
                 context.statusPopupEvents = &statusPopupEvents_;
                 context.discoveryEvents = discoveryEvents;

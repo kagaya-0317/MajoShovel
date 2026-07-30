@@ -14,6 +14,12 @@ enum class InputDeviceKind {
     Gamepad,
 };
 
+enum class InputModality {
+    Keyboard,
+    Mouse,
+    Gamepad,
+};
+
 struct InputAutomationFrame {
     bool active = false;
     bool exclusive = true;
@@ -64,7 +70,10 @@ public:
     bool backPressed() const { return pressed(InputAction::Cancel) || pressed(InputAction::Pause); }
     bool backReleased() const { return released(InputAction::Cancel) || released(InputAction::Pause); }
     bool backHeld() const { return held(InputAction::Cancel) || held(InputAction::Pause); }
-    bool ringOffsetHeld() const { return held(InputAction::OffsetRingCenter); }
+    bool ringOffsetHeld() const
+    {
+        return held(InputAction::OffsetRingCenter) || lengthSquared(ringShiftAxis_) > 0.0001f;
+    }
     bool ringOffsetPointerHeld() const;
     bool upgradePressed(int option) const;
     bool mouseLeftPressed() const { return mouseLeftPressed_; }
@@ -82,10 +91,11 @@ public:
     int activeRingDelta() const { return activeRingDelta_; }
     bool toggleShortcutRowPressed() const { return pressed(InputAction::ToggleShortcutRow); }
     Vec2 moveAxis() const { return moveAxis_; }
-    Vec2 aimAxis() const { return aimAxis_; }
-    bool hasAimAxis() const { return hasAimAxis_; }
+    Vec2 ringShiftAxis() const { return ringShiftAxis_; }
     Vec2 mouseScreen() const { return mouseScreen_; }
     InputDeviceKind lastActiveDevice() const { return lastActiveDevice_; }
+    InputModality lastInputModality() const { return lastInputModality_; }
+    bool uiNavigationCursorActive() const { return lastInputModality_ != InputModality::Mouse; }
 
 private:
     static constexpr int ActionCount = InputActionCount;
@@ -106,12 +116,18 @@ private:
     void setSourceHeld(InputSource source, InputAction action, bool held);
     bool sourceHeld(InputSource source, InputAction action) const;
     bool anySourceHeld(InputAction action) const;
+    Vec2 directionalAxisForSource(
+        InputSource source,
+        InputAction left,
+        InputAction right,
+        InputAction up,
+        InputAction down) const;
     void handleGamepadButton(SDL_GamepadButton button, bool down);
     void updateGamepadState();
     void updateGamepadButtonBindings(std::array<bool, ActionCount>& gamepadHeld);
     void updateGamepadAxisBindings(int axis, float value, std::array<bool, ActionCount>& gamepadHeld);
     void updateKeyboardPolledBindings(const bool* keys);
-    void accumulateGamepadMoveAxis(InputAction action, float amount);
+    void accumulateGamepadAnalogAxis(InputAction action, float amount);
     void press(InputAction action);
     void release(InputAction action);
 
@@ -126,6 +142,7 @@ private:
     bool ctrlPastePressed_ = false;
     bool suppressDirectShortcutThisFrame_ = false;
     InputDeviceKind lastActiveDevice_ = InputDeviceKind::KeyboardMouse;
+    InputModality lastInputModality_ = InputModality::Keyboard;
     SDL_Gamepad* gamepad_ = nullptr;
     SDL_JoystickID gamepadId_ = 0;
     std::array<bool, ActionCount> pressed_{};
@@ -140,8 +157,8 @@ private:
     int activeRingDelta_ = 0;
     Vec2 moveAxis_{};
     Vec2 leftStickAxis_{};
-    Vec2 aimAxis_{};
-    bool hasAimAxis_ = false;
+    Vec2 ringShiftAxis_{};
+    Vec2 gamepadRingShiftAxis_{};
     Vec2 mouseScreen_{};
 };
 

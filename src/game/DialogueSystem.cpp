@@ -23,6 +23,8 @@ constexpr float DialogueCharacterDelay = 0.035f;
 constexpr float DialogueCharacterFadeSeconds = 0.12f;
 constexpr float DialoguePortraitFadeSeconds = 0.18f;
 constexpr float DialoguePortraitSlidePixels = 24.0f;
+constexpr float DialogueSpeakingPortraitLiftPixels = 24.0f;
+constexpr float DialogueSpeakingPortraitCycleSeconds = 20.0f / 60.0f;
 constexpr float DialogueAdvanceRepeatInterval = 0.28f;
 constexpr float DialogueSpeakerModeSwitchWaitSeconds = 0.45f;
 constexpr float DialogueContentStartLeadFrames = 10.0f;
@@ -736,6 +738,7 @@ void DialoguePlayer::start(DialogueSequence sequence)
     active_ = !sequence_.steps.empty();
     closing_ = false;
     syncRightPortraitForCurrentLine(false);
+    resetSpeakingPortraitMotion();
 }
 
 void DialoguePlayer::clear()
@@ -756,6 +759,8 @@ void DialoguePlayer::clear()
     closing_ = false;
     portraitsHidden_ = false;
     portraitsHidePersistent_ = false;
+    speakingPortraitMotion_ = {};
+    advanceAfterSpeakingPortraitMotion_ = false;
 }
 
 void DialoguePlayer::update(const Input& input, float dt)
@@ -851,13 +856,20 @@ void DialoguePlayer::update(const Input& input, float dt)
     }
 
     if (advanceRequested(input, safeDt)) {
-        ++advanceSoundRequests_;
-        if (lineComplete()) {
-            advanceLine();
-        } else {
+        if (!lineComplete()) {
+            ++advanceSoundRequests_;
             revealCurrentLine();
+        } else if (!advanceAfterSpeakingPortraitMotion_) {
+            ++advanceSoundRequests_;
+            if (speakingPortraitMotionBlocksAdvance()) {
+                advanceAfterSpeakingPortraitMotion_ = true;
+            } else {
+                advanceLine();
+                return;
+            }
         }
     }
+    updateSpeakingPortraitMotion(safeDt);
 }
 
 void DialoguePlayer::render(Renderer& renderer, int screenWidth, int screenHeight) const
@@ -918,6 +930,7 @@ void DialoguePlayer::render(Renderer& renderer, int screenWidth, int screenHeigh
             DialoguePortraitSide::Left);
         UiRect leftPortrait = portraitRectFor(panel, DialoguePortraitSide::Left, screenWidth, screenHeight);
         leftPortrait.pos += portraitSlideOffset(DialoguePortraitSide::Left, contentFade_);
+        leftPortrait.pos.y += speakingPortraitOffsetY("player");
         drawPortrait(renderer, leftPortrait, leftSlot, contentFade_, portraitBrightness("player"));
     }
 
@@ -933,6 +946,7 @@ void DialoguePlayer::render(Renderer& renderer, int screenWidth, int screenHeigh
             if (rightPortraitTransition_ == RightPortraitTransition::FadingIn || closing_) {
                 rightPortrait.pos += portraitSlideOffset(DialoguePortraitSide::Right, rightAlpha);
             }
+            rightPortrait.pos.y += speakingPortraitOffsetY(rightSpeakerId_);
             drawPortrait(renderer, rightPortrait, rightSlot, rightAlpha, portraitBrightness(rightSpeakerId_));
         }
     }
@@ -1008,9 +1022,15 @@ void DialoguePlayer::renderMonicaCall(Renderer& renderer, int screenWidth, int s
         "monica",
         portraitExpressionVariant("monica"),
         DialoguePortraitSide::Right);
+    const float portraitOffsetY = speakingPortraitOffsetY("monica");
+    UiRect phonePortrait{
+        {screen.pos.x + screen.size.x * 0.18f, screen.pos.y + 16.0f},
+        {screen.size.x * 0.64f, screen.size.y - 20.0f},
+    };
+    phonePortrait.pos.y += portraitOffsetY;
     drawPortrait(
         renderer,
-        {{screen.pos.x + screen.size.x * 0.18f, screen.pos.y + 16.0f}, {screen.size.x * 0.64f, screen.size.y - 20.0f}},
+        phonePortrait,
         monicaSlot,
         alpha,
         1.0f);
@@ -1033,7 +1053,9 @@ void DialoguePlayer::renderMonicaCall(Renderer& renderer, int screenWidth, int s
         a({38, 62, 112, 210}),
         a({118, 178, 214, 190}),
         GradientDirection::TopToBottom);
-    drawPortrait(renderer, portraitFrame, monicaSlot, alpha, 1.0f);
+    UiRect animatedPortraitFrame = portraitFrame;
+    animatedPortraitFrame.pos.y += portraitOffsetY;
+    drawPortrait(renderer, animatedPortraitFrame, monicaSlot, alpha, 1.0f);
 
     renderer.fillCircle({bubble.pos.x + bubble.size.x - 34.0f, bubble.pos.y + 32.0f}, 5.0f, a({72, 218, 164, 255}));
     renderer.drawText({bubble.pos.x + 176.0f, bubble.pos.y + 24.0f}, "モニカ通信", a({38, 76, 122, 255}), 2);
@@ -1298,6 +1320,8 @@ void DialoguePlayer::advanceLine()
     if (stepIndex_ + 1 >= static_cast<int>(sequence_.steps.size())) {
         closing_ = true;
         revealCurrentLine();
+        speakingPortraitMotion_ = {};
+        advanceAfterSpeakingPortraitMotion_ = false;
         return;
     }
 
@@ -1311,6 +1335,7 @@ void DialoguePlayer::advanceLine()
         portraitsHidden_ = false;
     }
     syncRightPortraitForCurrentLine(false);
+    resetSpeakingPortraitMotion();
 }
 
 void DialoguePlayer::syncRightPortraitForCurrentLine(bool immediate)
@@ -1402,6 +1427,100 @@ void DialoguePlayer::updateRightPortrait(float dt)
 void DialoguePlayer::applyPortraitExpressionStep(const DialogueStep& step)
 {
     setPortraitExpressionVariant(step.portraitExpressionSpeakerId, step.portraitExpressionVariant);
+}
+
+void DialoguePlayer::resetSpeakingPortraitMotion()
+{
+    speakingPortraitMotion_ = {};
+    advanceAfterSpeakingPortraitMotion_ = false;
+
+    const DialogueLine* line = currentLine();
+    if (line == nullptr || line->speakerId.empty()) {
+        return;
+    }
+
+    if (sequenceUsesMonicaCallUi(sequence_)) {
+        if (line->speakerId != "monica") {
+            return;
+        }
+    } else {
+        if (portraitsHidden_) {
+            return;
+        }
+        if (line->speakerId != "player" && !speakerUsesRightPortrait(line->speakerId)) {
+            return;
+        }
+    }
+
+    speakingPortraitMotion_.speakerId = line->speakerId;
+    speakingPortraitMotion_.active = true;
+}
+
+void DialoguePlayer::updateSpeakingPortraitMotion(float dt)
+{
+    if (!speakingPortraitMotion_.active) {
+        return;
+    }
+    if (!speakingPortraitMotion_.started) {
+        if (!speakingPortraitReady()) {
+            return;
+        }
+        speakingPortraitMotion_.started = true;
+    }
+
+    speakingPortraitMotion_.cycleElapsedSeconds += std::max(0.0f, dt);
+    while (speakingPortraitMotion_.cycleElapsedSeconds >= DialogueSpeakingPortraitCycleSeconds) {
+        speakingPortraitMotion_.cycleElapsedSeconds -= DialogueSpeakingPortraitCycleSeconds;
+        if (!lineComplete()) {
+            continue;
+        }
+
+        const bool advanceAfterMotion = advanceAfterSpeakingPortraitMotion_;
+        speakingPortraitMotion_ = {};
+        advanceAfterSpeakingPortraitMotion_ = false;
+        if (advanceAfterMotion) {
+            advanceLine();
+        }
+        return;
+    }
+}
+
+bool DialoguePlayer::speakingPortraitReady() const
+{
+    if (!speakingPortraitMotion_.active) {
+        return false;
+    }
+    if (sequenceUsesMonicaCallUi(sequence_)) {
+        return speakingPortraitMotion_.speakerId == "monica";
+    }
+    if (portraitsHidden_) {
+        return false;
+    }
+    if (speakingPortraitMotion_.speakerId == "player") {
+        return spokenLineSeen();
+    }
+    return speakingPortraitMotion_.speakerId == rightSpeakerId_;
+}
+
+bool DialoguePlayer::speakingPortraitMotionBlocksAdvance() const
+{
+    return speakingPortraitMotion_.active;
+}
+
+float DialoguePlayer::speakingPortraitOffsetY(std::string_view speakerId) const
+{
+    if (!speakingPortraitMotion_.active ||
+        !speakingPortraitMotion_.started ||
+        speakerId != speakingPortraitMotion_.speakerId) {
+        return 0.0f;
+    }
+
+    const float phase = std::clamp(
+        speakingPortraitMotion_.cycleElapsedSeconds / DialogueSpeakingPortraitCycleSeconds,
+        0.0f,
+        1.0f);
+    const float lift = 0.5f - 0.5f * std::cos(Pi * 2.0f * phase);
+    return -DialogueSpeakingPortraitLiftPixels * lift;
 }
 
 }

@@ -35,6 +35,7 @@
   - https://docs.google.com/document/d/12xGwm99F709SkqDlyVlm3iP2ad2Xj9N-DQJHwGZrpaU/edit?usp=drivesdk
 - HUD、メニュー、ボタン、操作ヘルプ、プロンプト、トースト通知、ダンジョンログ、デバッグ表示などの UI テキストは、上記 Google Docs の更新対象外とする。
 - Google Docs がタブ付き文書の場合は、該当するタブだけを更新し、無関係なタブや既存フォーマットを崩さない。
+- Google Docs に新しいシナリオ本文タブを作成・追加する場合、個別の指示がなくても既存の同種タブに合わせて、少なくとも `ID`、`ゲーム側会話`（対応するローカルファイルと trigger）、`反映状況` を本文冒頭に記載する。既存タブを初めてゲームへ実装する場合も、これらの管理情報がなければ同時に追記する。
 - Google Docs を更新した後は、可能な範囲で対象タブを読み返し、反映されたことを確認する。
 - ゲーム内セリフは基本的に文末の句点「。」を付けない。同じ行で文を続ける場合など、読みやすさに必要な場合だけ使ってよい。
 - Google Docs の本文で1行空きがある箇所を `.story` に反映する場合は、その区切りに `@wait small` を入れる。`.story` の構文上の空行とは区別し、docs 側の意図された余白だけをウェイト化する。
@@ -63,6 +64,15 @@ Dropbox の同期ロックを避け、リビルドを速く保つため。
 Codex が `tools\build.ps1` または `build_game.bat` で検証ビルドを実行する場合、既定ではロック付きのスロットプールを使う。
 出力先は `%LOCALAPPDATA%\MajoShovel\build-codex\pools\<SOURCE_HASH>\<BUILD_FLAVOR>\slot-N` になる。
 同時に複数スレッドがビルドしても同じ slot は同時使用されず、スレッドが変わっても温まった slot を再利用できる。
+通常の Codex 検証ビルドでは `-BuildDir` を指定せず、`-CodexBuildSlots 0` も使わず、必ずこのスロットプールを再利用する。
+タスクごとの隔離や「念のため」という理由だけで新しい検証ディレクトリを作ってはならない。スロットのロック機構がビルド出力の競合を防ぐため、
+新規ディレクトリは不要なフルビルドと検証時間の増加を招く。
+明示的な `-BuildDir` を使ってよいのは、既存スロットの破損を確認した場合、または特定の generator・構成・既存ビルドツリーを再現するなど、
+スロットプールでは満たせない具体的な検証要件がある場合だけとする。その場合は、実行前にスロットを再利用できない理由を明記する。
+ただし、スロットが分離するのはビルド出力先だけであり、複数の Codex スレッドは同じソースツリーを共有する。
+別スレッドが `Game.hpp` や `Game*.cpp` などを編集中にビルドすると、ビルド途中で入力ソースが変わったり、想定外の再コンパイルや一時的なコンパイルエラーが発生したりする。
+検証ビルドを始める前に、実行中の `cmake.exe` / `MSBuild.exe` / `cl.exe` / `link.exe` と作業ツリーの更新状況を確認し、
+同じ共有ファイルを別スレッドが更新中と判断できる場合は、その編集が一段落してから統合ビルドする。
 スロット数は既定で 4。変更する場合は `-CodexBuildSlots <数>` または環境変数 `MAJOSHOVEL_CODEX_BUILD_SLOTS` を使う。
 `-CodexBuildSlots 0` を明示した場合だけ、従来どおり `%LOCALAPPDATA%\MajoShovel\build-codex\<CODEX_THREAD_ID>` を使う。
 `dev_auto_reload.ps1` の `%LOCALAPPDATA%\MajoShovel\build-nopch` と衝突させないため、Codex 検証で
@@ -105,6 +115,20 @@ exit $code
 問題の翻訳単位が再コンパイルされていない場合があるため、対象 `.cpp` を触った修正ではこの確認を毎回行う。
 対象が再コンパイルされたことを確認できない場合は、そのビルド結果を修正確認として報告しない。
 同じ構成・同じ隔離出力先で対象が再コンパイルされるようにしてから再検証する。
+
+PowerShell から別の PowerShell を起動して `tools\build.ps1` を実行した場合、スクリプト内の `return <非0値>` が
+呼び出し元プロセスの終了コード 0 として見えることがある。ラッパーの出力が不自然に少ない、対象 `.obj` が更新されていない、
+実行ファイルが更新されていない、という場合は、外側で得た `$LASTEXITCODE` が 0 でも成功扱いしない。
+使用された隔離ビルドディレクトリに対して同じ構成の CMake ビルドを直接 `--verbose` 付きで実行し、出力をログへ保存して確認する。
+
+```powershell
+$buildDir = "<tools\build.ps1 が表示した output>"
+$log = Join-Path $env:LOCALAPPDATA ("MajoShovel\build-logs\codex-build-direct-{0}.log" -f (Get-Date -Format "yyyyMMdd-HHmmss"))
+cmake --build $buildDir --config Release --target MajoShovel --parallel 12 --verbose 2>&1 |
+    Tee-Object -FilePath $log
+$code = $LASTEXITCODE
+exit $code
+```
 
 ビルドが timeout した場合は、同じビルドをすぐ再実行しない。
 まず自分が起動した `cmake.exe` / `MSBuild.exe` / `cl.exe` / `link.exe` が残っているか確認し、残っていれば完了を待つか、
