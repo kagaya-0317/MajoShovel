@@ -42,6 +42,7 @@ constexpr float UiLineRightLineX = 275.0f;
 constexpr float UiLineRightLineWidth = 151.0f;
 constexpr float UiLineRightCapX = 426.0f;
 constexpr float UiLineRightCapWidth = 37.0f;
+constexpr std::size_t InlineImageTriangleVertexCount = 8;
 
 SDL_FColor vertexColor(Color color)
 {
@@ -375,6 +376,46 @@ SDL_Texture* createAlphaMaskTexture(
     SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
     SDL_SetTextureScaleMode(texture, scaleMode);
     return texture;
+}
+
+RectF calculateOpaqueBounds(
+    int width,
+    int height,
+    const std::vector<unsigned char>& alphaMask)
+{
+    if (width <= 0 ||
+        height <= 0 ||
+        alphaMask.size() < static_cast<std::size_t>(width) * static_cast<std::size_t>(height)) {
+        return {};
+    }
+
+    int minX = width;
+    int minY = height;
+    int maxX = -1;
+    int maxY = -1;
+    for (int y = 0; y < height; ++y) {
+        const std::size_t rowOffset =
+            static_cast<std::size_t>(y) * static_cast<std::size_t>(width);
+        for (int x = 0; x < width; ++x) {
+            if (alphaMask[rowOffset + static_cast<std::size_t>(x)] == 0) {
+                continue;
+            }
+            minX = std::min(minX, x);
+            minY = std::min(minY, y);
+            maxX = std::max(maxX, x);
+            maxY = std::max(maxY, y);
+        }
+    }
+
+    if (maxX < minX || maxY < minY) {
+        return {};
+    }
+    return {
+        static_cast<float>(minX),
+        static_cast<float>(minY),
+        static_cast<float>(maxX - minX + 1),
+        static_cast<float>(maxY - minY + 1),
+    };
 }
 
 SDL_RendererLogicalPresentation toSdlLogicalPresentation(LogicalPresentationMode mode)
@@ -994,7 +1035,20 @@ bool Renderer::drawImageTriangleList(
     std::size_t indexCount,
     Color tint)
 {
-    if (vertices == nullptr || indices == nullptr || vertexCount < 3 || indexCount < 3 || tint.a == 0) {
+    ImageTriangleDrawOptions options;
+    options.tint = tint;
+    return drawImageTriangleList(handle, vertices, vertexCount, indices, indexCount, options);
+}
+
+bool Renderer::drawImageTriangleList(
+    ImageHandle handle,
+    const ImageTriangleVertex* vertices,
+    std::size_t vertexCount,
+    const int* indices,
+    std::size_t indexCount,
+    const ImageTriangleDrawOptions& options)
+{
+    if (vertices == nullptr || indices == nullptr || vertexCount < 3 || indexCount < 3) {
         return false;
     }
 
@@ -1007,23 +1061,96 @@ bool Renderer::drawImageTriangleList(
         return false;
     }
 
-    const Color transformed = transformColor(tint);
-    std::vector<SDL_Vertex> sdlVertices(vertexCount);
+    std::array<SDL_Vertex, InlineImageTriangleVertexCount> inlineVertices{};
+    std::vector<SDL_Vertex> overflowVertices;
+    SDL_Vertex* transformedVertices = inlineVertices.data();
+    if (vertexCount > inlineVertices.size()) {
+        overflowVertices.resize(vertexCount);
+        transformedVertices = overflowVertices.data();
+    }
     for (std::size_t i = 0; i < vertexCount; ++i) {
         const Vec2 p = transform(vertices[i].position);
-        sdlVertices[i] = SDL_Vertex{{p.x, p.y}, vertexColor(transformed), {vertices[i].texCoord.x, vertices[i].texCoord.y}};
+        transformedVertices[i] = SDL_Vertex{
+            {p.x, p.y},
+            vertexColor({255, 255, 255, 255}),
+            {vertices[i].texCoord.x, vertices[i].texCoord.y},
+        };
     }
 
-    std::vector<int> sdlIndices(indices, indices + indexCount);
-    SDL_SetTextureColorMod(entry->texture.texture, 255, 255, 255);
-    SDL_SetTextureAlphaMod(entry->texture.texture, 255);
-    return SDL_RenderGeometry(
-        renderer_,
-        entry->texture.texture,
-        sdlVertices.data(),
-        static_cast<int>(sdlVertices.size()),
-        sdlIndices.data(),
-        static_cast<int>(sdlIndices.size()));
+    const auto drawGeometry = [&](SDL_Texture* texture, Color color, float offsetX, float offsetY) {
+        if (texture == nullptr || color.a == 0) {
+            return true;
+        }
+
+        const SDL_FColor colorValue = vertexColor(color);
+        for (std::size_t i = 0; i < vertexCount; ++i) {
+            transformedVertices[i].position.x += offsetX;
+            transformedVertices[i].position.y += offsetY;
+            transformedVertices[i].color = colorValue;
+        }
+        SDL_SetTextureColorMod(texture, 255, 255, 255);
+        SDL_SetTextureAlphaMod(texture, 255);
+        const bool rendered = SDL_RenderGeometry(
+            renderer_,
+            texture,
+            transformedVertices,
+            static_cast<int>(vertexCount),
+            indices,
+            static_cast<int>(indexCount));
+        for (std::size_t i = 0; i < vertexCount; ++i) {
+            transformedVertices[i].position.x -= offsetX;
+            transformedVertices[i].position.y -= offsetY;
+        }
+        return rendered;
+    };
+
+    bool rendered = false;
+    bool ok = true;
+    if (options.outlineEnabled && options.outlinePx > 0) {
+        const Color outline = transformColor(options.outlineColor);
+        if (outline.a > 0) {
+            SDL_Texture* outlineTexture = entry->texture.texture;
+            if (!solidMaskCanUseSourceTexture(outline)) {
+                const bool outlineReady = ensureCachedImageOutlineReady(*entry);
+                outlineTexture = outlineReady && entry->texture.outlineTexture != nullptr
+                    ? entry->texture.outlineTexture
+                    : entry->texture.texture;
+            }
+            const int radiusPx = std::max(1, options.outlinePx);
+            for (int dy = -radiusPx; dy <= radiusPx; ++dy) {
+                for (int dx = -radiusPx; dx <= radiusPx; ++dx) {
+                    if ((dx == 0 && dy == 0) ||
+                        dx * dx + dy * dy > radiusPx * radiusPx) {
+                        continue;
+                    }
+                    ok = drawGeometry(
+                             outlineTexture,
+                             outline,
+                             static_cast<float>(dx),
+                             static_cast<float>(dy)) &&
+                        ok;
+                    rendered = true;
+                }
+            }
+        }
+    }
+
+    const Color tint = transformColor(options.tint);
+    if (tint.a > 0) {
+        ok = drawGeometry(entry->texture.texture, tint, 0.0f, 0.0f) && ok;
+        rendered = true;
+    }
+
+    const Color maskOverlay = transformColor(options.maskOverlayColor);
+    if (maskOverlay.a > 0) {
+        const bool maskReady = ensureCachedImageOutlineReady(*entry);
+        SDL_Texture* maskTexture = maskReady && entry->texture.outlineTexture != nullptr
+            ? entry->texture.outlineTexture
+            : entry->texture.texture;
+        ok = drawGeometry(maskTexture, maskOverlay, 0.0f, 0.0f) && ok;
+        rendered = true;
+    }
+    return rendered && ok;
 }
 
 void Renderer::fillSoftCircle(Vec2 center, float radius, Color color)
@@ -2672,6 +2799,18 @@ bool Renderer::getImageSize(std::string_view path, Vec2& outSize, TextureFilter 
     return getImageSize(handle, outSize);
 }
 
+bool Renderer::getImageOpaqueBounds(ImageHandle handle, RectF& outBounds) const
+{
+    const CachedImageEntry* entry = findImageEntry(handle);
+    if (entry == nullptr ||
+        entry->texture.opaqueBounds.w <= 0.0f ||
+        entry->texture.opaqueBounds.h <= 0.0f) {
+        return false;
+    }
+    outBounds = entry->texture.opaqueBounds;
+    return true;
+}
+
 bool Renderer::imageHitTestAlpha(
     ImageHandle handle,
     Vec2 center,
@@ -2855,6 +2994,7 @@ bool Renderer::loadImageTexture(std::string_view path, std::string_view label, I
          sourceIndex += 4, ++alphaIndex) {
         loaded.alphaMask[alphaIndex] = pixels[sourceIndex];
     }
+    loaded.opaqueBounds = calculateOpaqueBounds(width, height, loaded.alphaMask);
 
     unloadImageTexture(target);
     target = std::move(loaded);

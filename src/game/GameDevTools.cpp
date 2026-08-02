@@ -13043,7 +13043,7 @@ bool Game::executeDebugCommand(std::string_view command)
         }
 
         if (removedCount > 0) {
-            warehouseDisplaySlots_.clear();
+            warehouseItemLayout_.clear();
             refreshOrbitEffects();
         }
         return removedCount;

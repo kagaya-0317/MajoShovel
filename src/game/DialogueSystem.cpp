@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <random>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -23,7 +24,8 @@ constexpr float DialogueCharacterDelay = 0.035f;
 constexpr float DialogueCharacterFadeSeconds = 0.12f;
 constexpr float DialoguePortraitFadeSeconds = 0.18f;
 constexpr float DialoguePortraitSlidePixels = 24.0f;
-constexpr float DialogueSpeakingPortraitLiftPixels = 9.0f;
+constexpr float DialogueSpeakingPortraitLiftMinPixels = 5.0f;
+constexpr float DialogueSpeakingPortraitLiftMaxPixels = 7.0f;
 constexpr float DialogueSpeakingPortraitCycleSeconds = 12.0f / 60.0f;
 constexpr float DialogueSpeakingPortraitPauseSeconds = 6.0f / 60.0f;
 constexpr float DialogueAdvanceRepeatInterval = 0.28f;
@@ -155,11 +157,8 @@ bool isLineBreak(std::string_view codepoint)
 bool isSpeakingPortraitPause(std::string_view codepoint)
 {
     return codepoint == "…" ||
-        codepoint == "・" ||
         codepoint == "。" ||
-        codepoint == "." ||
-        codepoint == "、" ||
-        codepoint == ",";
+        codepoint == ".";
 }
 
 bool isDialogueWhitespace(std::string_view codepoint)
@@ -168,6 +167,15 @@ bool isDialogueWhitespace(std::string_view codepoint)
         codepoint == " " ||
         codepoint == "\t" ||
         codepoint == "　";
+}
+
+float randomSpeakingPortraitLiftPixels()
+{
+    static std::mt19937 rng{std::random_device{}()};
+    static std::uniform_real_distribution<float> distribution(
+        DialogueSpeakingPortraitLiftMinPixels,
+        DialogueSpeakingPortraitLiftMaxPixels);
+    return distribution(rng);
 }
 
 bool dialogueWorldIconTagAt(std::string_view text, std::size_t offset, std::size_t& outEnd, std::string& outKey)
@@ -1497,6 +1505,13 @@ void DialoguePlayer::resetSpeakingPortraitMotion()
     speakingPortraitMotion_.active = true;
 }
 
+void DialoguePlayer::beginSpeakingPortraitBounce()
+{
+    speakingPortraitMotion_.cycleElapsedSeconds = 0.0f;
+    speakingPortraitMotion_.liftPixels = randomSpeakingPortraitLiftPixels();
+    speakingPortraitMotion_.phase = SpeakingPortraitMotion::Phase::Bouncing;
+}
+
 void DialoguePlayer::finishSpeakingPortraitMotion()
 {
     const bool advanceAfterMotion = advanceAfterSpeakingPortraitMotion_;
@@ -1525,7 +1540,11 @@ void DialoguePlayer::updateSpeakingPortraitMotion(float dt)
         if (complete && !speakingPortraitMotion_.completedCycle) {
             speakingPortraitMotion_.nextCueIndex = speakingPortraitMotion_.cues.size();
             speakingPortraitMotion_.pauseRemainingSeconds = 0.0f;
-            speakingPortraitMotion_.phase = SpeakingPortraitMotion::Phase::Bouncing;
+            if (speakingPortraitMotion_.phase != SpeakingPortraitMotion::Phase::Bouncing &&
+                speakingPortraitMotion_.phase !=
+                    SpeakingPortraitMotion::Phase::FinishingBounceForPause) {
+                beginSpeakingPortraitBounce();
+            }
         } else if (complete &&
             speakingPortraitMotion_.phase != SpeakingPortraitMotion::Phase::Bouncing &&
             speakingPortraitMotion_.phase != SpeakingPortraitMotion::Phase::FinishingBounceForPause) {
@@ -1541,7 +1560,7 @@ void DialoguePlayer::updateSpeakingPortraitMotion(float dt)
                     speakingPortraitMotion_.cues[speakingPortraitMotion_.nextCueIndex++];
                 if (cue == SpeakingPortraitMotion::Cue::Speech) {
                     if (speakingPortraitMotion_.phase == SpeakingPortraitMotion::Phase::WaitingForCue) {
-                        speakingPortraitMotion_.phase = SpeakingPortraitMotion::Phase::Bouncing;
+                        beginSpeakingPortraitBounce();
                     }
                     continue;
                 }
@@ -1602,6 +1621,8 @@ void DialoguePlayer::updateSpeakingPortraitMotion(float dt)
             speakingPortraitMotion_.pauseRemainingSeconds =
                 DialogueSpeakingPortraitPauseSeconds;
             speakingPortraitMotion_.phase = SpeakingPortraitMotion::Phase::Pausing;
+        } else {
+            speakingPortraitMotion_.liftPixels = randomSpeakingPortraitLiftPixels();
         }
         if (remainingSeconds <= 0.0f) {
             return;
@@ -1673,7 +1694,7 @@ float DialoguePlayer::speakingPortraitOffsetY(std::string_view speakerId) const
         0.0f,
         1.0f);
     const float lift = 0.5f - 0.5f * std::cos(Pi * 2.0f * phase);
-    return -DialogueSpeakingPortraitLiftPixels * lift;
+    return -speakingPortraitMotion_.liftPixels * lift;
 }
 
 }

@@ -429,13 +429,13 @@ bool InventorySystem::sortByCatalogOrder(const ObjectCatalog& catalog)
     slotCommandMenuIndex_ = -1;
     closeRingTargetCommandMenu();
     resetSlotPointerPress();
-    if (grabbedSlotActive_) {
+    if (itemInteraction_.grabActive()) {
         cancelGrab();
     }
 
     const int totalCount = static_cast<int>(objectStacks_.size() + objectInstances_.size());
     if (totalCount <= 0) {
-        packedItemSlots_.clear();
+        packedItemLayout_.clear();
         selected_ = 0;
         shortcutRow_ = 0;
         selectedShortcutColumn_ = 0;
@@ -482,11 +482,7 @@ bool InventorySystem::sortByCatalogOrder(const ObjectCatalog& catalog)
         return a < b;
     });
 
-    packedItemSlots_.assign(static_cast<std::size_t>(totalCount), -1);
-    for (int slot = 0; slot < static_cast<int>(packedIndices.size()); ++slot) {
-        const int packedIndex = packedIndices[static_cast<std::size_t>(slot)];
-        packedItemSlots_[static_cast<std::size_t>(packedIndex)] = slot < ShortcutSlotCount ? slot : slot % ShortcutSlotCount;
-    }
+    packedItemLayout_.assignSequential(packedIndices, ShortcutSlotCount);
 
     selectShortcutIndex(0);
     status_ = "並び替えました";
@@ -584,6 +580,8 @@ bool InventorySystem::setObjectItemCount(const ObjectCatalog& catalog, std::stri
         }
     }
 
+    syncPackedItemSlots();
+    packedItemLayout_.insertEntry(static_cast<int>(objectStacks_.size()));
     objectStacks_.push_back(InventoryObjectStack{resolvedItem, count});
     return true;
 }
@@ -1306,6 +1304,8 @@ bool InventorySystem::addObjectItem(const ObjectCatalog& catalog, std::string_vi
         return false;
     }
 
+    syncPackedItemSlots();
+    packedItemLayout_.insertEntry(static_cast<int>(objectStacks_.size()));
     objectStacks_.push_back(InventoryObjectStack{*item, 1});
     status_ = "Picked up: " + item->name;
     setInventoryAddResult(outResult, InventoryAddKind::Stack, item->id);
@@ -1354,6 +1354,8 @@ bool InventorySystem::addRuntimeObjectItem(const ItemData& item, InventoryAddRes
         return false;
     }
 
+    syncPackedItemSlots();
+    packedItemLayout_.insertEntry(static_cast<int>(objectStacks_.size()));
     objectStacks_.push_back(InventoryObjectStack{item, 1});
     status_ = "Picked up: " + item.name;
     setInventoryAddResult(outResult, InventoryAddKind::Stack, item.id);
@@ -1400,50 +1402,13 @@ void InventorySystem::selectShortcutIndex(int index)
 void InventorySystem::syncPackedItemSlots() const
 {
     const int totalCount = static_cast<int>(objectStacks_.size() + objectInstances_.size());
-    if (totalCount <= 0) {
-        packedItemSlots_.clear();
-        return;
-    }
-
-    std::vector<int> nextSlots(static_cast<std::size_t>(totalCount), -1);
-    std::array<bool, ShortcutSlotCount> used{};
-    const int copyCount = std::min(totalCount, static_cast<int>(packedItemSlots_.size()));
-    for (int i = 0; i < copyCount; ++i) {
-        const int slot = packedItemSlots_[static_cast<std::size_t>(i)];
-        if (slot >= 0 && slot < ShortcutSlotCount && !used[static_cast<std::size_t>(slot)]) {
-            nextSlots[static_cast<std::size_t>(i)] = slot;
-            used[static_cast<std::size_t>(slot)] = true;
-        }
-    }
-
-    int cursor = 0;
-    for (int i = 0; i < totalCount; ++i) {
-        if (nextSlots[static_cast<std::size_t>(i)] >= 0) {
-            continue;
-        }
-        while (cursor < ShortcutSlotCount && used[static_cast<std::size_t>(cursor)]) {
-            ++cursor;
-        }
-        if (cursor >= ShortcutSlotCount) {
-            nextSlots[static_cast<std::size_t>(i)] = i % ShortcutSlotCount;
-        } else {
-            nextSlots[static_cast<std::size_t>(i)] = cursor;
-            used[static_cast<std::size_t>(cursor)] = true;
-            ++cursor;
-        }
-    }
-    packedItemSlots_ = std::move(nextSlots);
+    packedItemLayout_.sync(totalCount, ShortcutSlotCount);
 }
 
 int InventorySystem::packedItemIndexAtScreenIndex(int index) const
 {
     syncPackedItemSlots();
-    for (int i = 0; i < static_cast<int>(packedItemSlots_.size()); ++i) {
-        if (packedItemSlots_[static_cast<std::size_t>(i)] == index) {
-            return i;
-        }
-    }
-    return -1;
+    return packedItemLayout_.entryAtSlot(index);
 }
 
 int InventorySystem::stackIndexAtScreenIndex(int index) const
@@ -1470,10 +1435,7 @@ int InventorySystem::instanceIndexAtScreenIndex(int index) const
 void InventorySystem::removePackedSlotAtPackedIndex(int packedIndex) const
 {
     syncPackedItemSlots();
-    if (packedIndex < 0 || packedIndex >= static_cast<int>(packedItemSlots_.size())) {
-        return;
-    }
-    packedItemSlots_.erase(packedItemSlots_.begin() + packedIndex);
+    packedItemLayout_.eraseEntry(packedIndex);
 }
 
 bool InventorySystem::hasScreenItem(int index) const
@@ -1862,16 +1824,8 @@ bool InventorySystem::moveScreenItem(int fromIndex, int toIndex)
     if (fromPacked < 0) {
         return false;
     }
-    const int toPacked = packedItemIndexAtScreenIndex(toIndex);
     syncPackedItemSlots();
-    if (toPacked < 0) {
-        packedItemSlots_[static_cast<std::size_t>(fromPacked)] = toIndex;
-        return true;
-    }
-    std::swap(
-        packedItemSlots_[static_cast<std::size_t>(fromPacked)],
-        packedItemSlots_[static_cast<std::size_t>(toPacked)]);
-    return true;
+    return packedItemLayout_.moveEntryToSlot(fromPacked, toIndex, ShortcutSlotCount);
 }
 
 bool InventorySystem::moveObjectStackToScreenSlot(std::string_view objectId, int slotIndex)
@@ -1882,7 +1836,7 @@ bool InventorySystem::moveObjectStackToScreenSlot(std::string_view objectId, int
     syncPackedItemSlots();
     for (int i = 0; i < static_cast<int>(objectStacks_.size()); ++i) {
         if (objectStacks_[static_cast<std::size_t>(i)].objectId == objectId) {
-            return moveScreenItem(packedItemSlots_[static_cast<std::size_t>(i)], slotIndex);
+            return moveScreenItem(packedItemLayout_.slotForEntry(i), slotIndex);
         }
     }
     return false;
@@ -1898,7 +1852,7 @@ bool InventorySystem::moveObjectInstanceToScreenSlot(std::string_view instanceId
     for (int i = 0; i < static_cast<int>(objectInstances_.size()); ++i) {
         if (objectInstances_[static_cast<std::size_t>(i)].instance.instanceId == instanceId) {
             const int packedIndex = stackCount + i;
-            return moveScreenItem(packedItemSlots_[static_cast<std::size_t>(packedIndex)], slotIndex);
+            return moveScreenItem(packedItemLayout_.slotForEntry(packedIndex), slotIndex);
         }
     }
     return false;
@@ -1915,43 +1869,34 @@ void InventorySystem::moveShortcutRow(int delta)
     }
 }
 
-void InventorySystem::grabOrPlaceSelected()
+ItemKey InventorySystem::itemKeyAtScreenIndex(int index) const
 {
-    if (grabbedSlotActive_) {
-        placeGrabbedAtSelected();
-        return;
+    ItemKey key{};
+    key.container = {ItemContainerKind::Backpack, -1};
+    if (const InventoryObjectStack* stack = objectStackAtScreenIndex(index)) {
+        key.stack = true;
+        key.stableId = stack->objectId;
+    } else if (const InventoryObjectInstance* instance = objectInstanceAtScreenIndex(index)) {
+        key.stableId = instance->instance.instanceId;
     }
-    const int index = selectedShortcutIndex();
-    if (!hasScreenItem(index)) {
-        status_ = "アイテム未選択";
-        return;
-    }
-    grabbedSlotOrigin_ = index;
-    grabbedSlotActive_ = true;
-    status_ = "つかみ中";
+    return key;
 }
 
-void InventorySystem::placeGrabbedAtSelected()
+bool InventorySystem::moveItemKeyToScreenSlot(const ItemKey& key, int slotIndex)
 {
-    if (!grabbedSlotActive_) {
-        return;
+    if (key.container.kind != ItemContainerKind::Backpack) {
+        return false;
     }
-    const int targetIndex = selectedShortcutIndex();
-    if (moveScreenItem(grabbedSlotOrigin_, targetIndex)) {
-        status_ = grabbedSlotOrigin_ == targetIndex ? "配置" : "入れ替え";
-    }
-    grabbedSlotActive_ = false;
-    grabbedSlotOrigin_ = -1;
+    return key.stack
+        ? moveObjectStackToScreenSlot(key.stableId, slotIndex)
+        : moveObjectInstanceToScreenSlot(key.stableId, slotIndex);
 }
 
 void InventorySystem::cancelGrab()
 {
-    if (!grabbedSlotActive_) {
-        return;
+    if (itemInteraction_.cancelGrab()) {
+        status_ = "キャンセル";
     }
-    grabbedSlotActive_ = false;
-    grabbedSlotOrigin_ = -1;
-    status_ = "キャンセル";
 }
 
 void InventorySystem::openSlotCommandMenu(int slotIndex, bool itemUseEnabled, bool itemDiscardEnabled)
@@ -2009,10 +1954,7 @@ void InventorySystem::openRingTargetCommandMenu(
 
 void InventorySystem::resetSlotPointerPress()
 {
-    slotPointerPressIndex_ = -1;
-    slotPointerPressMouse_ = {};
-    slotPointerPressCanOpenMenu_ = false;
-    slotPointerDragTriggered_ = false;
+    itemInteraction_.cancelPointer();
 }
 
 bool InventorySystem::screenItemCanAddToRing(
@@ -2743,13 +2685,13 @@ void InventorySystem::updateScreen(
         selectShortcutIndex(slotCommandMenuIndex_);
         const SlotCommandAction action = commandItems.actions[static_cast<std::size_t>(commandSelection)];
         if (action == SlotCommandAction::Use) {
-            if (grabbedSlotActive_) {
+            if (itemInteraction_.grabActive()) {
                 status_ = "つかみ中は使用できません";
             } else {
                 useShortcutSelection(player, spellRing, effectDispatcher, magic, discoveryEvents, encyclopedia);
             }
         } else if (action == SlotCommandAction::AddToRing) {
-            if (grabbedSlotActive_) {
+            if (itemInteraction_.grabActive()) {
                 status_ = "つかみ中はリング移動できません";
             } else if (ringTargetCount > 1) {
                 const Vec2 submenuAnchor{
@@ -2763,7 +2705,7 @@ void InventorySystem::updateScreen(
                     : UiSoundEvent::Cancel);
             }
         } else if (action == SlotCommandAction::ToggleStaffEquipment) {
-            if (grabbedSlotActive_) {
+            if (itemInteraction_.grabActive()) {
                 status_ = "つかみ中は装備変更できません";
             } else {
                 const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(slotCommandMenuIndex_);
@@ -2772,13 +2714,13 @@ void InventorySystem::updateScreen(
                 ui.emitSound(changed ? (wasEquipped ? UiSoundEvent::Confirm : UiSoundEvent::Equip) : UiSoundEvent::Cancel);
             }
         } else if (action == SlotCommandAction::ToggleProtection) {
-            if (grabbedSlotActive_) {
+            if (itemInteraction_.grabActive()) {
                 status_ = "つかみ中は保護変更できません";
             } else {
                 toggleSelectedProtection();
             }
         } else if (action == SlotCommandAction::Discard) {
-            if (grabbedSlotActive_) {
+            if (itemInteraction_.grabActive()) {
                 status_ = "つかみ中は捨てられません";
             } else if (!itemDiscardEnabled) {
                 openDiscardConfirmDialog(slotCommandMenuIndex_);
@@ -2810,7 +2752,7 @@ void InventorySystem::updateScreen(
             resetSlotPointerPress();
             return;
         }
-        if (grabbedSlotActive_) {
+        if (itemInteraction_.grabActive()) {
             cancelGrab();
         } else {
             closeUiCommandMenu(slotCommandMenu_);
@@ -2856,76 +2798,100 @@ void InventorySystem::updateScreen(
     }
     selectShortcutSlot(input.shortcutSlotPressed());
 
-    int pointerSlotIndex = -1;
+    std::array<ItemGridInteractionSlot, ShortcutSlotCount> interactionSlots{};
     for (int i = 0; i < ShortcutSlotCount; ++i) {
         const UiRect rect = inventorySlotRect(i);
         if (ui.selectionFocused(rect)) {
             selectShortcutIndex(i);
         }
-        if (ui.pointerInside(rect)) {
-            pointerSlotIndex = i;
-        }
+        interactionSlots[static_cast<std::size_t>(i)] = {
+            .rect = rect,
+            .key = itemKeyAtScreenIndex(i),
+            .placement = i,
+        };
     }
     ui.emitCursorMoveIfChanged(previousSelection, selectedShortcutIndex());
 
-    if (input.mouseLeftPressed() && pointerSlotIndex >= 0 && !ui.pointerConsumed()) {
-        slotPointerPressIndex_ = pointerSlotIndex;
-        slotPointerPressMouse_ = input.mouseScreen();
-        slotPointerPressCanOpenMenu_ = hasScreenItem(pointerSlotIndex);
-        slotPointerDragTriggered_ = false;
-        ui.consumePointer();
+    const ItemGridInteractionResult interaction = itemInteraction_.update(
+        ItemGridInteractionInput{
+            .slots = interactionSlots,
+            .selectedSlot = selectedShortcutIndex(),
+            .activatePressed = input.useItemPressed() || input.confirmPressed(),
+            .grabPressed = input.grabOrPlacePressed(),
+            .protectionPressed = input.pressed(InputAction::ToggleProtection),
+            .pointerEnabled = true,
+            .dragStartDistanceSquared = SlotDragStartDistanceSq,
+        },
+        input,
+        ui);
+    if (interaction.slotIndex >= 0) {
+        selectShortcutIndex(interaction.slotIndex);
     }
-
-    if (slotPointerPressIndex_ >= 0 &&
-        input.mouseLeftHeld() &&
-        !slotPointerDragTriggered_ &&
-        !grabbedSlotActive_ &&
-        hasScreenItem(slotPointerPressIndex_) &&
-        lengthSquared(input.mouseScreen() - slotPointerPressMouse_) >= SlotDragStartDistanceSq) {
-        selectShortcutIndex(slotPointerPressIndex_);
-        grabOrPlaceSelected();
-        slotPointerDragTriggered_ = grabbedSlotActive_;
-        if (slotPointerDragTriggered_) {
-            ui.emitSound(UiSoundEvent::ItemMove);
-        }
-        slotPointerPressCanOpenMenu_ = false;
-        closeUiCommandMenu(slotCommandMenu_);
-        slotCommandMenuIndex_ = -1;
-        closeRingTargetCommandMenu();
-    }
-
-    if (slotPointerPressIndex_ >= 0 && input.mouseLeftReleased()) {
-        if (slotPointerDragTriggered_ && grabbedSlotActive_) {
-            if (pointerSlotIndex >= 0) {
-                selectShortcutIndex(pointerSlotIndex);
-            }
-            placeGrabbedAtSelected();
-            ui.emitSound(UiSoundEvent::ItemMove);
-        } else if (slotPointerPressCanOpenMenu_ && pointerSlotIndex == slotPointerPressIndex_) {
-            openSlotCommandMenu(slotPointerPressIndex_, itemUseEnabled, itemDiscardEnabled);
-        }
-        resetSlotPointerPress();
-    }
-
-    if (input.grabOrPlacePressed()) {
-        closeUiCommandMenu(slotCommandMenu_);
-        slotCommandMenuIndex_ = -1;
-        closeRingTargetCommandMenu();
-        ui.emitSound(grabbedSlotActive_ || hasScreenItem(selectedShortcutIndex()) ? UiSoundEvent::ItemMove : UiSoundEvent::Cancel);
-        grabOrPlaceSelected();
-    }
-    if (input.useItemPressed() || input.confirmPressed()) {
-        if (grabbedSlotActive_) {
-            placeGrabbedAtSelected();
-            ui.emitSound(UiSoundEvent::ItemMove);
-        } else if (hasScreenItem(selectedShortcutIndex())) {
-            openSlotCommandMenu(selectedShortcutIndex(), itemUseEnabled, itemDiscardEnabled);
+    switch (interaction.event) {
+    case ItemGridInteractionEvent::None:
+        break;
+    case ItemGridInteractionEvent::Activate:
+        if (interaction.item.valid()) {
+            openSlotCommandMenu(interaction.slotIndex, itemUseEnabled, itemDiscardEnabled);
         } else {
             ui.emitSound(UiSoundEvent::Cancel);
         }
+        break;
+    case ItemGridInteractionEvent::GrabStarted:
+        closeUiCommandMenu(slotCommandMenu_);
+        slotCommandMenuIndex_ = -1;
+        closeRingTargetCommandMenu();
+        status_ = "つかみ中";
+        ui.emitSound(UiSoundEvent::ItemMove);
+        break;
+    case ItemGridInteractionEvent::MoveRequested:
+    {
+        const bool destinationOccupied =
+            interaction.slotIndex >= 0 &&
+            interaction.slotIndex < static_cast<int>(interactionSlots.size()) &&
+            interactionSlots[static_cast<std::size_t>(interaction.slotIndex)].occupied();
+        const bool moved = moveItemKeyToScreenSlot(interaction.item, interaction.placement);
+        if (moved) {
+            status_ = destinationOccupied && interaction.originPlacement != interaction.placement
+                ? "入れ替え"
+                : "配置";
+            ui.emitSound(UiSoundEvent::ItemMove);
+        } else {
+            ui.emitSound(UiSoundEvent::Cancel);
+            status_ = "配置できません";
+        }
+        break;
     }
+    case ItemGridInteractionEvent::ProtectionRequested:
+        if (!interaction.item.valid() || interaction.item.stack) {
+            status_ = "個体アイテムのみ保護できます";
+            ui.emitSound(UiSoundEvent::Cancel);
+        } else {
+            const bool protectedNow =
+                objectInstanceProtectionEnabled(interaction.item.stableId).value_or(false);
+            ui.emitSound(setObjectInstanceProtection(
+                interaction.item.stableId,
+                !protectedNow)
+                    ? UiSoundEvent::Confirm
+                    : UiSoundEvent::Cancel);
+        }
+        break;
+    case ItemGridInteractionEvent::ProtectionBlocked:
+        status_ = "つかみ中は保護変更できません";
+        ui.emitSound(UiSoundEvent::Cancel);
+        break;
+    case ItemGridInteractionEvent::GrabCancelled:
+        status_ = "アイテム未選択";
+        ui.emitSound(UiSoundEvent::Cancel);
+        break;
+    }
+    if (interaction.consumed) {
+        ui.block(inventoryScreenRect());
+        return;
+    }
+
     if (input.addRingPressed()) {
-        if (grabbedSlotActive_) {
+        if (itemInteraction_.grabActive()) {
             ui.emitSound(UiSoundEvent::Cancel);
             status_ = "つかみ中は配置してください";
         } else if (ringTargetCount > 1 && hasScreenItem(selectedShortcutIndex())) {
@@ -2941,16 +2907,6 @@ void InventorySystem::updateScreen(
             ui.emitSound(addScreenItemToRingForRing(selectedShortcutIndex(), spellRing, 0) ? UiSoundEvent::Equip : UiSoundEvent::Cancel);
         }
     }
-    if (input.pressed(InputAction::ToggleProtection)) {
-        if (grabbedSlotActive_) {
-            ui.emitSound(UiSoundEvent::Cancel);
-            status_ = "つかみ中は保護変更できません";
-        } else {
-            ui.emitSound(selectedObjectInstance() != nullptr ? UiSoundEvent::Confirm : UiSoundEvent::Cancel);
-            toggleSelectedProtection();
-        }
-    }
-
     ui.block(inventoryScreenRect());
 }
 
@@ -2973,7 +2929,7 @@ void InventorySystem::update(
             slotCommandMenuIndex_ = -1;
             closeRingTargetCommandMenu();
             resetSlotPointerPress();
-            if (grabbedSlotActive_) {
+            if (itemInteraction_.grabActive()) {
                 cancelGrab();
             }
         }
@@ -3045,14 +3001,16 @@ void InventorySystem::render(
     for (int i = 0; i < ShortcutSlotCount; ++i) {
         const UiRect rect = inventorySlotRect(i);
         InventoryUiSlotStyle style{i == selectedShortcutIndex(), false, screenLayout.itemImageMaxSize};
-        if (grabbedSlotActive_ && i == grabbedSlotOrigin_) {
-            style.contentAlpha = GrabbedSlotContentAlpha;
-        }
+        style.contentAlpha = itemGridInteractionContentAlpha(
+            itemInteraction_,
+            itemKeyAtScreenIndex(i),
+            GrabbedSlotContentAlpha);
         drawInventoryUiSlot(renderer, rect, entryViewForSlot(i), style);
     }
 
-    if (grabbedSlotActive_ && grabbedSlotOrigin_ >= 0 && grabbedSlotOrigin_ < ShortcutSlotCount) {
-        const InventoryUiEntryView grabbedEntry = entryViewForSlot(grabbedSlotOrigin_);
+    const int grabbedOrigin = itemInteraction_.grabbedOriginPlacement();
+    if (itemInteraction_.grabActive() && grabbedOrigin >= 0 && grabbedOrigin < ShortcutSlotCount) {
+        const InventoryUiEntryView grabbedEntry = entryViewForSlot(grabbedOrigin);
         if (grabbedEntry.item != nullptr) {
             const UiRect targetRect = inventorySlotRect(selectedShortcutIndex());
             const float bob = std::sin(animationSeconds * GrabbedFloatingIconBobSpeed) * GrabbedFloatingIconBobAmplitude;

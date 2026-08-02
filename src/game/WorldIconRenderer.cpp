@@ -2,6 +2,7 @@
 
 #include <array>
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <string>
 
@@ -13,6 +14,7 @@ constexpr std::string_view WorldIconPrefix = "img_";
 constexpr std::string_view WorldIconExtension = ".png";
 constexpr int MoneyMediumThreshold = 50;
 constexpr int MoneyLargeThreshold = 150;
+constexpr std::array<int, 6> QuadIndices{{0, 1, 2, 0, 2, 3}};
 
 constexpr std::array<WorldIconDefinition, 40> WorldIconDefinitions{{
     {WorldIconId::MoneySmall, "money_small", "お金 小額", 1},
@@ -153,6 +155,133 @@ bool cachedWorldIconImage(
     outSourceSize = cache.sourceSizes[filterIndex];
     return outHandle.valid();
 }
+
+WorldIconDrawOptions effectiveWorldIconDrawOptions(
+    const WorldIconDefinition& definition,
+    const WorldIconDrawOptions& options)
+{
+    WorldIconDrawOptions scaledOptions = options;
+    if (!scaledOptions.applyScaleOverride ||
+        gWorldIconScaleOverrides == nullptr ||
+        gWorldIconScaleOverrides->empty() ||
+        definition.key.empty()) {
+        return scaledOptions;
+    }
+
+    const auto it = gWorldIconScaleOverrides->find(std::string(definition.key));
+    if (it != gWorldIconScaleOverrides->end()) {
+        scaledOptions.scaleMultiplier *= it->second;
+    }
+    return scaledOptions;
+}
+
+bool resolveWorldIconImage(
+    Renderer& renderer,
+    WorldIconId iconId,
+    const WorldIconDefinition& definition,
+    TextureFilter filter,
+    ImageHandle& outHandle,
+    Vec2& outSourceSize)
+{
+    const std::size_t index = static_cast<std::size_t>(iconId);
+    if (index < worldIconPaths().size() &&
+        &WorldIconDefinitions[index] == &definition &&
+        cachedWorldIconImage(renderer, index, filter, outHandle, outSourceSize)) {
+        return true;
+    }
+
+    const std::string path = makeWorldIconPathFromNumber(definition.imageNumber);
+    outHandle = renderer.acquireImage(path, filter);
+    return outHandle.valid() &&
+        renderer.getImageSize(outHandle, outSourceSize) &&
+        outSourceSize.x > 0.0f &&
+        outSourceSize.y > 0.0f;
+}
+
+Vec2 rotated(Vec2 value, float radians)
+{
+    const float cosine = std::cos(radians);
+    const float sine = std::sin(radians);
+    return {
+        value.x * cosine - value.y * sine,
+        value.x * sine + value.y * cosine,
+    };
+}
+
+std::array<ImageTriangleVertex, 4> projectedIconQuad(
+    Vec2 center,
+    Vec2 drawSize,
+    float faceRatio,
+    float imageRotationDegrees,
+    float depthAxisDegrees,
+    bool flipX,
+    bool flipY)
+{
+    const float axisRadians = depthAxisDegrees * Pi / 180.0f;
+    const Vec2 depthAxis = fromAngle(axisRadians);
+    const Vec2 tangentAxis{depthAxis.y, -depthAxis.x};
+    const float basisRotationDegrees = depthAxisDegrees - 90.0f;
+    const float relativeRotationRadians =
+        (imageRotationDegrees - basisRotationDegrees) * Pi / 180.0f;
+    const Vec2 halfSize = drawSize * 0.5f;
+    const std::array<Vec2, 4> localCorners{{
+        {-halfSize.x, -halfSize.y},
+        {halfSize.x, -halfSize.y},
+        {halfSize.x, halfSize.y},
+        {-halfSize.x, halfSize.y},
+    }};
+    std::array<Vec2, 4> textureCoordinates{{
+        {0.0f, 0.0f},
+        {1.0f, 0.0f},
+        {1.0f, 1.0f},
+        {0.0f, 1.0f},
+    }};
+    if (flipX) {
+        for (Vec2& coordinate : textureCoordinates) {
+            coordinate.x = 1.0f - coordinate.x;
+        }
+    }
+    if (flipY) {
+        for (Vec2& coordinate : textureCoordinates) {
+            coordinate.y = 1.0f - coordinate.y;
+        }
+    }
+
+    std::array<ImageTriangleVertex, 4> vertices{};
+    for (std::size_t i = 0; i < vertices.size(); ++i) {
+        const Vec2 local = rotated(localCorners[i], relativeRotationRadians);
+        vertices[i] = {
+            .position = center +
+                tangentAxis * local.x +
+                depthAxis * (local.y * faceRatio),
+            .texCoord = textureCoordinates[i],
+        };
+    }
+    return vertices;
+}
+
+std::array<Vec2, 4> extrusionBridgeQuad(
+    Vec2 center,
+    Vec2 depthAxis,
+    float halfDepth,
+    float halfLength)
+{
+    const Vec2 tangentAxis{depthAxis.y, -depthAxis.x};
+    return {{
+        center - depthAxis * halfDepth - tangentAxis * halfLength,
+        center + depthAxis * halfDepth - tangentAxis * halfLength,
+        center + depthAxis * halfDepth + tangentAxis * halfLength,
+        center - depthAxis * halfDepth + tangentAxis * halfLength,
+    }};
+}
+
+Color withMultipliedAlpha(Color color, unsigned char alpha)
+{
+    color.a = static_cast<unsigned char>(
+        (static_cast<unsigned int>(color.a) * static_cast<unsigned int>(alpha) + 127U) /
+        255U);
+    return color;
+}
 }
 
 void setWorldIconScaleOverrides(const std::unordered_map<std::string, float>* scaleByIconKey)
@@ -262,35 +391,167 @@ bool drawWorldIcon(
         return false;
     }
 
-    WorldIconDrawOptions scaledOptions = options;
-    if (scaledOptions.applyScaleOverride &&
-        gWorldIconScaleOverrides != nullptr &&
-        !gWorldIconScaleOverrides->empty() &&
-        !definition->key.empty()) {
-        const auto it = gWorldIconScaleOverrides->find(std::string(definition->key));
-        if (it != gWorldIconScaleOverrides->end()) {
-            scaledOptions.scaleMultiplier *= it->second;
-        }
-    }
-
-    std::string fallbackPath;
-    std::string_view path;
-    const std::size_t index = static_cast<std::size_t>(iconId);
-    if (index < worldIconPaths().size() && &WorldIconDefinitions[index] == definition) {
-        path = worldIconPaths()[index];
-    } else {
-        fallbackPath = worldIconPathFromNumber(definition->imageNumber);
-        path = fallbackPath;
-    }
-
+    const WorldIconDrawOptions scaledOptions =
+        effectiveWorldIconDrawOptions(*definition, options);
     ImageHandle handle{};
     Vec2 sourceSize{};
-    if (index < worldIconPaths().size() &&
-        &WorldIconDefinitions[index] == definition &&
-        cachedWorldIconImage(renderer, index, scaledOptions.filter, handle, sourceSize)) {
-        return drawScaledImage(renderer, handle, sourceSize, center, maxSize, scaledOptions);
+    if (!resolveWorldIconImage(
+            renderer,
+            iconId,
+            *definition,
+            scaledOptions.filter,
+            handle,
+            sourceSize)) {
+        return false;
     }
-    return drawScaledImage(renderer, path, center, maxSize, scaledOptions);
+    return drawScaledImage(renderer, handle, sourceSize, center, maxSize, scaledOptions);
+}
+
+bool drawExtrudedWorldIcon(
+    Renderer& renderer,
+    WorldIconId iconId,
+    Vec2 center,
+    Vec2 maxSize,
+    const WorldIconDrawOptions& options,
+    const ExtrudedWorldIconDrawOptions& extrusion)
+{
+    const WorldIconDefinition* definition = worldIconDefinition(iconId);
+    if (definition == nullptr) {
+        return false;
+    }
+
+    const WorldIconDrawOptions scaledOptions =
+        effectiveWorldIconDrawOptions(*definition, options);
+    ImageHandle handle{};
+    Vec2 sourceSize{};
+    if (!resolveWorldIconImage(
+            renderer,
+            iconId,
+            *definition,
+            scaledOptions.filter,
+            handle,
+            sourceSize)) {
+        return false;
+    }
+
+    Vec2 drawSize{};
+    if (!calculateScaledImageDrawSize(sourceSize, maxSize, scaledOptions, drawSize)) {
+        return false;
+    }
+
+    const float depthRotationDegrees = std::isfinite(extrusion.depthRotationDegrees)
+        ? extrusion.depthRotationDegrees
+        : 0.0f;
+    const float depthAxisDegrees = std::isfinite(extrusion.depthAxisDegrees)
+        ? extrusion.depthAxisDegrees
+        : 90.0f;
+    const float thicknessPx = std::max(
+        0.0f,
+        std::isfinite(extrusion.thicknessPx) ? extrusion.thicknessPx : 0.0f);
+    const float depthRotationRadians = depthRotationDegrees * Pi / 180.0f;
+    const float faceCosine = std::cos(depthRotationRadians);
+    const float faceRatio = std::abs(faceCosine);
+    const float signedDepth = thicknessPx * std::sin(depthRotationRadians);
+    const float visibleDepth = std::abs(signedDepth);
+    const Vec2 depthAxis = fromAngle(depthAxisDegrees * Pi / 180.0f);
+    const Vec2 frontCenter = center - depthAxis * (signedDepth * 0.5f);
+    const Vec2 rearCenter = center + depthAxis * (signedDepth * 0.5f);
+    const auto frontVertices = projectedIconQuad(
+        frontCenter,
+        drawSize,
+        faceRatio,
+        scaledOptions.rotationDegrees,
+        depthAxisDegrees,
+        scaledOptions.flipX,
+        scaledOptions.flipY);
+    const auto rearVertices = projectedIconQuad(
+        rearCenter,
+        drawSize,
+        faceRatio,
+        scaledOptions.rotationDegrees,
+        depthAxisDegrees,
+        scaledOptions.flipX,
+        scaledOptions.flipY);
+    const bool capVisible =
+        faceRatio * std::min(drawSize.x, drawSize.y) >= 0.05f;
+    RectF opaqueBounds{0.0f, 0.0f, sourceSize.x, sourceSize.y};
+    renderer.getImageOpaqueBounds(handle, opaqueBounds);
+    const Vec2 opaqueDrawSize{
+        drawSize.x * opaqueBounds.w / sourceSize.x,
+        drawSize.y * opaqueBounds.h / sourceSize.y,
+    };
+    const float bridgeHalfLength =
+        std::min(opaqueDrawSize.x, opaqueDrawSize.y) * 0.5f;
+    const Color sideColor = withMultipliedAlpha(
+        extrusion.sideColor,
+        scaledOptions.tint.a);
+
+    bool ok = true;
+    bool rendered = false;
+    const auto drawCap = [&](const auto& vertices, const ImageTriangleDrawOptions& drawOptions) {
+        if (!capVisible) {
+            return;
+        }
+        ok = renderer.drawImageTriangleList(
+                 handle,
+                 vertices.data(),
+                 vertices.size(),
+                 QuadIndices.data(),
+                 QuadIndices.size(),
+                 drawOptions) &&
+            ok;
+        rendered = true;
+    };
+    const auto drawBridge = [&](float outlinePx, Color color) {
+        if (visibleDepth <= 0.001f || color.a == 0) {
+            return;
+        }
+        const auto vertices = extrusionBridgeQuad(
+            center,
+            depthAxis,
+            visibleDepth * 0.5f + outlinePx,
+            bridgeHalfLength + outlinePx);
+        renderer.fillPolygon(vertices.data(), vertices.size(), color);
+        rendered = true;
+    };
+    const auto drawOutlineLayer = [&](bool enabled, Color color, int outlinePx) {
+        if (!enabled || color.a == 0 || outlinePx <= 0) {
+            return;
+        }
+
+        ImageTriangleDrawOptions outlineOptions;
+        outlineOptions.tint.a = 0;
+        outlineOptions.outlineEnabled = true;
+        outlineOptions.outlineColor = color;
+        outlineOptions.outlinePx = outlinePx;
+        drawCap(frontVertices, outlineOptions);
+        drawCap(rearVertices, outlineOptions);
+        drawBridge(static_cast<float>(outlinePx), color);
+    };
+
+    drawOutlineLayer(
+        scaledOptions.selectedOutlineEnabled,
+        scaledOptions.selectedOutlineColor,
+        scaledOptions.selectedOutlinePx);
+    drawOutlineLayer(
+        scaledOptions.outlineEnabled,
+        scaledOptions.outlineColor,
+        scaledOptions.outlinePx);
+
+    ImageTriangleDrawOptions imageFillOptions;
+    imageFillOptions.tint = scaledOptions.tint;
+    imageFillOptions.maskOverlayColor = scaledOptions.maskOverlayColor;
+    ImageTriangleDrawOptions farCapFillOptions;
+    farCapFillOptions.tint.a = 0;
+    farCapFillOptions.maskOverlayColor = sideColor;
+
+    const bool frontIsNear = faceCosine >= 0.0f;
+    const auto& nearVertices = frontIsNear ? frontVertices : rearVertices;
+    const auto& farVertices = frontIsNear ? rearVertices : frontVertices;
+    drawCap(farVertices, farCapFillOptions);
+    drawBridge(0.0f, sideColor);
+    drawCap(nearVertices, imageFillOptions);
+    return rendered && ok;
 }
 
 }

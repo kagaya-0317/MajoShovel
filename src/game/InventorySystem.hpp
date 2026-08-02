@@ -6,6 +6,8 @@
 #include "data/ObjectCatalog.hpp"
 #include "game/EntityStatusVisuals.hpp"
 #include "game/ItemModel.hpp"
+#include "game/ItemGridInteraction.hpp"
+#include "game/ItemSlotLayout.hpp"
 #include "game/SpellRingSystem.hpp"
 #include "game/Player.hpp"
 #include "game/TileMap.hpp"
@@ -268,8 +270,8 @@ private:
     void selectShortcutSlot(int slot);
     void selectShortcutIndex(int index);
     void moveShortcutRow(int delta);
-    void grabOrPlaceSelected();
-    void placeGrabbedAtSelected();
+    ItemKey itemKeyAtScreenIndex(int index) const;
+    bool moveItemKeyToScreenSlot(const ItemKey& key, int slotIndex);
     bool addObjectSelectionToRing(SpellRingSystem& spellRing, SpellRingAddResult* outResult = nullptr);
     bool addObjectInstanceSelectionToRing(SpellRingSystem& spellRing, SpellRingAddResult* outResult = nullptr);
     bool useObjectStackAtIndex(
@@ -355,20 +357,14 @@ private:
     int selected_ = 0;
     int shortcutRow_ = 0;
     int selectedShortcutColumn_ = 0;
-    bool grabbedSlotActive_ = false;
-    ShortcutSlot grabbedSlot_{};
-    int grabbedSlotOrigin_ = -1;
+    ItemGridInteractionController itemInteraction_;
     UiCommandMenuState slotCommandMenu_{};
     int slotCommandMenuIndex_ = -1;
     UiCommandMenuState ringTargetCommandMenu_{};
     int ringTargetCommandSlotIndex_ = -1;
     UiConfirmDialogState discardConfirm_{};
     int discardConfirmSlotIndex_ = -1;
-    int slotPointerPressIndex_ = -1;
-    Vec2 slotPointerPressMouse_{};
-    bool slotPointerPressCanOpenMenu_ = false;
-    bool slotPointerDragTriggered_ = false;
-    mutable std::vector<int> packedItemSlots_;
+    mutable ItemSlotLayout packedItemLayout_;
     std::vector<RingEquipFxRequest> ringEquipFxRequests_;
     mutable UiCancelControlState cancelState_{};
     bool open_ = false;

@@ -51,7 +51,13 @@ private:
         float curveSideOffset = 0.0f;
         float curveLift = 24.0f;
         float initialRotationDegrees = 0.0f;
-        float angularVelocityDegrees = 0.0f;
+        float airborneRotationDegrees = 0.0f;
+        float absorbRotationDegrees = 0.0f;
+        float initialDepthRotationDegrees = 0.0f;
+        float airborneDepthRotationDegrees = 0.0f;
+        float initialDepthAxisDegrees = 90.0f;
+        float absorbDepthRotationDegrees = 0.0f;
+        float absorbDepthAxisDegrees = 90.0f;
         int displayAmount = 0;
         int sequenceIndex = 0;
         int sequenceCount = 1;

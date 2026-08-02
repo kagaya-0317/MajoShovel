@@ -18,9 +18,13 @@ constexpr std::size_t MaxActiveCoins = 96;
 constexpr int MaxCoinsPerGrant = 20;
 constexpr float Pi = 3.14159265358979323846f;
 constexpr float MoneyCoinShadowSize = 20.0f;
+constexpr float MoneyCoinThicknessPx = 3.0f;
+constexpr float MoneyCoinLandingDepthRotationDegrees = -20.0f;
+constexpr float MoneyCoinLandingDepthAxisDegrees = 90.0f;
 constexpr float ArrivalPulseDurationSeconds = 0.24f;
 constexpr float HudPulseDurationSeconds = 0.22f;
 constexpr Vec2 MoneyCoinTargetOffset{0.0f, -16.0f};
+constexpr Color MoneyCoinSideColor{137, 25, 0, 255};
 
 float smooth01(float value)
 {
@@ -59,6 +63,27 @@ float randomRange(std::mt19937& rng, float minValue, float maxValue)
     return std::uniform_real_distribution<float>(minValue, maxValue)(rng);
 }
 
+float positiveDegrees(float degrees)
+{
+    degrees = std::fmod(degrees, 360.0f);
+    return degrees < 0.0f ? degrees + 360.0f : degrees;
+}
+
+float directedRotationToTarget(
+    float startDegrees,
+    float targetDegrees,
+    bool positiveDirection,
+    float minimumMagnitudeDegrees)
+{
+    float delta = positiveDirection
+        ? positiveDegrees(targetDegrees - startDegrees)
+        : -positiveDegrees(startDegrees - targetDegrees);
+    if (std::abs(delta) < minimumMagnitudeDegrees) {
+        delta += positiveDirection ? 360.0f : -360.0f;
+    }
+    return delta;
+}
+
 float arcHeight(float progress, float height)
 {
     return std::sin(clamp(progress, 0.0f, 1.0f) * Pi) * height;
@@ -89,6 +114,56 @@ Color withScaledAlpha(Color color, float alphaScale)
     return color;
 }
 
+struct CoinVisualPose {
+    float rotationDegrees = 0.0f;
+    float depthRotationDegrees = 0.0f;
+    float depthAxisDegrees = MoneyCoinLandingDepthAxisDegrees;
+};
+
+template <typename CoinType>
+CoinVisualPose coinVisualPose(
+    const CoinType& coin,
+    float activeSeconds,
+    float flightProgress)
+{
+    const float airborneDuration =
+        coin.jumpDurationSeconds + coin.bounceDurationSeconds;
+    if (activeSeconds < airborneDuration) {
+        const float progress = clamp(
+            activeSeconds / std::max(0.05f, airborneDuration),
+            0.0f,
+            1.0f);
+        return {
+            .rotationDegrees =
+                coin.initialRotationDegrees +
+                coin.airborneRotationDegrees * progress,
+            .depthRotationDegrees =
+                coin.initialDepthRotationDegrees +
+                coin.airborneDepthRotationDegrees * progress,
+            .depthAxisDegrees = lerp(
+                coin.initialDepthAxisDegrees,
+                MoneyCoinLandingDepthAxisDegrees,
+                smooth01(progress)),
+        };
+    }
+
+    const float landingRotationDegrees =
+        coin.initialRotationDegrees + coin.airborneRotationDegrees;
+    const float easedFlightProgress = smooth01(flightProgress);
+    return {
+        .rotationDegrees =
+            landingRotationDegrees +
+            coin.absorbRotationDegrees * easedFlightProgress,
+        .depthRotationDegrees =
+            MoneyCoinLandingDepthRotationDegrees +
+            coin.absorbDepthRotationDegrees * easedFlightProgress,
+        .depthAxisDegrees = lerp(
+            MoneyCoinLandingDepthAxisDegrees,
+            coin.absorbDepthAxisDegrees,
+            easedFlightProgress),
+    };
+}
+
 }
 
 void MoneyGainFxSystem::spawn(int amount, Vec2 origin)
@@ -116,6 +191,15 @@ void MoneyGainFxSystem::spawn(int amount, Vec2 origin)
     }
 
     const int coinCount = std::min(desiredCount, static_cast<int>(availableSlots));
+    std::vector<int> timingRanks(static_cast<std::size_t>(coinCount));
+    for (int index = 0; index < coinCount; ++index) {
+        timingRanks[static_cast<std::size_t>(index)] = index;
+    }
+    std::shuffle(timingRanks.begin(), timingRanks.end(), rng);
+    const float timingWindowSeconds = std::min(
+        0.46f,
+        static_cast<float>(std::max(0, coinCount - 1)) * 0.055f);
+
     int remainingAmount = amount;
     for (int index = 0; index < coinCount; ++index) {
         const int remainingCoins = coinCount - index;
@@ -136,18 +220,36 @@ void MoneyGainFxSystem::spawn(int amount, Vec2 origin)
         };
         coin.position = coin.origin;
         coin.previousPosition = coin.origin;
-        coin.startDelaySeconds = static_cast<float>(index) * 0.014f + randomRange(rng, 0.0f, 0.008f);
-        coin.jumpDurationSeconds = randomRange(rng, 0.24f, 0.30f);
-        coin.jumpHeight = randomRange(rng, 27.0f, 39.0f);
-        coin.bounceDurationSeconds = randomRange(rng, 0.11f, 0.15f);
-        coin.bounceHeight = randomRange(rng, 5.5f, 9.5f);
-        coin.settleDurationSeconds = randomRange(rng, 0.08f, 0.13f);
+        const float timingProgress = coinCount > 1
+            ? static_cast<float>(timingRanks[static_cast<std::size_t>(index)]) /
+                static_cast<float>(coinCount - 1)
+            : 0.0f;
+        coin.startDelaySeconds =
+            timingProgress * timingWindowSeconds +
+            randomRange(rng, 0.0f, 0.025f);
+        coin.jumpDurationSeconds = randomRange(rng, 0.34f, 0.52f);
+        coin.jumpHeight = randomRange(rng, 27.0f, 46.0f);
+        coin.bounceDurationSeconds = randomRange(rng, 0.15f, 0.27f);
+        coin.bounceHeight = randomRange(rng, 5.0f, 11.0f);
+        coin.settleDurationSeconds = randomRange(rng, 0.10f, 0.20f);
         coin.flightDurationSeconds = randomRange(rng, 0.34f, 0.45f);
         coin.curveSideOffset = randomRange(rng, -28.0f, 28.0f);
         coin.curveLift = randomRange(rng, 20.0f, 36.0f);
         coin.initialRotationDegrees = randomRange(rng, 0.0f, 360.0f);
-        coin.angularVelocityDegrees = randomRange(rng, 480.0f, 820.0f) *
+        coin.airborneRotationDegrees = randomRange(rng, 260.0f, 500.0f) *
             (std::bernoulli_distribution(0.5)(rng) ? 1.0f : -1.0f);
+        coin.absorbRotationDegrees = randomRange(rng, 110.0f, 300.0f) *
+            (std::bernoulli_distribution(0.5)(rng) ? 1.0f : -1.0f);
+        coin.initialDepthRotationDegrees = randomRange(rng, -35.0f, 35.0f);
+        coin.airborneDepthRotationDegrees = directedRotationToTarget(
+            coin.initialDepthRotationDegrees,
+            MoneyCoinLandingDepthRotationDegrees,
+            std::bernoulli_distribution(0.5)(rng),
+            300.0f);
+        coin.initialDepthAxisDegrees = randomRange(rng, 15.0f, 165.0f);
+        coin.absorbDepthRotationDegrees = randomRange(rng, 150.0f, 280.0f) *
+            (std::bernoulli_distribution(0.5)(rng) ? 1.0f : -1.0f);
+        coin.absorbDepthAxisDegrees = randomRange(rng, 10.0f, 170.0f);
         coin.displayAmount = displayAmount;
         coin.sequenceIndex = index;
         coin.sequenceCount = coinCount;
@@ -178,16 +280,19 @@ void MoneyGainFxSystem::update(float dt, Vec2 targetPosition)
 
         if (activeSeconds < coin.jumpDurationSeconds) {
             const float progress = activeSeconds / std::max(0.05f, coin.jumpDurationSeconds);
+            const float easedProgress = smooth01(progress);
             coin.position =
-                lerp(coin.origin, coin.groundPosition, easeOutCubic(progress)) +
-                Vec2{0.0f, -arcHeight(progress, coin.jumpHeight)};
+                lerp(coin.origin, coin.groundPosition, easedProgress) +
+                Vec2{0.0f, -arcHeight(easedProgress, coin.jumpHeight)};
             continue;
         }
 
         const float bounceSeconds = activeSeconds - coin.jumpDurationSeconds;
         if (bounceSeconds < coin.bounceDurationSeconds) {
             const float progress = bounceSeconds / std::max(0.05f, coin.bounceDurationSeconds);
-            coin.position = coin.groundPosition + Vec2{0.0f, -arcHeight(progress, coin.bounceHeight)};
+            coin.position =
+                coin.groundPosition +
+                Vec2{0.0f, -arcHeight(smooth01(progress), coin.bounceHeight)};
             continue;
         }
 
@@ -308,31 +413,39 @@ void MoneyGainFxSystem::renderForeground(Renderer& renderer) const
             0.0f,
             1.0f);
         const float landingImpact = smooth01(clamp(
-            1.0f - std::abs(activeSeconds - coin.jumpDurationSeconds) / 0.055f,
+            1.0f - std::abs(activeSeconds - coin.jumpDurationSeconds) / 0.09f,
             0.0f,
             1.0f));
         const float arrivalShrink = lerp(1.0f, 0.62f, smooth01(flightProgress));
         const float popScale = 0.78f + 0.22f * easeOutCubic(popProgress);
         const float visualScale = popScale * arrivalShrink;
+        const CoinVisualPose pose =
+            coinVisualPose(coin, activeSeconds, flightProgress);
 
         WorldIconDrawOptions options;
         options.filter = TextureFilter::Linear;
         options.allowUpscale = true;
-        options.outlineEnabled = false;
-        options.rotationDegrees =
-            coin.initialRotationDegrees +
-            coin.angularVelocityDegrees * activeSeconds;
+        options.rotationDegrees = pose.rotationDegrees;
         options.scaleMultiplier = visualScale;
+        options.sizeMultiplier = {
+            1.0f + landingImpact * 0.10f,
+            1.0f - landingImpact * 0.12f,
+        };
         options.tint = withScaledAlpha({255, 255, 255, 255}, 1.0f - smooth01((flightProgress - 0.90f) / 0.10f));
-        (void)drawWorldIcon(
+        options.outlineColor.a = options.tint.a;
+
+        ExtrudedWorldIconDrawOptions extrusion;
+        extrusion.depthRotationDegrees = pose.depthRotationDegrees;
+        extrusion.depthAxisDegrees = pose.depthAxisDegrees;
+        extrusion.thicknessPx = MoneyCoinThicknessPx * visualScale;
+        extrusion.sideColor = MoneyCoinSideColor;
+        (void)drawExtrudedWorldIcon(
             renderer,
             WorldIconId::MoneyCoin,
             coin.position,
-            {
-                WorldIconScaleReferenceSize * (1.0f + landingImpact * 0.10f),
-                WorldIconScaleReferenceSize * (1.0f - landingImpact * 0.12f),
-            },
-            options);
+            {WorldIconScaleReferenceSize, WorldIconScaleReferenceSize},
+            options,
+            extrusion);
     }
 }
 

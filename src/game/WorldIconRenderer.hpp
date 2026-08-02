@@ -69,6 +69,13 @@ struct WorldIconDrawOptions : ScaledImageDrawOptions {
     bool applyScaleOverride = true;
 };
 
+struct ExtrudedWorldIconDrawOptions {
+    float depthRotationDegrees = 0.0f;
+    float depthAxisDegrees = 90.0f;
+    float thicknessPx = 0.0f;
+    Color sideColor{255, 255, 255, 255};
+};
+
 void setWorldIconScaleOverrides(const std::unordered_map<std::string, float>* scaleByIconKey);
 
 [[nodiscard]] std::span<const WorldIconDefinition> worldIconDefinitions();
@@ -87,5 +94,12 @@ void setWorldIconScaleOverrides(const std::unordered_map<std::string, float>* sc
     Vec2 center,
     Vec2 maxSize,
     const WorldIconDrawOptions& options = {});
+[[nodiscard]] bool drawExtrudedWorldIcon(
+    Renderer& renderer,
+    WorldIconId iconId,
+    Vec2 center,
+    Vec2 maxSize,
+    const WorldIconDrawOptions& options,
+    const ExtrudedWorldIconDrawOptions& extrusion);
 
 }

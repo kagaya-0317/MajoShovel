@@ -143,6 +143,34 @@ function Placeholder-Sample([string]$Kind, [double]$Time, [double]$Duration, [Sy
                 0.20 * [Math]::Sin($TwoPi * 990.0 * $Time) +
                 0.15 * [Math]::Sin($TwoPi * 1320.0 * $Time))
         }
+        "se.facility.forge_upgrade" {
+            $env = Decay $Time $Duration 1.15
+            $hammer = [Math]::Max(0.0, 1.0 - $Time / 0.13)
+            $chime = [Math]::Max(0.0, 1.0 - [Math]::Max(0.0, $Time - 0.14) / 0.48)
+            return $hammer * (0.34 * [Math]::Sin($TwoPi * 118.0 * $Time) + 0.24 * [Math]::Sin($TwoPi * 472.0 * $Time)) +
+                $env * ($Random.NextDouble() * 2.0 - 1.0) * 0.08 +
+                $chime * (0.18 * [Math]::Sin($TwoPi * 784.0 * $Time) + 0.12 * [Math]::Sin($TwoPi * 1176.0 * $Time))
+        }
+        "se.facility.workbench_upgrade" {
+            $env = Decay $Time $Duration 1.35
+            $tick = 0.45 + 0.55 * [Math]::Sin($TwoPi * 22.0 * $Time)
+            return $env * (0.22 * [Math]::Sin($TwoPi * (420.0 + 520.0 * $Time / $Duration) * $Time) +
+                0.18 * $tick * [Math]::Sin($TwoPi * 1260.0 * $Time) +
+                0.07 * ($Random.NextDouble() * 2.0 - 1.0))
+        }
+        "se.facility.workbench_repair" {
+            $env = Decay $Time $Duration 1.15
+            $ratchet = [Math]::Max(0.0, [Math]::Sin($TwoPi * 15.0 * $Time))
+            return $env * (0.18 * $ratchet * [Math]::Sin($TwoPi * 680.0 * $Time) +
+                0.13 * [Math]::Sin($TwoPi * 330.0 * $Time) +
+                0.12 * [Math]::Sin($TwoPi * 660.0 * $Time))
+        }
+        "se.merchant.transaction" {
+            $env = Decay $Time $Duration 1.55
+            $second = if ($Time -ge 0.09) { Decay ($Time - 0.09) ($Duration - 0.09) 1.8 } else { 0.0 }
+            return $env * (0.23 * [Math]::Sin($TwoPi * 1320.0 * $Time) + 0.16 * [Math]::Sin($TwoPi * 1980.0 * $Time)) +
+                $second * (0.20 * [Math]::Sin($TwoPi * 1568.0 * $Time) + 0.13 * [Math]::Sin($TwoPi * 2352.0 * $Time))
+        }
         "se.dialogue.advance" {
             $env = Decay $Time $Duration 1.85
             $freq = 520.0 + 180.0 * ($Time / $Duration)
@@ -778,6 +806,26 @@ public static class MajoPlaceholderAudioHQ
                 return Ring(t, d, 520.0, 0.20, 1.55) + Ring(t, d, 780.0, 0.16, 1.7) + Sparkle(t, d, 1040.0, 0.08);
             case "se.ui.upgrade_select":
                 return Sparkle(t, d, 660.0, 0.18) + Sparkle(t, d, 990.0, 0.14) + Ring(t, d, 1320.0, 0.10, 1.2);
+            case "se.facility.forge_upgrade":
+                return 0.82 * Stone(t, Math.Min(d, 0.19), rng, 112.0, 0.9) +
+                    0.20 * Whoosh(t, d, rng, 180.0, 720.0, 0.07) +
+                    Ring(t - 0.13, d * 0.80, 783.99, 0.18, 1.05) +
+                    Ring(t - 0.17, d * 0.72, 1174.66, 0.12, 1.15);
+            case "se.facility.workbench_upgrade":
+                return 0.36 * Ring(t, d, 520.0, 0.20, 1.55) +
+                    0.32 * Ring(t - 0.075, d * 0.82, 780.0, 0.18, 1.65) +
+                    Sparkle(t - 0.12, d * 0.72, 1040.0, 0.16);
+            case "se.facility.workbench_repair":
+                return 0.22 * Burst(t, 0.00, 0.08, 2.2) * S(620.0, t) +
+                    0.20 * Burst(t, 0.09, 0.08, 2.2) * S(700.0, t) +
+                    0.18 * Burst(t, 0.18, 0.08, 2.2) * S(780.0, t) +
+                    Ring(t - 0.20, d * 0.62, 523.25, 0.17, 1.05) +
+                    Ring(t - 0.22, d * 0.58, 783.99, 0.10, 1.15);
+            case "se.merchant.transaction":
+                return Ring(t, d, 1320.0, 0.24, 1.55) +
+                    Ring(t, d, 1980.0, 0.13, 1.75) +
+                    Ring(t - 0.085, d * 0.72, 1568.0, 0.22, 1.55) +
+                    Ring(t - 0.085, d * 0.72, 2352.0, 0.11, 1.75);
             case "se.dialogue.advance":
                 return Env(t, d, 0.003, 1.8) * (0.26 * Sweep(t, d, 540.0, 760.0) + 0.16 * Ring(t, d, 1180.0, 0.10, 2.0));
             case "se.level_up.jingle":
@@ -1023,6 +1071,10 @@ $clips = @(
     @{ Path = Join-Path $SeRoot "ui_item_use_placeholder.wav"; Kind = "se.ui.item_use"; Duration = 0.20; Seed = 2007 },
     @{ Path = Join-Path $SeRoot "ui_ring_place_placeholder.wav"; Kind = "se.ui.ring_place"; Duration = 0.22; Seed = 2008 },
     @{ Path = Join-Path $SeRoot "ui_upgrade_select_placeholder.wav"; Kind = "se.ui.upgrade_select"; Duration = 0.30; Seed = 2009 },
+    @{ Path = Join-Path $SeRoot "facility_forge_upgrade.wav"; Kind = "se.facility.forge_upgrade"; Duration = 0.62; Seed = 2120 },
+    @{ Path = Join-Path $SeRoot "facility_workbench_upgrade.wav"; Kind = "se.facility.workbench_upgrade"; Duration = 0.48; Seed = 2121 },
+    @{ Path = Join-Path $SeRoot "facility_workbench_repair.wav"; Kind = "se.facility.workbench_repair"; Duration = 0.55; Seed = 2122 },
+    @{ Path = Join-Path $SeRoot "merchant_transaction.wav"; Kind = "se.merchant.transaction"; Duration = 0.36; Seed = 2123 },
     @{ Path = Join-Path $SeRoot "zz_tmp_dialogue_advance_placeholder.wav"; Kind = "se.dialogue.advance"; Duration = 0.12; Seed = 2010 },
     @{ Path = Join-Path $SeRoot "level_up_jingle_placeholder.wav"; Kind = "se.level_up.jingle"; Duration = 1.16; Seed = 2072 },
     @{ Path = Join-Path $SeRoot "game_over_jingle_placeholder.wav"; Kind = "se.game_over.jingle"; Duration = 1.34; Seed = 2110 },

@@ -14,6 +14,10 @@ se.ui.item_use	se	se/0_PowerUp.wav	1	false	80	26.303	アイテム使用
 se.ui.equip	se	se/sound7.wav	1	false	90	7.039	装備
 se.ui.ring_place	se	se/0_Cursor4.wav	1.05	false	90	0	リング配置
 se.ui.upgrade_select	se	se/0_Recharge1.wav	1	false	120	26.303	レベルアップ選択
+se.facility.forge_upgrade	se	se/facility_forge_upgrade.wav	0.82	false	180	0	拠点強化炉 強化完了
+se.facility.workbench_upgrade	se	se/facility_workbench_upgrade.wav	0.78	false	140	0	作業台 強化完了
+se.facility.workbench_repair	se	se/facility_workbench_repair.wav	0.76	false	160	0	作業台 修理完了
+se.merchant.transaction	se	se/merchant_transaction.wav	0.74	false	90	0	商人 取引完了
 se.dialogue.advance	se	se/0_Cursor5.wav	0.7	false	45	0	メッセージ送り
 se.story.phone.incoming	se	se/zz_tmp_story_phone_incoming_placeholder.wav	0.72	false	250	0	電話 着信
 se.story.phone.outgoing	se	se/zz_tmp_story_phone_outgoing_placeholder.wav	0.66	false	180	0	電話 発信

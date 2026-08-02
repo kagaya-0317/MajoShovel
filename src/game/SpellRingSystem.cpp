@@ -2567,40 +2567,67 @@ bool SpellRingSystem::canAddItemForRing(int ringIndex, const SpellRingItem& item
 
 bool SpellRingSystem::canPlaceItemAtAngle(int index, float angle) const
 {
-    const auto& ringItems = activeItems();
+    return canPlaceItemAtAngleForRing(activeRingIndex_, index, angle);
+}
+
+bool SpellRingSystem::canPlaceItemAtAngleForRing(int ringIndex, int index, float angle) const
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return false;
+    }
+    const auto& ringItems = itemsByRing_[static_cast<std::size_t>(ringIndex)];
     if (index < 0 || index >= static_cast<int>(ringItems.size())) {
         return false;
     }
-    return canPlaceItemAtAngle(ringItems[static_cast<std::size_t>(index)], angle, index, orbitTuning_);
+    return canPlaceItemAtAngleForRing(
+        ringIndex,
+        ringItems[static_cast<std::size_t>(index)],
+        angle,
+        index,
+        orbitTuning_);
 }
 
 std::optional<float> SpellRingSystem::nearestPlaceableAngle(int index, float desiredAngle, float maxDeltaRadians) const
 {
-    const auto& ringItems = activeItems();
+    return nearestPlaceableAngleForRing(activeRingIndex_, index, desiredAngle, maxDeltaRadians);
+}
+
+std::optional<float> SpellRingSystem::nearestPlaceableAngleForRing(
+    int ringIndex,
+    int index,
+    float desiredAngle,
+    float maxDeltaRadians) const
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return std::nullopt;
+    }
+    const auto& ringItems = itemsByRing_[static_cast<std::size_t>(ringIndex)];
     if (index < 0 || index >= static_cast<int>(ringItems.size()) || maxDeltaRadians < 0.0f) {
         return std::nullopt;
     }
 
     const RingOrbitTuning& tuning = orbitTuning_;
-    const RingShape shape = runtimeRingShape();
+    const RingShape shape = ringShapeForIndex(ringIndex);
     const float desired = quantizeLocalParam(shape, desiredAngle, tuning);
     const SpellRingItem& item = ringItems[static_cast<std::size_t>(index)];
-    if (canPlaceItemAtAngle(item, desired, index, tuning)) {
+    if (canPlaceItemAtAngleForRing(ringIndex, item, desired, index, tuning)) {
         return desired;
     }
 
     const float stepRadians = shape == RingShape::Comet
-        ? std::max(Pi / 180.0f, clampCometArcRadians(tuning) / static_cast<float>(maxItemCount() * 2))
+        ? std::max(
+            Pi / 180.0f,
+            clampCometArcRadians(tuning) / static_cast<float>(maxItemCountForRing(ringIndex) * 2))
         : PlacementStepRadians;
     const int maxSteps = static_cast<int>(std::floor(maxDeltaRadians / stepRadians + 0.0001f));
     for (int step = 1; step <= maxSteps; ++step) {
         const float delta = static_cast<float>(step) * stepRadians;
         const float clockwise = quantizeLocalParam(shape, desired + delta, tuning);
-        if (canPlaceItemAtAngle(item, clockwise, index, tuning)) {
+        if (canPlaceItemAtAngleForRing(ringIndex, item, clockwise, index, tuning)) {
             return clockwise;
         }
         const float counterClockwise = quantizeLocalParam(shape, desired - delta, tuning);
-        if (canPlaceItemAtAngle(item, counterClockwise, index, tuning)) {
+        if (canPlaceItemAtAngleForRing(ringIndex, item, counterClockwise, index, tuning)) {
             return counterClockwise;
         }
     }
@@ -2989,16 +3016,24 @@ void SpellRingSystem::removeBrokenItems()
 
 bool SpellRingSystem::moveItemAngle(int index, float deltaRadians)
 {
-    auto& ringItems = activeItems();
+    return moveItemAngleForRing(activeRingIndex_, index, deltaRadians);
+}
+
+bool SpellRingSystem::moveItemAngleForRing(int ringIndex, int index, float deltaRadians)
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return false;
+    }
+    auto& ringItems = itemsByRing_[static_cast<std::size_t>(ringIndex)];
     if (index < 0 || index >= static_cast<int>(ringItems.size())) {
         return false;
     }
 
     const RingOrbitTuning& tuning = orbitTuning_;
-    const RingShape shape = runtimeRingShape();
+    const RingShape shape = ringShapeForIndex(ringIndex);
     SpellRingItem& item = ringItems[static_cast<std::size_t>(index)];
     const float candidate = quantizeLocalParam(shape, item.localAngle + deltaRadians, tuning);
-    if (!canPlaceItemAtAngle(item, candidate, index, tuning)) {
+    if (!canPlaceItemAtAngleForRing(ringIndex, item, candidate, index, tuning)) {
         return false;
     }
 

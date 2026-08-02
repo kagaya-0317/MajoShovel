@@ -31,6 +31,9 @@
 #include "game/GameTestProbe.hpp"
 #include "game/InventorySystem.hpp"
 #include "game/InventoryUiCommon.hpp"
+#include "game/ItemCollectionTypes.hpp"
+#include "game/ItemGridInteraction.hpp"
+#include "game/ItemSlotLayout.hpp"
 #include "game/Kamishibai.hpp"
 #include "game/LevelSystem.hpp"
 #include "game/MagicFxSystem.hpp"
@@ -958,19 +961,35 @@ private:
         int ringItemIndex = -1;
         bool valid = false;
     };
-    using StorageTransferTarget = BaseItemTarget;
-    struct BaseItemSelectionKey {
-        BaseItemSource source = BaseItemSource::Backpack;
-        bool stack = false;
-        std::string stableId;
-        int sourceIndex = -1;
+    enum class BaseRingPreviewKind {
+        Storage,
+        Processing,
+        Merchant,
     };
+    struct BaseRingInteractionResult {
+        bool consumed = false;
+        int activateIndex = -1;
+    };
+    struct BaseRingItemInteractionState {
+        ItemKey item{};
+        float originalAngle = 0.0f;
+        Vec2 pointerStart{};
+        bool keyboardMoveActive = false;
+        bool pointerPending = false;
+        bool pointerDragging = false;
+
+        bool active() const
+        {
+            return keyboardMoveActive || pointerPending || pointerDragging;
+        }
+    };
+    using StorageTransferTarget = BaseItemTarget;
     struct BatchItemSelectionState {
         bool active = false;
-        std::vector<BaseItemSelectionKey> selectedKeys;
+        std::vector<ItemKey> selectedKeys;
         UiConfirmDialogState confirm{};
     };
-    struct StorageBulkDepositSummary {
+    struct StorageBatchTransferSummary {
         int itemCount = 0;
         int requiredSlots = 0;
         int freeSlots = 0;
@@ -1377,11 +1396,25 @@ private:
     int merchantSellTargetPrice(MerchantSellTarget target) const;
     int merchantSellTargetQuantity(MerchantSellTarget target) const;
     std::vector<MerchantSellTarget> merchantSellTargetsForSource(int source) const;
-    std::optional<BaseItemSelectionKey> baseItemSelectionKeyForTarget(BaseItemTarget target) const;
-    BaseItemTarget baseItemTargetForSelectionKey(const BaseItemSelectionKey& key) const;
-    bool batchItemSelectionKeySelected(
+    std::optional<ItemKey> itemKeyForBaseItemTarget(BaseItemTarget target) const;
+    BaseItemTarget baseItemTargetForItemKey(const ItemKey& key) const;
+    std::optional<ItemKey> itemKeyForProcessingTarget(ProcessingTarget target) const;
+    bool moveItemKeyToGridPlacement(const ItemKey& key, int placement);
+    std::optional<bool> itemProtectionEnabled(const ItemKey& key) const;
+    ItemProtectionToggleResult toggleItemProtection(const ItemKey& key);
+    bool sortBaseItemSource(int source);
+    BaseRingInteractionResult updateBaseRingItemInteraction(
+        const Input& input,
+        UiContext& ui,
+        int source,
+        int& selection,
+        BaseRingPreviewKind previewKind,
+        float animationSeconds);
+    bool cancelBaseRingItemInteraction(bool restoreOriginalAngle);
+    void clearBaseItemInteractions();
+    bool batchItemKeySelected(
         const BatchItemSelectionState& state,
-        const BaseItemSelectionKey& key) const;
+        const ItemKey& key) const;
     bool batchItemSelectionTargetSelected(
         const BatchItemSelectionState& state,
         BaseItemTarget target) const;
@@ -1452,9 +1485,16 @@ private:
     bool toggleStorageBulkDepositTarget(StorageTransferTarget target);
     void selectAllStorageBulkDepositTargets(int source);
     void pruneStorageBulkDepositSelection();
-    StorageBulkDepositSummary storageBulkDepositSummary() const;
+    StorageBatchTransferSummary storageBulkDepositSummary() const;
     bool depositStorageBulkSelection();
-    void clearStorageBulkDepositState();
+    std::vector<StorageTransferTarget> storageWithdrawTargets() const;
+    bool storageBulkWithdrawTargetSelected(StorageTransferTarget target) const;
+    bool toggleStorageBulkWithdrawTarget(StorageTransferTarget target);
+    void selectAllStorageBulkWithdrawTargets();
+    void pruneStorageBulkWithdrawSelection();
+    StorageBatchTransferSummary storageBulkWithdrawSummary() const;
+    bool withdrawStorageBulkSelection();
+    void clearStorageBatchSelectionState();
     void depositAllBackpackItems();
     void prepareRingPresetFromWarehouse(int presetIndex);
     std::string storageEntryLabel(StorageEntry entry, bool warehouseEntry) const;
@@ -2404,12 +2444,9 @@ private:
     UiCommandMenuState baseStorageCommandMenu_{};
     StorageQuantityOperation baseStorageCommandOperation_ = StorageQuantityOperation::None;
     StorageTransferTarget baseStorageCommandTarget_{};
-    StorageQuantityOperation baseStoragePointerOperation_ = StorageQuantityOperation::None;
-    StorageTransferTarget baseStoragePointerTarget_{};
-    Vec2 baseStoragePointerPressMouse_{};
-    bool baseStoragePointerPressCanOpenMenu_ = false;
-    bool baseStoragePointerDragTriggered_ = false;
-    BatchItemSelectionState baseStorageBulkDeposit_{};
+    BatchItemSelectionState baseStorageBatchSelection_{};
+    ItemGridInteractionController baseItemInteraction_{};
+    BaseRingItemInteractionState baseRingItemInteraction_{};
     bool baseSellActive_ = false;
     MerchantUiMode baseMerchantMode_ = MerchantUiMode::Closed;
     int baseMerchantActionSelection_ = 0;
@@ -2892,7 +2929,7 @@ private:
     std::vector<std::string> storyFlags_;
     std::vector<InventoryObjectStack> warehouseObjectStacks_;
     std::vector<InventoryObjectInstance> warehouseObjectInstances_;
-    mutable std::vector<int> warehouseDisplaySlots_;
+    mutable ItemSlotLayout warehouseItemLayout_;
     bool roguelikeDungeon_ = false;
     bool warpPointsEnabled_ = true;
     // Normal stages keep current inventory on death. Future roguelike runs can

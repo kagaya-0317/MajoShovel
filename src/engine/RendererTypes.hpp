@@ -74,6 +74,14 @@ struct ImageTriangleVertex {
     Vec2 texCoord{};
 };
 
+struct ImageTriangleDrawOptions {
+    Color tint{255, 255, 255, 255};
+    bool outlineEnabled = false;
+    Color outlineColor{0, 0, 0, 255};
+    int outlinePx = 1;
+    Color maskOverlayColor{255, 255, 255, 0};
+};
+
 struct ImageCacheStats {
     std::size_t textureCount = 0;
     std::size_t totalBytes = 0;

@@ -105,6 +105,7 @@ private:
         std::size_t nextCueIndex = 0;
         float cycleElapsedSeconds = 0.0f;
         float pauseRemainingSeconds = 0.0f;
+        float liftPixels = 0.0f;
         Phase phase = Phase::WaitingForPortrait;
         bool active = false;
         bool completedCycle = false;
@@ -125,6 +126,7 @@ private:
     void updateRightPortrait(float dt);
     void applyPortraitExpressionStep(const DialogueStep& step);
     void resetSpeakingPortraitMotion();
+    void beginSpeakingPortraitBounce();
     void finishSpeakingPortraitMotion();
     void updateSpeakingPortraitMotion(float dt);
     [[nodiscard]] std::size_t revealedSpeakingPortraitCueCount() const;

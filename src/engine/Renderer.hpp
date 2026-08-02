@@ -94,6 +94,13 @@ public:
         const int* indices,
         std::size_t indexCount,
         Color tint = {255, 255, 255, 255});
+    bool drawImageTriangleList(
+        ImageHandle handle,
+        const ImageTriangleVertex* vertices,
+        std::size_t vertexCount,
+        const int* indices,
+        std::size_t indexCount,
+        const ImageTriangleDrawOptions& options);
     void fillSoftCircle(Vec2 center, float radius, Color color);
     void drawSoftRing(Vec2 center, float radius, float width, Color color);
     void fillSoftRingArc(
@@ -238,6 +245,7 @@ public:
         TextureFilter filter = TextureFilter::Nearest);
     bool getImageSize(ImageHandle handle, Vec2& outSize) const;
     bool getImageSize(std::string_view path, Vec2& outSize, TextureFilter filter = TextureFilter::Nearest);
+    bool getImageOpaqueBounds(ImageHandle handle, RectF& outBounds) const;
     bool imageHitTestAlpha(
         ImageHandle handle,
         Vec2 center,
@@ -288,6 +296,7 @@ private:
         int width = 0;
         int height = 0;
         std::vector<unsigned char> alphaMask;
+        RectF opaqueBounds{};
     };
 
     struct CachedImageEntry {

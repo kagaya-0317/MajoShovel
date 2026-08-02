@@ -224,8 +224,15 @@ public:
     bool canAddObjectItemForRing(int ringIndex, const ItemData& item) const;
     bool canAddObjectItemForRing(int ringIndex, const ItemData& item, const ItemInstance& instance) const;
     bool canPlaceItemAtAngle(int index, float angle) const;
+    bool canPlaceItemAtAngleForRing(int ringIndex, int index, float angle) const;
     std::optional<float> nearestPlaceableAngle(int index, float desiredAngle, float maxDeltaRadians) const;
+    std::optional<float> nearestPlaceableAngleForRing(
+        int ringIndex,
+        int index,
+        float desiredAngle,
+        float maxDeltaRadians) const;
     bool moveItemAngle(int index, float deltaRadians);
+    bool moveItemAngleForRing(int ringIndex, int index, float deltaRadians);
     void normalizeItemPlacements();
     void switchActiveRing(int delta);
     void applyObjectParameters(const ObjectCatalog& catalog);

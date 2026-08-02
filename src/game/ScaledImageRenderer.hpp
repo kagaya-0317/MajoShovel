@@ -27,6 +27,11 @@ struct ScaledImageDrawOptions {
     bool flipY = false;
 };
 
+[[nodiscard]] bool calculateScaledImageDrawSize(
+    Vec2 sourceSize,
+    Vec2 maxSize,
+    const ScaledImageDrawOptions& options,
+    Vec2& outDrawSize);
 [[nodiscard]] bool drawScaledImage(
     Renderer& renderer,
     std::string_view path,

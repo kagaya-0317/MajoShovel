@@ -118,6 +118,8 @@ add_executable(MajoShovel
     src/game/WetGroundSystem.cpp
     src/game/InventorySystem.cpp
     src/game/InventoryUiCommon.cpp
+    src/game/ItemGridInteraction.cpp
+    src/game/ItemSlotLayout.cpp
     src/game/ItemImageRenderer.cpp
     src/game/ItemModel.cpp
     src/game/ObjectImageRenderer.cpp
