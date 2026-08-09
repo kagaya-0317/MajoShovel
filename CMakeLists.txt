@@ -116,6 +116,7 @@ add_executable(MajoShovel
     src/game/EncyclopediaSystem.cpp
     src/game/GroundLineSystem.cpp
     src/game/WetGroundSystem.cpp
+    src/game/ItemSortPolicy.cpp
     src/game/InventorySystem.cpp
     src/game/InventoryUiCommon.cpp
     src/game/ItemGridInteraction.cpp

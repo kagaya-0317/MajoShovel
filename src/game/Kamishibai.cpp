@@ -358,7 +358,7 @@ KamishibaiPage fallbackPage()
     KamishibaiPage page;
     page.id = "fallback";
     page.imagePath = "assets/opening/op_8.png";
-    page.text = "紙芝居データを読み込めませんでした。";
+    page.text = "紙芝居データを読み込めないよ";
     page.textSteps = {page.text};
     page.duration = DefaultPageDuration;
     page.effect = KamishibaiEffect::None;

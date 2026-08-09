@@ -23,7 +23,12 @@ public:
     App();
     ~App();
 
-    bool initialize(const char* title, int width, int height, bool testPlayMode = false);
+    bool initialize(
+        const char* title,
+        int width,
+        int height,
+        bool testPlayMode = false,
+        bool devAutoReloadMode = false);
     void run();
     bool restartRequested() const { return restartRequested_; }
 
@@ -36,6 +41,10 @@ private:
     void setRuntimeHotReloadEnabled(bool enabled);
     void checkAssetHotReload();
     bool reloadAssetForPath(const std::string& changedPath);
+    void checkDevBuildStatus();
+    void updateDevBuildNotice(float dt);
+    void updateWindowTitle();
+    void requestRestart();
     void applyAudioSettings();
     void applyVideoSettings(bool notifyGameResize);
     void queueSettingsSave();
@@ -69,6 +78,12 @@ private:
         Done,
     };
 
+    enum class DevBuildState {
+        None,
+        Ready,
+        Failed,
+    };
+
     SDL_Window* window_ = nullptr;
     SDL_Renderer* sdlRenderer_ = nullptr;
     SDL_Cursor* gameCursor_ = nullptr;
@@ -87,9 +102,13 @@ private:
     autosim::AutoSimulationController autoSimulation_;
     bool running_ = false;
     bool testPlayMode_ = false;
+    bool devAutoReloadMode_ = false;
     bool autoReloadBlocked_ = false;
     bool runtimeHotReloadEnabled_ = false;
+    DevBuildState devBuildState_ = DevBuildState::None;
+    bool devBuildNoticeFailed_ = false;
     std::uint64_t nextAssetHotReloadPollTicks_ = 0;
+    std::uint64_t nextDevBuildStatusPollTicks_ = 0;
     bool gameCursorPressedActive_ = false;
     bool testFreezePaused_ = false;
     bool restartRequested_ = false;
@@ -99,8 +118,11 @@ private:
     StartupLoadStep startupLoadStep_ = StartupLoadStep::Done;
     std::string startupStatus_;
     std::string startupLaunchModeCommand_;
+    std::string baseWindowTitle_;
+    std::string devBuildStatusToken_;
     float settingsSaveDelaySeconds_ = 0.0f;
     float autoSimulationStepDebtSeconds_ = 0.0f;
+    float devBuildNoticeTimer_ = 0.0f;
     int width_ = 1280;
     int height_ = 720;
 };

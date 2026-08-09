@@ -54,6 +54,7 @@ constexpr std::string_view AudioSeMoneyArrive = "se.money.arrive";
 constexpr std::string_view AudioSeMonsterDiscovery = "se.discovery.monster";
 constexpr std::string_view AudioSeUiConfirm = "se.ui.confirm";
 constexpr std::string_view AudioSeUiCancel = "se.ui.cancel";
+constexpr std::string_view AudioSeUiError = "se.ui.error";
 constexpr std::string_view AudioSeUiMenuOpen = "se.ui.menu_open";
 constexpr std::string_view AudioSeUiTabSwitch = "se.ui.tab_switch";
 constexpr std::string_view AudioSeUiBookOpen = "se.ui.book_open";
@@ -325,7 +326,7 @@ std::string normalizeTitleCreditsText(std::string text)
     if (!text.empty()) {
         return text;
     }
-    return "MajoShovel\n\n制作\nGenta Kagaya\n\n使用ライブラリ\nSDL3";
+    return "ダンジョンを掘る魔女\n\n制作\nkagaya\n\n使用ライブラリ\nSDL3";
 }
 
 bool parseTsvTable(std::string_view text, GoogleSheetTable& outTable, std::string& outError)
@@ -1047,6 +1048,9 @@ void Game::playUiSoundEvents(const UiContext& ui)
     }
     if (ui.soundEventCount(UiSoundEvent::Cancel) > 0) {
         playAudioSe(AudioSeUiCancel);
+    }
+    if (ui.soundEventCount(UiSoundEvent::Error) > 0) {
+        playAudioSe(AudioSeUiError);
     }
 }
 
@@ -1792,8 +1796,6 @@ void Game::finishWorldBuild()
     clearTemporaryPlayerState(true);
     captureRunStartInventoryState();
 
-    resetWarpPointRunState();
-    initializeMoonFragmentNodesFromWarpPoints();
     initializeRoguelikeBigHoleFromLayout();
     initializeRoguelikeFacilitiesFromLayout();
     applyPlacementTerrainOverrides();
@@ -2477,7 +2479,10 @@ float Game::postTransitionStoryDelaySecondsForScreenTransitionTarget(ScreenTrans
     return 0.0f;
 }
 
-void Game::startScreenTransition(ScreenTransitionTarget target, ScreenTransitionPhase phase)
+void Game::startScreenTransition(
+    ScreenTransitionTarget target,
+    ScreenTransitionPhase phase,
+    ScreenTransitionSound sound)
 {
     screenTransition_.target = target;
     screenTransition_.phase = phase;
@@ -2487,16 +2492,28 @@ void Game::startScreenTransition(ScreenTransitionTarget target, ScreenTransition
     screenTransition_.postTransitionStoryDelaySeconds = postTransitionStoryDelaySecondsForScreenTransitionTarget(target);
     screenTransition_.elapsed = 0.0f;
     screenTransition_.applied = false;
+    playScreenTransitionSound(sound);
 }
 
-void Game::requestScreenTransition(ScreenTransitionTarget target)
+void Game::playScreenTransitionSound(ScreenTransitionSound sound)
+{
+    switch (sound) {
+    case ScreenTransitionSound::Generic:
+    case ScreenTransitionSound::DungeonLadder:
+    case ScreenTransitionSound::WarpPoint:
+    case ScreenTransitionSound::Home:
+        playAudioSe(AudioSeTransition);
+        return;
+    }
+}
+
+void Game::requestScreenTransition(ScreenTransitionTarget target, ScreenTransitionSound sound)
 {
     if (target == ScreenTransitionTarget::None || screenTransition_.active()) {
         return;
     }
 
-    startScreenTransition(target, ScreenTransitionPhase::FadingOut);
-    playAudioSe(AudioSeTransition);
+    startScreenTransition(target, ScreenTransitionPhase::FadingOut, sound);
 }
 
 void Game::requestDeathResultExitTransition(ScreenTransitionTarget target)
@@ -2526,22 +2543,26 @@ void Game::requestMiningStartTransition(bool useLatestWarpPoint, bool forceRegen
         return;
     }
 
-    startScreenTransition(ScreenTransitionTarget::MiningStart, ScreenTransitionPhase::FadingOut);
+    startScreenTransition(
+        ScreenTransitionTarget::MiningStart,
+        ScreenTransitionPhase::FadingOut,
+        ScreenTransitionSound::Generic);
     screenTransition_.useLatestWarpPoint = useLatestWarpPoint;
     screenTransition_.forceRegenerate = forceRegenerate;
-    playAudioSe(AudioSeTransition);
 }
 
-void Game::requestReturnToBaseTransition(bool stageCleared, bool died)
+void Game::requestReturnToBaseTransition(
+    bool stageCleared,
+    bool died,
+    ScreenTransitionSound sound)
 {
     if (screenTransition_.active()) {
         return;
     }
 
-    startScreenTransition(ScreenTransitionTarget::ReturnToBase, ScreenTransitionPhase::FadingOut);
+    startScreenTransition(ScreenTransitionTarget::ReturnToBase, ScreenTransitionPhase::FadingOut, sound);
     screenTransition_.returnStageCleared = stageCleared;
     screenTransition_.returnDied = died;
-    playAudioSe(AudioSeTransition);
 }
 
 void Game::requestBaseAreaCrossfade(BaseArea targetArea, Vec2 playerPosition, Vec2 playerFacing, std::string status)
@@ -2550,12 +2571,14 @@ void Game::requestBaseAreaCrossfade(BaseArea targetArea, Vec2 playerPosition, Ve
         return;
     }
 
-    startScreenTransition(ScreenTransitionTarget::BaseArea, ScreenTransitionPhase::CrossFadeCapture);
+    startScreenTransition(
+        ScreenTransitionTarget::BaseArea,
+        ScreenTransitionPhase::CrossFadeCapture,
+        ScreenTransitionSound::Generic);
     screenTransition_.targetBaseArea = targetArea;
     screenTransition_.targetBasePlayerPosition = playerPosition;
     screenTransition_.targetBasePlayerFacing = playerFacing;
     screenTransition_.targetBaseStatus = testPlayMode_ ? std::move(status) : std::string{};
-    playAudioSe(AudioSeTransition);
 }
 
 void Game::requestBaseAreaFade(BaseArea targetArea, Vec2 playerPosition, Vec2 playerFacing, std::string status, bool closeBaseUi)
@@ -2564,13 +2587,15 @@ void Game::requestBaseAreaFade(BaseArea targetArea, Vec2 playerPosition, Vec2 pl
         return;
     }
 
-    startScreenTransition(ScreenTransitionTarget::BaseArea, ScreenTransitionPhase::FadingOut);
+    startScreenTransition(
+        ScreenTransitionTarget::BaseArea,
+        ScreenTransitionPhase::FadingOut,
+        ScreenTransitionSound::Generic);
     screenTransition_.targetBaseArea = targetArea;
     screenTransition_.targetBasePlayerPosition = playerPosition;
     screenTransition_.targetBasePlayerFacing = playerFacing;
     screenTransition_.targetBaseStatus = testPlayMode_ ? std::move(status) : std::string{};
     screenTransition_.closeBaseUi = closeBaseUi;
-    playAudioSe(AudioSeTransition);
 }
 
 void Game::updateScreenTransition(float dt)
@@ -3213,16 +3238,16 @@ bool Game::registerRingPresetShortcut(int presetIndex)
     const int presetSlotCount = unlockedRingPresetSlotCount();
     if (presetIndex < 0 || presetIndex >= presetSlotCount) {
         ringStatus_ = presetSlotCount <= 0
-            ? "リングプリセットは未解禁です"
-            : "プリセット" + std::to_string(presetIndex + 1) + "は未解禁です";
+            ? "リングプリセットは未解禁だよ"
+            : "プリセット" + std::to_string(presetIndex + 1) + "は未解禁だよ";
         baseStatus_ = ringStatus_;
         return false;
     }
     if (!ringPresets_.capturePreset(presetIndex, spellRing_, unlockedRingCount())) {
-        ringStatus_ = "プリセット登録に失敗しました";
+        ringStatus_ = "プリセット登録に失敗したよ";
         return false;
     }
-    ringStatus_ = "プリセット" + std::to_string(presetIndex + 1) + "に登録しました";
+    ringStatus_ = "プリセット" + std::to_string(presetIndex + 1) + "に登録したよ";
     baseStatus_ = ringStatus_;
     return true;
 }
@@ -3232,8 +3257,8 @@ bool Game::applyRingPresetShortcut(int presetIndex)
     const int presetSlotCount = unlockedRingPresetSlotCount();
     if (presetIndex < 0 || presetIndex >= presetSlotCount) {
         ringStatus_ = presetSlotCount <= 0
-            ? "リングプリセットは未解禁です"
-            : "プリセット" + std::to_string(presetIndex + 1) + "は未解禁です";
+            ? "リングプリセットは未解禁だよ"
+            : "プリセット" + std::to_string(presetIndex + 1) + "は未解禁だよ";
         baseStatus_ = ringStatus_;
         return false;
     }
@@ -4724,11 +4749,13 @@ void Game::switchActiveRingWithLog(int delta)
     player_.spellRingShiftDistanceBonus = effectiveRingShiftDistanceForRing(currentRing) -
         balance_.spellRingShiftDistance;
     if (currentRing != previousRing && mode_ == ScreenMode::Playing) {
-        pushDungeonLog("Ring " + std::to_string(currentRing + 1) + " に切替", "ring_switch");
+        pushDungeonLog(
+            ringDisplayNameWithSpaceSuffix(currentRing, ringCount, "に切替"),
+            "ring_switch");
     }
 }
 
-void Game::update(const Input& input, const Time& time)
+void Game::update(const Input& input, const Time& time, Renderer& renderer)
 {
     FrameProfileScope updateProfile("Game.update");
     navigationUiCursorEnabled_ = input.uiNavigationCursorActive();
@@ -4741,6 +4768,7 @@ void Game::update(const Input& input, const Time& time)
     wetGround_.setLightweightMode(lightweight);
     updateScreenShake(time.deltaSeconds());
     updatePlayerDamageVignette(time.deltaSeconds());
+    spellRing_.updateTransientPresentation(time.deltaSeconds());
     updateAudioJingle(time.deltaSeconds());
 
     checkHotReload(time.deltaSeconds());
@@ -4785,7 +4813,7 @@ void Game::update(const Input& input, const Time& time)
     std::vector<EffectDiscoveryEvent> effectDiscoveries;
     std::vector<EffectDiscoveryEvent>* effectDiscoveryEvents =
         shouldRecordEffectDiscoveries() ? &effectDiscoveries : nullptr;
-    UiContext ui(input);
+    UiContext ui(input, renderer);
     struct UiSoundFlush {
         Game& game;
         const UiContext& ui;
@@ -4871,10 +4899,6 @@ void Game::update(const Input& input, const Time& time)
         }
         if (!enemyTestActive_) {
             updateWarpPoints(time.deltaSeconds());
-            if (gameplayRewardsEnabled()) {
-                updateExposedRewardNodes();
-                updateExposedMoonFragmentNodes();
-            }
             updateExposedEnemyNodes();
         }
         if (gameplayRewardsEnabled()) {
@@ -4882,6 +4906,9 @@ void Game::update(const Input& input, const Time& time)
         }
         normalizeOpenBuriedPlacementNodes();
         camera_.follow(player_.position, time.deltaSeconds());
+        if (!deathActive && gameplayRewardsEnabled()) {
+            prepareDungeonEventEncountersForView();
+        }
         if (!deathActive && updateDungeonEventDiscovery(time.deltaSeconds())) {
             return;
         }
@@ -5133,7 +5160,7 @@ void Game::update(const Input& input, const Time& time)
         }
         appendPickupLogs(pickupEvents);
         if (blockedObjectPickupCount > 0) {
-            pushImportantDungeonNotice("リュックがいっぱいで拾えません", "pickup_inventory_full");
+            pushImportantDungeonNotice("リュックがいっぱいで拾えないよ", "pickup_inventory_full");
         }
         if (gameplayRewardsEnabled()) {
             updateDigToolFailsafe(time.deltaSeconds());
@@ -5692,13 +5719,11 @@ void Game::checkHotReload(float dt)
         }
         reloadNotice_ = "Hot reload: " + changedPath;
         reloadNoticeTimer_ = 3.0f;
-        configureWatcher();
         return;
     } else if (fileName == "credits.txt") {
         loadTitleCreditsData();
         reloadNotice_ = "Hot reload: " + changedPath;
         reloadNoticeTimer_ = 3.0f;
-        configureWatcher();
         return;
     } else if (isEndingKamishibaiDataFileName(fileName)) {
         if (mode_ == ScreenMode::EndingKamishibai) {
@@ -5712,7 +5737,6 @@ void Game::checkHotReload(float dt)
         }
         reloadNotice_ = "Hot reload: " + changedPath;
         reloadNoticeTimer_ = 3.0f;
-        configureWatcher();
         return;
     } else if (fileName == "hitboxes.cfg" || fileName == "enemy_hitboxes.cfg") {
         loadHitboxData();
@@ -5720,7 +5744,6 @@ void Game::checkHotReload(float dt)
         rebuildEnemyHitboxEditList();
         reloadNotice_ = "Hot reload: " + changedPath;
         reloadNoticeTimer_ = 3.0f;
-        configureWatcher();
         return;
     } else if (fileName == "enemy_placements.cfg") {
         loadEnemyPlacementData();
@@ -5728,7 +5751,6 @@ void Game::checkHotReload(float dt)
         rebuildEnemyPlacementEditList();
         reloadNotice_ = "Hot reload: " + changedPath;
         reloadNoticeTimer_ = 3.0f;
-        configureWatcher();
         return;
     } else if (fileName == "enemy_shadows.cfg") {
         loadEnemyShadowData();
@@ -5736,13 +5758,11 @@ void Game::checkHotReload(float dt)
         rebuildEnemyShadowEditList();
         reloadNotice_ = "Hot reload: " + changedPath;
         reloadNoticeTimer_ = 3.0f;
-        configureWatcher();
         return;
     } else if (std::filesystem::path(changedPath).extension() == ".story") {
         loadStoryEvents();
         reloadNotice_ = "Hot reload: " + changedPath;
         reloadNoticeTimer_ = 3.0f;
-        configureWatcher();
         return;
     } else {
         reloaded = loadBalanceFromSources(message);
@@ -5758,7 +5778,6 @@ void Game::checkHotReload(float dt)
         refreshOrbitEffects();
         tileMap_.updateAround(player_.position, 0.0f, runtimeBalanceForDungeon(), dungeonLayout_);
         normalizeOpenBuriedPlacementNodes();
-        configureWatcher();
         reloadNotice_ = "Hot reload: " + changedPath;
     } else {
         reloadNotice_ = message;

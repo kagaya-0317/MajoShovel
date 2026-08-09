@@ -26,6 +26,11 @@ enum class WorldDropKind {
     Material,
 };
 
+enum class WorldDropSpawnPolicy {
+    RespectLimit,
+    Guaranteed,
+};
+
 struct WorldDropSpawnMotion {
     bool jump = false;
     bool fall = false;
@@ -81,6 +86,7 @@ struct WorldDropItem {
     std::optional<ItemInstance> instance;
     std::optional<ItemData> runtimeItem;
     bool temporary = false;
+    bool protectedFromLimitPruning = false;
 };
 
 struct WorldDropPickupEvent {
@@ -104,7 +110,8 @@ public:
         Vec2 position,
         float spawnedAtSeconds = 0.0f,
         WorldDropSpawnMotion motion = {},
-        bool temporary = false);
+        bool temporary = false,
+        WorldDropSpawnPolicy spawnPolicy = WorldDropSpawnPolicy::RespectLimit);
     bool spawnObjectInstanceDrop(
         const ObjectCatalog& catalog,
         ItemInstance instance,
@@ -114,8 +121,19 @@ public:
         bool temporary = false,
         const ItemData* runtimeItem = nullptr);
     bool spawnDigItemDrop(const ObjectCatalog& catalog, Vec2 position, float spawnedAtSeconds = 0.0f);
-    bool spawnMoneyDrop(int amount, Vec2 position, float spawnedAtSeconds = 0.0f, WorldDropSpawnMotion motion = {});
-    bool spawnMaterialDrop(MaterialType type, int count, Vec2 position, float spawnedAtSeconds = 0.0f, WorldDropSpawnMotion motion = {});
+    bool spawnMoneyDrop(
+        int amount,
+        Vec2 position,
+        float spawnedAtSeconds = 0.0f,
+        WorldDropSpawnMotion motion = {},
+        WorldDropSpawnPolicy spawnPolicy = WorldDropSpawnPolicy::RespectLimit);
+    bool spawnMaterialDrop(
+        MaterialType type,
+        int count,
+        Vec2 position,
+        float spawnedAtSeconds = 0.0f,
+        WorldDropSpawnMotion motion = {},
+        WorldDropSpawnPolicy spawnPolicy = WorldDropSpawnPolicy::RespectLimit);
     bool spawnRewardDrop(const ObjectCatalog& catalog, Vec2 position, float spawnedAtSeconds = 0.0f);
     bool stealNearestDrop(
         const ObjectCatalog& catalog,
@@ -202,15 +220,18 @@ public:
 private:
     const ObjectDefinition* chooseDigDrop(const ObjectCatalog& catalog, std::string_view warningContext) const;
     const ObjectDefinition* chooseDropForTile(TileType tileType, const ObjectCatalog& catalog) const;
-    bool canSpawnDrop(std::string_view label);
+    bool canSpawnDrop(
+        std::string_view label,
+        WorldDropSpawnPolicy spawnPolicy = WorldDropSpawnPolicy::RespectLimit);
     bool pruneOneDropForLimit();
     Vec2 randomDropVelocity() const;
-    void spawnDrop(
+    bool spawnDrop(
         const ObjectDefinition& object,
         Vec2 position,
         float spawnedAtSeconds,
         WorldDropSpawnMotion motion = {},
-        bool temporary = false);
+        bool temporary = false,
+        WorldDropSpawnPolicy spawnPolicy = WorldDropSpawnPolicy::RespectLimit);
 
     std::vector<WorldDropItem> drops_;
     int dropLimit_ = 300;

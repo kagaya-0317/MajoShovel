@@ -113,6 +113,7 @@ struct EventEnemySpawnOptions {
     bool detectedOnSpawn = true;
     bool fixedPosition = false;
     bool sleeping = false;
+    bool activationLocked = false;
     bool bossVariant = false;
     float hpMultiplier = 1.0f;
     float contactDamageMultiplier = 1.0f;
@@ -372,6 +373,7 @@ public:
     int pushLightEnemies(Vec2 center, TileMap& map, float dt, float radius, float strength = 1.0f);
     void clearSpawnBiases();
     void applySpawnBias(std::string_view group, double multiplier);
+    void activateDungeonEventEnemies(std::string_view eventId, bool wakeSleepingEnemies);
     void wakeDungeonEventEnemies(std::string_view eventId);
     bool setManualDetectionOnlyForRuntimeEnemy(int runtimeId, bool manualOnly);
     bool setManualDetectionOnlyNear(Vec2 position, float radius, bool manualOnly);

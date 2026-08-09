@@ -46,6 +46,7 @@ constexpr std::string_view BrokenItemNamePrefix = "壊れた";
 constexpr Color BrokenItemImageTint{72, 72, 80, 238};
 constexpr Color BrokenItemFallbackColor{42, 42, 48, 255};
 constexpr Color InventoryEffectTextColor{255, 230, 150, 255};
+constexpr Color InventoryEnhancedEffectValueColor{255, 64, 64, 255};
 constexpr float TwoPi = 6.283185307f;
 constexpr float DetailLabelWidth = 106.0f;
 constexpr float DetailMinLineHeight = 31.0f;
@@ -1025,6 +1026,133 @@ std::string joinInventoryUiEffectLines(const std::vector<std::string>& lines)
     return text;
 }
 
+struct InventoryUiEffectPowerValue {
+    std::size_t begin = 0;
+    std::size_t end = 0;
+    std::string text;
+};
+
+struct InventoryUiEffectTextRun {
+    std::string text;
+    Color color = InventoryEffectTextColor;
+};
+
+std::optional<InventoryUiEffectPowerValue> inventoryUiEnhancedEffectPowerValue(
+    const ObjectEffectDisplayLine& line,
+    const ItemData& item,
+    const std::optional<InventoryUiItemStats>& stats)
+{
+    if (!stats || line.text == "？？？") {
+        return std::nullopt;
+    }
+
+    std::string_view label;
+    int value = 0;
+    if (line.effectKey == "basic_attack" && stats->attackBonus != 0) {
+        label = "攻撃力";
+        value = item.attackPower + stats->attackBonus;
+    } else if ((line.effectKey == "dig" || line.effectKey == "dig_hard") && stats->digBonus != 0) {
+        label = "掘削力";
+        value = item.digPower + stats->digBonus;
+    } else {
+        return std::nullopt;
+    }
+
+    const std::size_t labelPos = line.text.find(label);
+    if (labelPos == std::string::npos) {
+        return std::nullopt;
+    }
+    std::size_t numberBegin = labelPos + label.size();
+    while (numberBegin < line.text.size() &&
+           !std::isdigit(static_cast<unsigned char>(line.text[numberBegin]))) {
+        ++numberBegin;
+    }
+    if (numberBegin >= line.text.size()) {
+        return std::nullopt;
+    }
+    std::size_t numberEnd = numberBegin;
+    while (numberEnd < line.text.size() &&
+           std::isdigit(static_cast<unsigned char>(line.text[numberEnd]))) {
+        ++numberEnd;
+    }
+    return InventoryUiEffectPowerValue{
+        numberBegin,
+        numberEnd,
+        std::to_string(value),
+    };
+}
+
+void appendInventoryUiEffectTextRun(
+    std::vector<InventoryUiEffectTextRun>& runs,
+    std::string text,
+    Color color)
+{
+    if (text.empty()) {
+        return;
+    }
+    if (!runs.empty() &&
+        runs.back().color.r == color.r &&
+        runs.back().color.g == color.g &&
+        runs.back().color.b == color.b &&
+        runs.back().color.a == color.a) {
+        runs.back().text += text;
+        return;
+    }
+    runs.push_back({std::move(text), color});
+}
+
+void drawInventoryUiEffectLines(
+    Renderer& renderer,
+    UiRect panel,
+    float& y,
+    const std::vector<ObjectEffectDisplayLine>& lines,
+    const ItemData& item,
+    const std::optional<InventoryUiItemStats>& stats)
+{
+    if (lines.empty()) {
+        return;
+    }
+
+    std::vector<InventoryUiEffectTextRun> ownedRuns;
+    ownedRuns.reserve(lines.size() * 3);
+    const bool omitBullet = lines.size() == 1 && lines.front().text == "なし";
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        if (index > 0) {
+            appendInventoryUiEffectTextRun(ownedRuns, "\n", InventoryEffectTextColor);
+        }
+        const ObjectEffectDisplayLine& line = lines[index];
+        const std::string bullet = omitBullet ? std::string{} : std::string{"・"};
+        const std::optional<InventoryUiEffectPowerValue> power =
+            inventoryUiEnhancedEffectPowerValue(line, item, stats);
+        if (!power) {
+            appendInventoryUiEffectTextRun(ownedRuns, bullet + line.text, InventoryEffectTextColor);
+            continue;
+        }
+
+        appendInventoryUiEffectTextRun(
+            ownedRuns,
+            bullet + line.text.substr(0, power->begin),
+            InventoryEffectTextColor);
+        appendInventoryUiEffectTextRun(
+            ownedRuns,
+            power->text,
+            InventoryEnhancedEffectValueColor);
+        appendInventoryUiEffectTextRun(
+            ownedRuns,
+            line.text.substr(power->end),
+            InventoryEffectTextColor);
+    }
+
+    std::vector<UiColoredTextRun> runs;
+    runs.reserve(ownedRuns.size());
+    for (const InventoryUiEffectTextRun& run : ownedRuns) {
+        runs.push_back({run.text, run.color});
+    }
+    constexpr float TextGap = 8.0f;
+    const UiRect content = uiSubPanelContentRect(panel);
+    y += drawUiWrappedColoredText(renderer, {content.pos.x, y}, runs, content.size.x, 2) + TextGap;
+}
+
 std::string formatInventoryUiWeightText(const ItemData& item, const std::optional<InventoryUiItemStats>& stats)
 {
     const double baseWeightKg = std::max(0.0, item.weightKg);
@@ -1059,31 +1187,31 @@ void drawItemEffectDetailSections(
     const ItemData& item,
     const ObjectCatalog& catalog,
     const EncyclopediaSystem& encyclopedia,
+    const std::optional<InventoryUiItemStats>& stats,
     int unlockedRingCount)
 {
     const ObjectEffectDisplaySections sections =
-        encyclopedia.getObjectEffectDisplaySections(item.id, catalog, EffectRevealMode::WithUnknown);
+        encyclopedia.buildObjectEffectDisplaySections(item.id, catalog, EffectRevealMode::WithUnknown);
     if (isStaffObject(item)) {
         std::vector<std::string> equipmentLines = staffEquipmentEffectLines(item, catalog, unlockedRingCount);
-        std::vector<std::string> ringLines = sections.ringLines;
-        applyStaffManualEquipmentEffectText(item, equipmentLines, ringLines.size());
+        applyStaffManualEquipmentEffectText(item, equipmentLines, sections.ringLines.size());
         if (!equipmentLines.empty()) {
             drawInventoryUiEffectText(renderer, panel, y, "装備時効果");
             drawInventoryUiEffectText(renderer, panel, y, joinInventoryUiEffectLines(equipmentLines));
         }
-        if (!ringLines.empty()) {
+        if (!sections.ringLines.empty()) {
             drawInventoryUiEffectText(renderer, panel, y, "リングに乗せたときの効果");
-            drawInventoryUiEffectText(renderer, panel, y, joinInventoryUiEffectLines(ringLines));
+            drawInventoryUiEffectLines(renderer, panel, y, sections.ringLines, item, stats);
         }
         return;
     }
     if (!sections.useLines.empty()) {
         drawInventoryUiEffectText(renderer, panel, y, "使用時の効果");
-        drawInventoryUiEffectText(renderer, panel, y, joinInventoryUiEffectLines(sections.useLines));
+        drawInventoryUiEffectLines(renderer, panel, y, sections.useLines, item, stats);
     }
     if (!sections.ringLines.empty()) {
         drawInventoryUiEffectText(renderer, panel, y, "リングに乗せたときの効果");
-        drawInventoryUiEffectText(renderer, panel, y, joinInventoryUiEffectLines(sections.ringLines));
+        drawInventoryUiEffectLines(renderer, panel, y, sections.ringLines, item, stats);
     }
 }
 
@@ -1417,6 +1545,25 @@ void drawInventoryUiSlot(
     drawInventoryUiSlot(renderer, rect, entry, InventoryUiSlotStyle{selected, false, imageMaxSize});
 }
 
+namespace {
+
+UiRect inventoryUiGridSlotRectAt(
+    Vec2 origin,
+    int index,
+    const InventoryUiGridStyle& style)
+{
+    const int columns = std::max(1, style.columns);
+    const int safeIndex = std::max(0, index);
+    const int row = safeIndex / columns;
+    const int column = safeIndex % columns;
+    return {{
+        origin.x + static_cast<float>(column) * (style.slotSize.x + style.slotGap.x),
+        origin.y + static_cast<float>(row) * (style.slotSize.y + style.slotGap.y),
+    }, style.slotSize};
+}
+
+}
+
 int inventoryUiGridRowCount(int itemCount, const InventoryUiGridStyle& style)
 {
     const int columns = std::max(1, style.columns);
@@ -1482,14 +1629,18 @@ UiScrollAreaLayout updateInventoryUiGrid(
 
 UiRect inventoryUiGridSlotRect(const UiScrollAreaLayout& layout, int index, const InventoryUiGridStyle& style)
 {
-    const int columns = std::max(1, style.columns);
-    const int clampedIndex = std::max(0, index);
-    const int row = clampedIndex / columns;
-    const int column = clampedIndex % columns;
-    return {{
-        layout.content.pos.x + static_cast<float>(column) * (style.slotSize.x + style.slotGap.x),
-        layout.content.pos.y + static_cast<float>(row) * (style.slotSize.y + style.slotGap.y) - layout.scrollOffset,
-    }, style.slotSize};
+    return inventoryUiGridSlotRectAt(
+        {layout.content.pos.x, layout.content.pos.y - layout.scrollOffset},
+        index,
+        style);
+}
+
+UiRect standardInventoryUiGridSlotRect(int index, float originY)
+{
+    return inventoryUiGridSlotRectAt(
+        {StandardInventoryUiGridOriginX, originY},
+        index,
+        InventoryUiGridStyle{});
 }
 
 const InventoryUiScreenLayout& standardInventoryUiScreenLayout()
@@ -1497,9 +1648,8 @@ const InventoryUiScreenLayout& standardInventoryUiScreenLayout()
     static const InventoryUiScreenLayout layout = [] {
         InventoryUiScreenLayout result;
         const float detailX = result.window.pos.x + 820.0f;
-        const float gridWidth = inventoryUiGridWidth(result.grid);
         result.gridOrigin = {
-            result.window.pos.x + (detailX - result.window.pos.x - gridWidth) * 0.5f,
+            StandardInventoryUiGridOriginX,
             result.window.pos.y + 84.0f,
         };
         result.detailPanel = {
@@ -1513,17 +1663,7 @@ const InventoryUiScreenLayout& standardInventoryUiScreenLayout()
 
 UiRect inventoryUiScreenSlotRect(const InventoryUiScreenLayout& layout, int index)
 {
-    const int safeIndex = std::max(0, index);
-    const int columns = std::max(1, layout.grid.columns);
-    const int row = safeIndex / columns;
-    const int column = safeIndex % columns;
-    return {
-        {
-            layout.gridOrigin.x + static_cast<float>(column) * (layout.grid.slotSize.x + layout.grid.slotGap.x),
-            layout.gridOrigin.y + static_cast<float>(row) * (layout.grid.slotSize.y + layout.grid.slotGap.y),
-        },
-        layout.grid.slotSize,
-    };
+    return inventoryUiGridSlotRectAt(layout.gridOrigin, index, layout.grid);
 }
 
 void keepInventoryUiGridItemVisible(
@@ -1605,7 +1745,15 @@ void drawInventoryUiDetailPanel(
     const bool broken = stats ? stats->broken : entry.item->durability == 0;
     drawInventoryDetailImage(renderer, panel, detailLineY, *entry.item, broken);
     drawUiDetailText(renderer, panel, detailLineY, entry.item->description.empty() ? "-" : entry.item->description);
-    drawItemEffectDetailSections(renderer, panel, detailLineY, *entry.item, catalog, encyclopedia, options.unlockedRingCount);
+    drawItemEffectDetailSections(
+        renderer,
+        panel,
+        detailLineY,
+        *entry.item,
+        catalog,
+        encyclopedia,
+        stats,
+        options.unlockedRingCount);
 
     if (!entry.item->category.empty()) {
         drawUiDetailLine(renderer, panel, detailLineY, "分類", entry.item->category);

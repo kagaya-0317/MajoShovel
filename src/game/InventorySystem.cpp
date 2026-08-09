@@ -4,6 +4,7 @@
 #include "game/EffectDispatcher.hpp"
 #include "game/EncyclopediaSystem.hpp"
 #include "game/InventoryUiCommon.hpp"
+#include "game/ItemSortPolicy.hpp"
 #include "game/ObjectImageRenderer.hpp"
 #include "game/RingDisplayName.hpp"
 
@@ -14,7 +15,6 @@
 #include <cstdlib>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <utility>
 
 namespace majo {
@@ -50,6 +50,7 @@ constexpr float GrabbedSlotContentAlpha = 0.42f;
 constexpr float GrabbedFloatingIconLift = 38.0f;
 constexpr float GrabbedFloatingIconBobAmplitude = 4.0f;
 constexpr float GrabbedFloatingIconBobSpeed = 5.4f;
+constexpr float InventoryScreenGridDownShift = 60.0f;
 constexpr std::array<Vec2, ShortcutHudColumns> ShortcutHudSlotCenters{{
     {160.0f / ShortcutHudFrameDesignW, 74.0f / ShortcutHudFrameDesignH},
     {278.0f / ShortcutHudFrameDesignW, 74.0f / ShortcutHudFrameDesignH},
@@ -85,14 +86,24 @@ UiRect closeButtonRect()
     return {{PanelX + PanelW - 70.0f, PanelY + 18.0f}, {46.0f, 34.0f}};
 }
 
+const InventoryUiScreenLayout& inventoryScreenLayout()
+{
+    static const InventoryUiScreenLayout layout = [] {
+        InventoryUiScreenLayout result = standardInventoryUiScreenLayout();
+        result.gridOrigin.y += InventoryScreenGridDownShift;
+        return result;
+    }();
+    return layout;
+}
+
 UiRect inventoryScreenRect()
 {
-    return standardInventoryUiScreenLayout().window;
+    return inventoryScreenLayout().window;
 }
 
 UiRect inventoryModalBackdropRect()
 {
-    return standardInventoryUiScreenLayout().backdrop;
+    return inventoryScreenLayout().backdrop;
 }
 
 int clampedUnlockedRingCount(int unlockedRingCount)
@@ -107,17 +118,20 @@ std::string_view protectionCommandLabel(const InventoryObjectInstance& instance)
 
 UiRect inventorySortButtonRect()
 {
-    return uiBottomLeftButtonRect(inventoryScreenRect(), {150.0f, ui::ButtonHeight});
+    return uiFooterActionButtonRect(
+        inventoryScreenRect(),
+        {150.0f, ui::ButtonHeight},
+        UiFooterActionAlignment::Left);
 }
 
 UiRect inventoryDiscardConfirmRect()
 {
-    return {{390.0f, 220.0f}, {500.0f, 280.0f}};
+    return uiEnsureDecoratedWindowMinSize({{390.0f, 220.0f}, {500.0f, 280.0f}});
 }
 
 UiRect inventorySlotRect(int index)
 {
-    return inventoryUiScreenSlotRect(standardInventoryUiScreenLayout(), index);
+    return inventoryUiScreenSlotRect(inventoryScreenLayout(), index);
 }
 
 UiRect makeShortcutHudPanelRect(int screenWidth, int screenHeight)
@@ -307,26 +321,6 @@ void setInventoryAddResult(
     outResult->quantity = std::max(0, quantity);
 }
 
-std::unordered_map<std::string, int> buildObjectSortOrder(const ObjectCatalog& catalog)
-{
-    std::unordered_map<std::string, int> order;
-    order.reserve(catalog.objects.size());
-    for (int i = 0; i < static_cast<int>(catalog.objects.size()); ++i) {
-        const ObjectDefinition& object = catalog.objects[static_cast<std::size_t>(i)];
-        if (!object.id.empty() && order.find(object.id) == order.end()) {
-            order.emplace(object.id, i);
-        }
-    }
-    return order;
-}
-
-int objectSortOrder(const std::unordered_map<std::string, int>& order, const std::string& objectId)
-{
-    constexpr int MissingOrder = 1'000'000'000;
-    const auto it = order.find(objectId);
-    return it != order.end() ? it->second : MissingOrder;
-}
-
 const std::string& objectSortId(const InventoryObjectInstance& instance)
 {
     return !instance.item.id.empty() ? instance.item.id : instance.instance.objectId;
@@ -423,7 +417,7 @@ bool InventorySystem::restoreEquippedStaffInstanceId(std::string_view instanceId
     return true;
 }
 
-bool InventorySystem::sortByCatalogOrder(const ObjectCatalog& catalog)
+bool InventorySystem::sortByItemOrder(const ObjectCatalog& catalog)
 {
     closeUiCommandMenu(slotCommandMenu_);
     slotCommandMenuIndex_ = -1;
@@ -443,24 +437,16 @@ bool InventorySystem::sortByCatalogOrder(const ObjectCatalog& catalog)
         return false;
     }
 
-    const auto order = buildObjectSortOrder(catalog);
-    std::stable_sort(objectStacks_.begin(), objectStacks_.end(), [&order](const InventoryObjectStack& a, const InventoryObjectStack& b) {
-        const int orderA = objectSortOrder(order, a.objectId);
-        const int orderB = objectSortOrder(order, b.objectId);
-        if (orderA != orderB) {
-            return orderA < orderB;
-        }
-        return a.objectId < b.objectId;
+    const ItemSortPolicy sortPolicy(catalog);
+    std::stable_sort(objectStacks_.begin(), objectStacks_.end(), [&sortPolicy](const InventoryObjectStack& a, const InventoryObjectStack& b) {
+        return sortPolicy.less({a.objectId}, {b.objectId});
     });
-    std::stable_sort(objectInstances_.begin(), objectInstances_.end(), [&order](const InventoryObjectInstance& a, const InventoryObjectInstance& b) {
+    std::stable_sort(objectInstances_.begin(), objectInstances_.end(), [this, &sortPolicy](const InventoryObjectInstance& a, const InventoryObjectInstance& b) {
         const std::string& idA = objectSortId(a);
         const std::string& idB = objectSortId(b);
-        const int orderA = objectSortOrder(order, idA);
-        const int orderB = objectSortOrder(order, idB);
-        if (orderA != orderB) {
-            return orderA < orderB;
-        }
-        return idA < idB;
+        return sortPolicy.less(
+            {idA, isStaffEquipped(a.instance.instanceId)},
+            {idB, isStaffEquipped(b.instance.instanceId)});
     });
 
     std::vector<int> packedIndices;
@@ -468,18 +454,20 @@ bool InventorySystem::sortByCatalogOrder(const ObjectCatalog& catalog)
     for (int i = 0; i < totalCount; ++i) {
         packedIndices.push_back(i);
     }
-    std::stable_sort(packedIndices.begin(), packedIndices.end(), [this, &order](int a, int b) {
-        const std::string& idA = packedObjectSortId(a, objectStacks_, objectInstances_);
-        const std::string& idB = packedObjectSortId(b, objectStacks_, objectInstances_);
-        const int orderA = objectSortOrder(order, idA);
-        const int orderB = objectSortOrder(order, idB);
-        if (orderA != orderB) {
-            return orderA < orderB;
+    const int stackCount = static_cast<int>(objectStacks_.size());
+    const auto sortSubjectForPackedIndex = [this, stackCount](int packedIndex) {
+        ItemSortSubject subject{
+            packedObjectSortId(packedIndex, objectStacks_, objectInstances_),
+        };
+        const int instanceIndex = packedIndex - stackCount;
+        if (instanceIndex >= 0 && instanceIndex < static_cast<int>(objectInstances_.size())) {
+            subject.equippedStaff = isStaffEquipped(
+                objectInstances_[static_cast<std::size_t>(instanceIndex)].instance.instanceId);
         }
-        if (idA != idB) {
-            return idA < idB;
-        }
-        return a < b;
+        return subject;
+    };
+    std::stable_sort(packedIndices.begin(), packedIndices.end(), [&sortPolicy, &sortSubjectForPackedIndex](int a, int b) {
+        return sortPolicy.less(sortSubjectForPackedIndex(a), sortSubjectForPackedIndex(b));
     });
 
     packedItemLayout_.assignSequential(packedIndices, ShortcutSlotCount);
@@ -702,7 +690,7 @@ bool InventorySystem::removeObjectItemCount(std::string_view objectId, int count
             removePackedSlotAtPackedIndex(stackIndex);
             objectStacks_.erase(it);
         }
-        status_ = "売却しました";
+        status_ = "売却したよ";
         return true;
     }
 
@@ -745,7 +733,7 @@ bool InventorySystem::useObjectStackById(
         return used;
     }
 
-    status_ = "アイテムがありません";
+    status_ = "アイテムなし";
     if (outStatus != nullptr) {
         *outStatus = status_;
     }
@@ -788,7 +776,7 @@ bool InventorySystem::useObjectInstanceById(
         return used;
     }
 
-    status_ = "アイテムがありません";
+    status_ = "アイテムなし";
     if (outStatus != nullptr) {
         *outStatus = status_;
     }
@@ -807,7 +795,7 @@ bool InventorySystem::removeObjectInstance(std::string_view instanceId)
         return false;
     }
     if (isStaffEquipped(instanceId)) {
-        status_ = "装備中の杖は外してください";
+        status_ = "装備中の杖は外してね";
         return false;
     }
     if (it->instance.protectionEnabled) {
@@ -817,7 +805,7 @@ bool InventorySystem::removeObjectInstance(std::string_view instanceId)
     const int instanceIndex = static_cast<int>(std::distance(objectInstances_.begin(), it));
     removePackedSlotAtPackedIndex(static_cast<int>(objectStacks_.size()) + instanceIndex);
     objectInstances_.erase(it);
-    status_ = "売却しました";
+    status_ = "売却したよ";
     return true;
 }
 
@@ -833,7 +821,7 @@ bool InventorySystem::takeObjectInstance(std::string_view instanceId, InventoryO
         return false;
     }
     if (isStaffEquipped(instanceId)) {
-        status_ = "装備中の杖はしまえません";
+        status_ = "装備中の杖はしまえないよ";
         return false;
     }
     outInstance = std::move(*it);
@@ -862,7 +850,7 @@ bool InventorySystem::repairObjectInstance(std::string_view instanceId)
     }
     instance.currentDurability = instance.maxDurability;
     instance.isBroken = false;
-    status_ = "修理しました";
+    status_ = "修理したよ";
     return true;
 }
 
@@ -938,7 +926,7 @@ bool InventorySystem::enhanceObjectInstance(
         digLevelDelta > 0 ? instance.digEnhanceLevel :
         instance.durabilityEnhanceLevel;
     if (modeEnhanceLevel >= maxEnhanceLevel) {
-        status_ = "強化上限です";
+        status_ = "強化上限だよ";
         return false;
     }
     ++instance.enhanceLevel;
@@ -953,7 +941,7 @@ bool InventorySystem::enhanceObjectInstance(
         instance.maxDurability += durabilityBonusUnits;
         instance.currentDurability = std::min(instance.maxDurability, std::max(0, instance.currentDurability + durabilityBonusUnits));
     }
-    status_ = "個体強化しました";
+    status_ = "個体強化したよ";
     return true;
 }
 
@@ -1010,7 +998,7 @@ bool InventorySystem::enhanceObjectStackItem(
         removePackedSlotAtPackedIndex(stackIndex);
         objectStacks_.erase(it);
     }
-    status_ = "個体化して強化しました";
+    status_ = "個体化して強化したよ";
     return true;
 }
 
@@ -1029,7 +1017,7 @@ bool InventorySystem::modifyObjectInstanceShape(std::string_view instanceId, dou
     ItemInstance& instance = it->instance;
     instance.weightModifier = std::clamp(instance.weightModifier * weightMultiplier, 0.25, 4.0);
     instance.sizeModifier = std::clamp(instance.sizeModifier * sizeMultiplier, 0.50, 3.0);
-    status_ = "加工しました";
+    status_ = "加工したよ";
     return true;
 }
 
@@ -1061,7 +1049,7 @@ bool InventorySystem::modifyObjectStackItemShape(std::string_view objectId, doub
         removePackedSlotAtPackedIndex(stackIndex);
         objectStacks_.erase(it);
     }
-    status_ = "個体化して加工しました";
+    status_ = "個体化して加工したよ";
     return true;
 }
 
@@ -1071,7 +1059,7 @@ bool InventorySystem::enhanceSelectedObjectInstance(int attackBonus, int digBonu
     if (selectedInstance == nullptr) {
         InventoryObjectStack* selectedStack = objectStackAtScreenIndex(selectedShortcutIndex());
         if (selectedStack == nullptr || selectedStack->count <= 0) {
-            status_ = "強化対象がありません";
+            status_ = "強化対象がないよ";
             return false;
         }
         if (static_cast<int>(objectStacks_.size() + objectInstances_.size()) >= ShortcutSlotCount) {
@@ -1107,7 +1095,7 @@ bool InventorySystem::enhanceSelectedObjectInstance(int attackBonus, int digBonu
         instance.maxDurability += durabilityBonusUnits;
         instance.currentDurability = std::min(instance.maxDurability, std::max(0, instance.currentDurability + durabilityBonusUnits));
     }
-    status_ = "個体強化しました";
+    status_ = "個体強化したよ";
     return true;
 }
 
@@ -1478,7 +1466,7 @@ bool InventorySystem::discardScreenItem(int index, bool itemDiscardEnabled)
             return false;
         }
         if (isImportantItem(objectStack->item)) {
-            status_ = "重要アイテムは捨てられません";
+            status_ = "重要アイテムは捨てられないよ";
             return false;
         }
         if (itemDiscardEnabled) {
@@ -1500,15 +1488,15 @@ bool InventorySystem::discardScreenItem(int index, bool itemDiscardEnabled)
     }
     if (InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(index)) {
         if (isStaffEquipped(objectInstance->instance.instanceId)) {
-            status_ = "装備中の杖は捨てられません";
+            status_ = "装備中の杖は捨てられないよ";
             return false;
         }
         if (objectInstance->instance.protectionEnabled) {
-            status_ = "保護中は捨てられません";
+            status_ = "保護中のアイテムは捨てられないよ";
             return false;
         }
         if (isImportantItem(objectInstance->item)) {
-            status_ = "重要アイテムは捨てられません";
+            status_ = "重要アイテムは捨てられないよ";
             return false;
         }
         if (itemDiscardEnabled) {
@@ -1534,7 +1522,7 @@ bool InventorySystem::discardScreenItem(int index, bool itemDiscardEnabled)
 void InventorySystem::openDiscardConfirmDialog(int slotIndex)
 {
     if (!canDiscardScreenItem(slotIndex, false)) {
-        status_ = "捨てられません";
+        status_ = "捨てられないよ";
         return;
     }
 
@@ -1596,17 +1584,17 @@ void InventorySystem::drawDiscardConfirmDialog(Renderer& renderer, const ObjectC
     questionStyle.scale = 2;
     const std::string question = fittedInlineItemText(
         renderer,
-        iconPrefix + itemName + "を捨てますか？",
+        iconPrefix + itemName + "を捨てる？",
         body.size.x,
         questionStyle);
     float y = body.pos.y;
     drawInlineItemText(renderer, catalog, {body.pos.x, y}, question, questionStyle);
-    y += measureInlineItemText(renderer, question, questionStyle).y + 18.0f;
+    y += measureInlineItemText(renderer, question, questionStyle).y;
     renderer.drawWrappedText(
         {body.pos.x, y},
-        "（捨てたアイテムは再入手できません）",
+        "（捨てたアイテムは再入手できないよ）",
         body.size.x,
-        {255, 224, 164, 255},
+        ui::Text,
         2);
 
     drawUiConfirmDialogButtons(renderer, discardConfirm_, panel);
@@ -1633,11 +1621,11 @@ bool InventorySystem::canEquipStaffScreenItem(int index) const
 bool InventorySystem::unequipStaff()
 {
     if (equippedStaffInstanceId_.empty()) {
-        status_ = "杖を装備していません";
+        status_ = "杖を装備していないよ";
         return false;
     }
     equippedStaffInstanceId_.clear();
-    status_ = "杖を外しました";
+    status_ = "杖を外したよ";
     return true;
 }
 
@@ -1648,11 +1636,11 @@ bool InventorySystem::equipStaffScreenItem(int index, const SpellRingSystem& spe
             return unequipStaff();
         }
         if (!isStaffObject(objectInstance->item)) {
-            status_ = "杖ではありません";
+            status_ = "杖ではないよ";
             return false;
         }
         if (objectInstance->instance.isBroken) {
-            status_ = "壊れた杖は装備できません";
+            status_ = "壊れた杖は装備できないよ";
             return false;
         }
         if (ringContainsInstanceId(spellRing, objectInstance->instance.instanceId)) {
@@ -1660,21 +1648,21 @@ bool InventorySystem::equipStaffScreenItem(int index, const SpellRingSystem& spe
             return false;
         }
         equippedStaffInstanceId_ = objectInstance->instance.instanceId;
-        status_ = "杖を装備しました: " + objectInstance->item.name;
+        status_ = "杖を装備したよ: " + objectInstance->item.name;
         return true;
     }
 
     InventoryObjectStack* objectStack = objectStackAtScreenIndex(index);
     if (objectStack == nullptr || objectStack->count <= 0) {
-        status_ = "杖がありません";
+        status_ = "杖がないよ";
         return false;
     }
     if (!isStaffObject(objectStack->item)) {
-        status_ = "杖ではありません";
+        status_ = "杖ではないよ";
         return false;
     }
     if (objectStack->item.durability == 0) {
-        status_ = "壊れた杖は装備できません";
+        status_ = "壊れた杖は装備できないよ";
         return false;
     }
     const bool stackSlotWillRemain = objectStack->count > 1;
@@ -1702,7 +1690,7 @@ bool InventorySystem::equipStaffScreenItem(int index, const SpellRingSystem& spe
     syncPackedItemSlots();
     moveObjectInstanceToScreenSlot(instanceId, index);
     equippedStaffInstanceId_ = instanceId;
-    status_ = "杖を装備しました: " + item.name;
+    status_ = "杖を装備したよ: " + item.name;
     return true;
 }
 
@@ -1736,12 +1724,12 @@ bool InventorySystem::equipStaffObject(
                 return finish(equipStaffScreenItem(slot, spellRing));
             }
         }
-        status_ = "杖がありません";
+        status_ = "杖がないよ";
         return finish(false);
     }
 
     if (objectId.empty()) {
-        status_ = "杖がありません";
+        status_ = "杖がないよ";
         return finish(false);
     }
 
@@ -1752,7 +1740,7 @@ bool InventorySystem::equipStaffObject(
         }
     }
 
-    status_ = "杖がありません";
+    status_ = "杖がないよ";
     return finish(false);
 }
 
@@ -2007,7 +1995,7 @@ bool InventorySystem::addScreenItemToRing(
             return false;
         }
         if (!screenItemCanAddToRing(index, spellRing, preferredAngle)) {
-            status_ = spellRing.canAddItem() ? "リングへ配置できません" : "リング満杯";
+            status_ = spellRing.canAddItem() ? "リングへ配置できないよ" : "リング満杯";
             return false;
         }
 
@@ -2016,7 +2004,7 @@ bool InventorySystem::addScreenItemToRing(
             ? spellRing.addObjectItemAtAngle(stack->item, instance, *preferredAngle, outResult)
             : spellRing.addObjectItem(stack->item, instance, outResult);
         if (!added) {
-            status_ = "リングへ配置できません";
+            status_ = "リングへ配置できないよ";
             return false;
         }
 
@@ -2034,11 +2022,11 @@ bool InventorySystem::addScreenItemToRing(
 
     if (InventoryObjectInstance* instance = objectInstanceAtScreenIndex(index)) {
         if (isStaffEquipped(instance->instance.instanceId)) {
-            status_ = "装備中の杖はリングに乗せられません";
+            status_ = "装備中の杖はリングに乗せられないよ";
             return false;
         }
         if (!screenItemCanAddToRing(index, spellRing, preferredAngle)) {
-            status_ = spellRing.canAddItem() ? "リングへ配置できません" : "リング満杯";
+            status_ = spellRing.canAddItem() ? "リングへ配置できないよ" : "リング満杯";
             return false;
         }
 
@@ -2046,7 +2034,7 @@ bool InventorySystem::addScreenItemToRing(
             ? spellRing.addObjectItemAtAngle(instance->item, instance->instance, *preferredAngle, outResult)
             : spellRing.addObjectItem(instance->item, instance->instance, outResult);
         if (!added) {
-            status_ = "リングへ配置できません";
+            status_ = "リングへ配置できないよ";
             return false;
         }
 
@@ -2067,27 +2055,28 @@ bool InventorySystem::addScreenItemToRingForRing(
     int index,
     SpellRingSystem& spellRing,
     int ringIndex,
+    int unlockedRingCount,
     SpellRingAddResult* outResult)
 {
     if (ringIndex < 0 || ringIndex >= SpellRingCount) {
-        status_ = "リングへ配置できません";
+        status_ = "リングへ配置できないよ";
         return false;
     }
 
-    const std::string ringLabel = "リング" + std::to_string(ringIndex + 1);
+    const std::string ringLabel(ringDisplayName(ringIndex, unlockedRingCount));
     if (InventoryObjectStack* stack = objectStackAtScreenIndex(index)) {
         if (stack->count <= 0) {
             status_ = "ショートカット空き";
             return false;
         }
         if (!screenItemCanAddToRingForRing(index, spellRing, ringIndex)) {
-            status_ = spellRing.canAddItemForRing(ringIndex) ? ringLabel + "へ配置できません" : ringLabel + "満杯";
+            status_ = spellRing.canAddItemForRing(ringIndex) ? ringLabel + "へ配置できないよ" : ringLabel + "満杯";
             return false;
         }
 
         ItemInstance instance = createDetachedObjectInstance(stack->item);
         if (!spellRing.addObjectItemToRing(ringIndex, stack->item, instance, outResult)) {
-            status_ = ringLabel + "へ配置できません";
+            status_ = ringLabel + "へ配置できないよ";
             return false;
         }
 
@@ -2105,16 +2094,16 @@ bool InventorySystem::addScreenItemToRingForRing(
 
     if (InventoryObjectInstance* instance = objectInstanceAtScreenIndex(index)) {
         if (isStaffEquipped(instance->instance.instanceId)) {
-            status_ = "装備中の杖はリングに乗せられません";
+            status_ = "装備中の杖はリングに乗せられないよ";
             return false;
         }
         if (!screenItemCanAddToRingForRing(index, spellRing, ringIndex)) {
-            status_ = spellRing.canAddItemForRing(ringIndex) ? ringLabel + "へ配置できません" : ringLabel + "満杯";
+            status_ = spellRing.canAddItemForRing(ringIndex) ? ringLabel + "へ配置できないよ" : ringLabel + "満杯";
             return false;
         }
 
         if (!spellRing.addObjectItemToRing(ringIndex, instance->item, instance->instance, outResult)) {
-            status_ = ringLabel + "へ配置できません";
+            status_ = ringLabel + "へ配置できないよ";
             return false;
         }
 
@@ -2150,11 +2139,11 @@ bool InventorySystem::addObjectToRing(
             return entry.instance.instanceId == instanceId;
         });
         if (it == objectInstances_.end()) {
-            setStatus("リュックにありません");
+            setStatus("リュックにないよ");
             return false;
         }
         if (isStaffEquipped(instanceId)) {
-            setStatus("装備中の杖はリングに乗せられません");
+            setStatus("装備中の杖はリングに乗せられないよ");
             return false;
         }
         if (it->instance.isBroken) {
@@ -2162,13 +2151,13 @@ bool InventorySystem::addObjectToRing(
             return false;
         }
         if (!spellRing.canAddObjectItem(it->item, it->instance)) {
-            setStatus(spellRing.canAddItem() ? "リングへ配置できません" : "リング満杯");
+            setStatus(spellRing.canAddItem() ? "リングへ配置できないよ" : "リング満杯");
             return false;
         }
 
         SpellRingAddResult result{};
         if (!spellRing.addObjectItem(it->item, it->instance, &result)) {
-            setStatus("リングへ配置できません");
+            setStatus("リングへ配置できないよ");
             return false;
         }
 
@@ -2184,7 +2173,7 @@ bool InventorySystem::addObjectToRing(
     }
 
     if (objectId.empty()) {
-        setStatus("リュックにありません");
+        setStatus("リュックにないよ");
         return false;
     }
 
@@ -2192,18 +2181,18 @@ bool InventorySystem::addObjectToRing(
         return stack.objectId == objectId && stack.count > 0;
     });
     if (it == objectStacks_.end()) {
-        setStatus("リュックにありません");
+        setStatus("リュックにないよ");
         return false;
     }
     if (!spellRing.canAddObjectItem(it->item)) {
-        setStatus(spellRing.canAddItem() ? "リングへ配置できません" : "リング満杯");
+        setStatus(spellRing.canAddItem() ? "リングへ配置できないよ" : "リング満杯");
         return false;
     }
 
     ItemInstance instance = createDetachedObjectInstance(it->item);
     SpellRingAddResult result{};
     if (!spellRing.addObjectItem(it->item, instance, &result)) {
-        setStatus("リングへ配置できません");
+        setStatus("リングへ配置できないよ");
         return false;
     }
 
@@ -2264,7 +2253,7 @@ bool InventorySystem::addObjectInstanceSelectionToRing(SpellRingSystem& spellRin
         return false;
     }
     if (isStaffEquipped(selected->instance.instanceId)) {
-        status_ = "装備中の杖はリングに乗せられません";
+        status_ = "装備中の杖はリングに乗せられないよ";
         return false;
     }
     if (!spellRing.addObjectItem(selected->item, selected->instance, outResult)) {
@@ -2297,7 +2286,7 @@ bool InventorySystem::useObjectStackAtIndex(
         return false;
     }
     if (isStaffObject(selected.item)) {
-        status_ = "杖は装備用です";
+        status_ = "杖は装備用だよ";
         return false;
     }
     if (selected.item.normalEffects.empty()) {
@@ -2418,7 +2407,7 @@ bool InventorySystem::useObjectInstanceAtIndex(
         return false;
     }
     if (isStaffObject(selected.item)) {
-        status_ = "杖は装備用です";
+        status_ = "杖は装備用だよ";
         return false;
     }
     if (selected.item.normalEffects.empty()) {
@@ -2644,7 +2633,11 @@ void InventorySystem::updateScreen(
         ringTargetSelection < ringTargetCount &&
         ringTargetCommandSlotIndex_ >= 0) {
         selectShortcutIndex(ringTargetCommandSlotIndex_);
-        if (addScreenItemToRingForRing(ringTargetCommandSlotIndex_, spellRing, ringTargetSelection)) {
+        if (addScreenItemToRingForRing(
+                ringTargetCommandSlotIndex_,
+                spellRing,
+                ringTargetSelection,
+                ringTargetCount)) {
             ui.emitSound(UiSoundEvent::Equip);
         } else {
             ui.emitSound(UiSoundEvent::Cancel);
@@ -2686,13 +2679,13 @@ void InventorySystem::updateScreen(
         const SlotCommandAction action = commandItems.actions[static_cast<std::size_t>(commandSelection)];
         if (action == SlotCommandAction::Use) {
             if (itemInteraction_.grabActive()) {
-                status_ = "つかみ中は使用できません";
+                status_ = "つかみ中は使用できないよ";
             } else {
                 useShortcutSelection(player, spellRing, effectDispatcher, magic, discoveryEvents, encyclopedia);
             }
         } else if (action == SlotCommandAction::AddToRing) {
             if (itemInteraction_.grabActive()) {
-                status_ = "つかみ中はリング移動できません";
+                status_ = "つかみ中はリング移動できないよ";
             } else if (ringTargetCount > 1) {
                 const Vec2 submenuAnchor{
                     slotCommandMenu_.panel.pos.x + slotCommandMenu_.panel.size.x,
@@ -2700,13 +2693,13 @@ void InventorySystem::updateScreen(
                 };
                 openRingTargetCommandMenu(slotCommandMenuIndex_, submenuAnchor, spellRing, ringTargetCount);
             } else {
-                ui.emitSound(addScreenItemToRingForRing(slotCommandMenuIndex_, spellRing, 0)
+                ui.emitSound(addScreenItemToRingForRing(slotCommandMenuIndex_, spellRing, 0, ringTargetCount)
                     ? UiSoundEvent::Equip
                     : UiSoundEvent::Cancel);
             }
         } else if (action == SlotCommandAction::ToggleStaffEquipment) {
             if (itemInteraction_.grabActive()) {
-                status_ = "つかみ中は装備変更できません";
+                status_ = "つかみ中は装備変更できないよ";
             } else {
                 const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(slotCommandMenuIndex_);
                 const bool wasEquipped = objectInstance != nullptr && isStaffEquipped(objectInstance->instance.instanceId);
@@ -2715,13 +2708,13 @@ void InventorySystem::updateScreen(
             }
         } else if (action == SlotCommandAction::ToggleProtection) {
             if (itemInteraction_.grabActive()) {
-                status_ = "つかみ中は保護変更できません";
+                status_ = "つかみ中は保護変更できないよ";
             } else {
                 toggleSelectedProtection();
             }
         } else if (action == SlotCommandAction::Discard) {
             if (itemInteraction_.grabActive()) {
-                status_ = "つかみ中は捨てられません";
+                status_ = "つかみ中は捨てられないよ";
             } else if (!itemDiscardEnabled) {
                 openDiscardConfirmDialog(slotCommandMenuIndex_);
             } else {
@@ -2770,7 +2763,7 @@ void InventorySystem::updateScreen(
     }
 
     if (input.arrangeItemsPressed() || ui.pressed(inventorySortButtonRect())) {
-        ui.emitSound(sortByCatalogOrder(catalog) ? UiSoundEvent::ItemMove : UiSoundEvent::Cancel);
+        ui.emitSound(sortByItemOrder(catalog) ? UiSoundEvent::ItemMove : UiSoundEvent::Cancel);
         ui.block(inventoryScreenRect());
         return;
     }
@@ -2858,7 +2851,7 @@ void InventorySystem::updateScreen(
             ui.emitSound(UiSoundEvent::ItemMove);
         } else {
             ui.emitSound(UiSoundEvent::Cancel);
-            status_ = "配置できません";
+            status_ = "配置できないよ";
         }
         break;
     }
@@ -2877,7 +2870,7 @@ void InventorySystem::updateScreen(
         }
         break;
     case ItemGridInteractionEvent::ProtectionBlocked:
-        status_ = "つかみ中は保護変更できません";
+        status_ = "つかみ中は保護変更できないよ";
         ui.emitSound(UiSoundEvent::Cancel);
         break;
     case ItemGridInteractionEvent::GrabCancelled:
@@ -2904,7 +2897,11 @@ void InventorySystem::updateScreen(
             ui.block(inventoryScreenRect());
             return;
         } else {
-            ui.emitSound(addScreenItemToRingForRing(selectedShortcutIndex(), spellRing, 0) ? UiSoundEvent::Equip : UiSoundEvent::Cancel);
+            ui.emitSound(addScreenItemToRingForRing(
+                selectedShortcutIndex(),
+                spellRing,
+                0,
+                ringTargetCount) ? UiSoundEvent::Equip : UiSoundEvent::Cancel);
         }
     }
     ui.block(inventoryScreenRect());
@@ -2974,7 +2971,7 @@ void InventorySystem::render(
     }
 
     UiCancelControlScope cancelScope(cancelState_);
-    const InventoryUiScreenLayout& screenLayout = standardInventoryUiScreenLayout();
+    const InventoryUiScreenLayout& screenLayout = inventoryScreenLayout();
     UiWindowScope inventoryWindow(
         renderer,
         "inventory.main",

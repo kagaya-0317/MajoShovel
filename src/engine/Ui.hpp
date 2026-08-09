@@ -4,6 +4,7 @@
 #include "engine/Math.hpp"
 #include "engine/Renderer.hpp"
 
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -20,21 +21,30 @@ inline constexpr Color WindowBorder{255, 255, 255, 255};
 inline constexpr Color Text{255, 255, 255, 255};
 inline constexpr Color TextMuted{198, 198, 206, 255};
 inline constexpr Color TextDisabled{150, 150, 160, 255};
-inline constexpr Vec2 ButtonTextPadding{18.0f, 0.0f};
+inline constexpr bool SystemMessagesVisible = false;
+inline constexpr Vec2 ButtonTextPadding{18.0f, 2.0f};
 inline constexpr float ButtonHeight = 53.0f;
 inline constexpr float HeaderHeight = 92.0f;
 inline constexpr float FooterLineHeight = 24.0f;
 inline constexpr float FooterPaddingY = 8.0f;
+inline constexpr float FooterSingleLineHeight = FooterLineHeight + FooterPaddingY * 2.0f;
 inline constexpr float FooterMaxHeight = FooterLineHeight * 2.0f + FooterPaddingY * 2.0f;
+inline constexpr float FooterActionGap = 12.0f;
+inline constexpr float FooterActionPairGap = 48.0f;
 inline constexpr float PanelPadding = 24.0f;
 inline constexpr float ButtonGap = 10.0f;
 inline constexpr Vec2 HeaderTitlePadding{24.0f, 32.0f};
 inline constexpr Vec2 FooterTextPadding{24.0f, 8.0f};
+inline constexpr Vec2 FooterHelpTextOffset{12.0f, 0.0f};
 inline constexpr Vec2 ImageWindowHeaderTitlePadding{48.0f, 40.0f};
 inline constexpr Vec2 ImageWindowFooterTextPadding{48.0f, 0.0f};
 inline constexpr Vec2 SubPanelPadding{24.0f, 24.0f};
 inline constexpr Vec2 CancelButtonSize{58.0f, 60.0f};
 inline constexpr Vec2 CancelButtonOffset{-6.0f, 4.0f};
+inline constexpr Vec2 ArrowButtonSize{48.0f, 48.0f};
+inline constexpr Vec2 ArrowButtonWideSize{144.0f, 32.0f};
+inline constexpr float DecoratedWindowMinWidth = 561.0f;
+inline constexpr float DecoratedWindowMinHeight = 223.0f;
 inline constexpr float SeparatorHeight = 36.0f;
 inline constexpr float BodyMessageGap = 8.0f;
 inline constexpr float WindowAnimationFrames = 20.0f;
@@ -48,9 +58,32 @@ struct UiRect {
     bool contains(Vec2 point) const;
 };
 
+struct UiChoiceWindowLayout {
+    float choiceTopInset = 20.0f;
+    float choiceHorizontalInset = 22.0f;
+    float choiceGap = 16.0f;
+    float footerGap = 32.0f;
+};
+
+inline UiRect uiEnsureDecoratedWindowMinSize(UiRect rect)
+{
+    const float widthExpansion = ui::DecoratedWindowMinWidth - rect.size.x;
+    if (widthExpansion > 0.0f) {
+        rect.pos.x -= widthExpansion * 0.5f;
+        rect.size.x = ui::DecoratedWindowMinWidth;
+    }
+    const float heightExpansion = ui::DecoratedWindowMinHeight - rect.size.y;
+    if (heightExpansion > 0.0f) {
+        rect.pos.y -= heightExpansion * 0.5f;
+        rect.size.y = ui::DecoratedWindowMinHeight;
+    }
+    return rect;
+}
+
 enum class UiSoundEvent {
     Confirm,
     Cancel,
+    Error,
     MenuOpen,
     TabSwitch,
     BookOpen,
@@ -63,6 +96,23 @@ enum class UiSoundEvent {
     Count,
 };
 
+// 選択はできるが、現在の状態では実行できないボタンを Unavailable とする。
+// ナビゲーション対象外にする一般的な disabled とは意味を分けて扱う。
+enum class UiButtonState {
+    Enabled,
+    Unavailable,
+};
+
+constexpr UiButtonState uiButtonState(bool enabled)
+{
+    return enabled ? UiButtonState::Enabled : UiButtonState::Unavailable;
+}
+
+constexpr bool uiButtonAvailable(UiButtonState state)
+{
+    return state == UiButtonState::Enabled;
+}
+
 enum class UiNavigationRole {
     Control,
     Tab,
@@ -71,7 +121,7 @@ enum class UiNavigationRole {
 
 class UiContext {
 public:
-    explicit UiContext(const Input& input);
+    UiContext(const Input& input, Renderer& renderer);
 
     Vec2 mouse() const { return mouse_; }
     bool pointerConsumed() const { return pointerConsumed_; }
@@ -81,8 +131,15 @@ public:
     // マウスが現在の入力方式である間だけ有効になるホバー判定。
     bool hovered(UiRect rect) const;
     bool pressed(UiRect rect);
+    bool pressedImage(
+        UiRect rect,
+        std::string_view imagePath,
+        const ImageDrawOptions& options = {},
+        unsigned char alphaThreshold = 1,
+        TextureFilter filter = TextureFilter::Nearest);
     bool navigationActive() const;
     bool navigationFocused(UiRect rect) const;
+    void setNavigationFocus(UiRect rect);
     // マウスホバーとキーボード／ゲームパッドフォーカスを排他的に統合する。
     bool selectionFocused(UiRect rect) const;
     UiNavigationRole navigationFocusRole() const;
@@ -95,10 +152,15 @@ public:
     bool hasSoundEvents() const;
 
 private:
+    bool pressedWithPointerHit(UiRect rect, bool pointerHit);
+
+    Renderer& renderer_;
     Vec2 mouse_{};
     bool mouseLeftPressed_ = false;
+    bool mouseLeftHeld_ = false;
     bool pointerActive_ = false;
     bool navigationConfirmPressed_ = false;
+    bool navigationConfirmHeld_ = false;
     bool navigationConfirmConsumed_ = false;
     bool pointerConsumed_ = false;
     int soundEventCounts_[static_cast<int>(UiSoundEvent::Count)]{};
@@ -189,6 +251,23 @@ struct UiGaugeStyle {
     float shimmerWidth = 56.0f;
 };
 
+struct UiColoredTextRun {
+    std::string_view text;
+    Color color = ui::Text;
+};
+
+enum class UiArrowDirection {
+    Up,
+    Right,
+    Down,
+    Left,
+};
+
+enum class UiArrowButtonVariant {
+    Standard,
+    Wide,
+};
+
 struct UiSliderSpec {
     float minValue = 0.0f;
     float maxValue = 1.0f;
@@ -214,8 +293,19 @@ struct UiSliderResult {
 };
 
 struct UiCommandMenuItem {
-    std::string_view label;
-    bool enabled = true;
+    std::string_view label{};
+    UiButtonState state = UiButtonState::Enabled;
+
+    constexpr UiCommandMenuItem() = default;
+    constexpr UiCommandMenuItem(std::string_view itemLabel, UiButtonState itemState = UiButtonState::Enabled)
+        : label(itemLabel)
+        , state(itemState)
+    {
+    }
+    constexpr UiCommandMenuItem(std::string_view itemLabel, bool enabled)
+        : UiCommandMenuItem(itemLabel, uiButtonState(enabled))
+    {
+    }
 };
 
 struct UiCommandMenuState {
@@ -251,7 +341,7 @@ struct UiConfirmDialogState {
     std::string confirmLabel = "はい";
     std::string cancelLabel = "いいえ";
     int selection = 1;
-    bool confirmEnabled = true;
+    UiButtonState confirmState = UiButtonState::Enabled;
 };
 
 enum class UiConfirmDialogResult {
@@ -300,7 +390,7 @@ struct UiDropdownStyle {
     Color arrow{255, 255, 255, 230};
     Color scrollbarTrack{255, 255, 255, 48};
     Color scrollbarThumb{255, 255, 255, 170};
-    std::string_view emptyLabel = "項目がありません";
+    std::string_view emptyLabel = "項目がないよ";
 };
 
 struct UiScrollAreaStyle {
@@ -404,6 +494,7 @@ struct UiTabsInput {
 struct UiTabsState {
     int focusedIndex = -1;
     int hoveredIndex = -1;
+    bool navigationFocused = false;
 };
 
 struct UiTabsStyle {
@@ -545,8 +636,31 @@ UiRect uiBodyRect(
     UiRect panel,
     float bottomExtension = 0.0f,
     float topExtension = 0.0f);
+UiRect uiChoiceWindowRect(
+    Vec2 position,
+    float width,
+    int choiceCount,
+    std::string_view helpText,
+    const UiChoiceWindowLayout& layout = {});
+UiRect uiChoiceWindowButtonRect(
+    UiRect panel,
+    int index,
+    const UiChoiceWindowLayout& layout = {});
 Vec2 uiSubPanelContentPos(UiRect panel);
 UiRect uiSubPanelContentRect(UiRect panel);
+enum class UiFooterActionAlignment {
+    Left,
+    Center,
+    Right,
+};
+UiRect uiFooterActionRowRect(UiRect panel);
+UiRect uiFooterActionButtonRect(UiRect panel, Vec2 size, UiFooterActionAlignment alignment);
+UiRect uiFooterActionGroupButtonRect(
+    UiRect panel,
+    Vec2 size,
+    int index,
+    int count,
+    float gap = ui::ButtonGap);
 UiRect uiBottomLeftButtonRect(UiRect panel, Vec2 size, float bodyBottomExtension = 0.0f);
 UiRect uiBottomCenterButtonRect(UiRect panel, Vec2 size, float bodyBottomExtension = 0.0f);
 UiRect uiBottomRightButtonRect(UiRect panel, Vec2 size, float bodyBottomExtension = 0.0f);
@@ -554,6 +668,16 @@ UiRect uiCancelButtonRect(UiRect panel);
 bool uiCancelRequested(UiCancelControlState& state, const Input& input, UiContext& ui, UiRect panel);
 
 void setUiMenuIconScaleOverrides(const std::unordered_map<std::string, float>* scaleByIconKey);
+void drawUiTextWithIcon(
+    Renderer& renderer,
+    Vec2 pos,
+    std::string_view text,
+    int iconImageNumber,
+    Color textColor = ui::Text,
+    int textScale = 2,
+    float iconSize = 30.0f,
+    float iconTextGap = 8.0f,
+    Color iconTint = {255, 255, 255, 255});
 
 void drawUiPanel(Renderer& renderer, UiRect panel, UiWindowFrame frame = UiWindowFrame::Default);
 void drawUiSubPanel(Renderer& renderer, UiRect panel);
@@ -577,11 +701,76 @@ void drawUiSlider(
     float value,
     const UiSliderSpec& spec,
     const UiSliderStyle& style = {});
+bool tryActivateUiButton(UiContext& ui, UiButtonState state);
+UiButtonStyle uiButtonStyleForState(UiButtonStyle style, UiButtonState state);
 void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, bool hot, const UiButtonStyle& style = {});
+void drawUiButton(
+    Renderer& renderer,
+    UiRect rect,
+    std::string_view label,
+    bool hot,
+    UiButtonState state,
+    const UiButtonStyle& style = {});
+void drawUiButton(
+    Renderer& renderer,
+    UiRect rect,
+    std::string_view label,
+    bool hot,
+    const UiButtonStyle& style,
+    UiNavigationRole navigationRole);
+void drawUiButton(
+    Renderer& renderer,
+    UiRect rect,
+    std::string_view label,
+    bool hot,
+    UiButtonState state,
+    const UiButtonStyle& style,
+    UiNavigationRole navigationRole);
 void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, int iconImageNumber, bool hot, const UiButtonStyle& style = {});
+void drawUiButton(
+    Renderer& renderer,
+    UiRect rect,
+    std::string_view label,
+    int iconImageNumber,
+    bool hot,
+    UiButtonState state,
+    const UiButtonStyle& style = {});
 void drawUiFlexibleButtonFrame(Renderer& renderer, UiRect rect, bool selected, const UiButtonStyle& style = {});
+void drawUiFlexibleButtonFrame(
+    Renderer& renderer,
+    UiRect rect,
+    bool selected,
+    UiButtonState state,
+    const UiButtonStyle& style = {});
 void drawUiFlexibleButton(Renderer& renderer, UiRect rect, std::string_view label, bool selected, const UiButtonStyle& style = {});
+void drawUiFlexibleButton(
+    Renderer& renderer,
+    UiRect rect,
+    std::string_view label,
+    bool selected,
+    UiButtonState state,
+    const UiButtonStyle& style = {});
 void drawUiRectButton(Renderer& renderer, UiRect rect, std::string_view label, bool hot, const UiButtonStyle& style = {});
+void drawUiRectButton(
+    Renderer& renderer,
+    UiRect rect,
+    std::string_view label,
+    bool hot,
+    UiButtonState state,
+    const UiButtonStyle& style = {});
+Vec2 uiArrowButtonNativeSize(UiArrowButtonVariant variant);
+bool updateUiArrowButton(
+    UiContext& ui,
+    UiRect rect,
+    UiArrowDirection direction,
+    UiArrowButtonVariant variant,
+    bool enabled = true);
+void drawUiArrowButton(
+    Renderer& renderer,
+    UiRect rect,
+    UiArrowDirection direction,
+    UiArrowButtonVariant variant,
+    bool enabled = true);
 void drawUiSmallSelectButton(
     Renderer& renderer,
     UiRect rect,
@@ -601,8 +790,36 @@ void drawUiTextInput(
     std::string_view placeholder,
     const UiTextInputStyle& style = {});
 void drawUiBodyMessageBelow(Renderer& renderer, UiRect anchor, std::string_view message, Color color = ui::TextMuted);
+UiRect uiWindowBodyTextRect(
+    Renderer& renderer,
+    UiRect panel,
+    std::string_view title,
+    std::string_view text,
+    float nextControlTop,
+    int textScale = 2,
+    UiWindowFrame frame = UiWindowFrame::Default);
+void drawUiWindowBodyText(
+    Renderer& renderer,
+    UiRect panel,
+    std::string_view title,
+    std::string_view text,
+    float nextControlTop,
+    Color color = ui::TextMuted,
+    int textScale = 2,
+    UiWindowFrame frame = UiWindowFrame::Default);
 void drawUiSystemMessage(Renderer& renderer, std::string_view message, Vec2 pos, const UiSystemMessageStyle& style = {});
+[[nodiscard]] float drawUiWrappedColoredText(
+    Renderer& renderer,
+    Vec2 pos,
+    std::span<const UiColoredTextRun> runs,
+    float maxWidth,
+    int scale = 2);
 float drawUiDetailHeader(Renderer& renderer, UiRect panel, std::string_view text);
+float drawUiDetailHeaderWithIcon(
+    Renderer& renderer,
+    UiRect panel,
+    std::string_view text,
+    int iconImageNumber);
 void drawUiDetailText(Renderer& renderer, UiRect panel, float& y, std::string_view text);
 void drawUiDetailText(Renderer& renderer, UiRect panel, float& y, std::string_view text, Color color);
 void drawUiDetailLine(Renderer& renderer, UiRect panel, float& y, std::string_view label, std::string_view value, Color valueColor = ui::Text);

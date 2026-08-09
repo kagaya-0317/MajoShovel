@@ -290,7 +290,7 @@ public:
         std::function<void(const InputBindingMap&)> applier);
     bool handleEvent(const SDL_Event& event);
     void resize(int width, int height);
-    void update(const Input& input, const Time& time);
+    void update(const Input& input, const Time& time, Renderer& renderer);
     void render(Renderer& renderer, const Time& time);
     bool executeDebugCommand(std::string_view command);
     GameTestSnapshot makeTestSnapshot(GameTestSnapshotOptions options = {}) const;
@@ -302,6 +302,11 @@ public:
     void handleApplicationQuitRequested();
     void setAutoReloadBlocked(bool blocked);
     void setHotReloadEnabled(bool enabled);
+    void setDevBuildNotice(bool visible, bool failed)
+    {
+        devBuildNoticeVisible_ = visible;
+        devBuildNoticeFailed_ = failed;
+    }
 
     using DungeonEventKind = majo::DungeonEventKind;
 
@@ -705,10 +710,18 @@ private:
         float openLockSeconds = 0.0f;
     };
 
+    enum class CratePlacementKind {
+        Anchor,
+        MicroFeature,
+        WallCavity,
+    };
+
     struct CrateNode {
         DungeonTile tile{};
         int depthRank = 1;
         bool destroyed = false;
+        CratePlacementKind placementKind = CratePlacementKind::Anchor;
+        DungeonTile pathFacingStep{};
     };
 
     enum class LootSourceKind {
@@ -1071,6 +1084,12 @@ private:
         Black,
         White,
     };
+    enum class ScreenTransitionSound {
+        Generic,
+        DungeonLadder,
+        WarpPoint,
+        Home,
+    };
     struct ScreenTransitionState {
         ScreenTransitionTarget target = ScreenTransitionTarget::None;
         ScreenTransitionPhase phase = ScreenTransitionPhase::Idle;
@@ -1251,14 +1270,23 @@ private:
     void openTitleCredits();
     void returnToTitleMain();
     void startTitleGame();
-    void requestScreenTransition(ScreenTransitionTarget target);
+    void requestScreenTransition(
+        ScreenTransitionTarget target,
+        ScreenTransitionSound sound = ScreenTransitionSound::Generic);
     void requestDeathResultExitTransition(ScreenTransitionTarget target);
     bool deathResultExitTransitionActive() const;
     void requestMiningStartTransition(bool useLatestWarpPoint, bool forceRegenerate);
-    void requestReturnToBaseTransition(bool stageCleared, bool died);
+    void requestReturnToBaseTransition(
+        bool stageCleared,
+        bool died,
+        ScreenTransitionSound sound = ScreenTransitionSound::Generic);
     void requestBaseAreaCrossfade(BaseArea targetArea, Vec2 playerPosition, Vec2 playerFacing, std::string status);
     void requestBaseAreaFade(BaseArea targetArea, Vec2 playerPosition, Vec2 playerFacing, std::string status, bool closeBaseUi);
-    void startScreenTransition(ScreenTransitionTarget target, ScreenTransitionPhase phase);
+    void startScreenTransition(
+        ScreenTransitionTarget target,
+        ScreenTransitionPhase phase,
+        ScreenTransitionSound sound);
+    void playScreenTransitionSound(ScreenTransitionSound sound);
     static ScreenTransitionFadeColor fadeColorForScreenTransitionTarget(ScreenTransitionTarget target);
     static float holdSecondsForScreenTransitionTarget(ScreenTransitionTarget target);
     static float fadeInSecondsForScreenTransitionTarget(ScreenTransitionTarget target);
@@ -1467,7 +1495,7 @@ private:
     std::vector<StorageEntry> backpackStorageEntries() const;
     std::vector<StorageEntry> warehouseStorageEntries() const;
     void syncWarehouseDisplaySlots() const;
-    void sortWarehouseByCatalogOrder();
+    void sortWarehouseByItemOrder();
     int warehouseEntryIndexAtStorageSlot(int slot) const;
     void assignWarehouseEntryToStorageSlot(int entryIndex, int slot);
     void removeWarehouseDisplaySlotAtEntryIndex(int entryIndex);
@@ -1509,6 +1537,7 @@ private:
     int upgradeMaxLevel(int index) const;
     bool upgradeImplemented(int index) const;
     bool upgradeMaxed(int index) const;
+    bool upgradeExecutable(int index) const;
     void buyUpgrade(int index);
     void closeBaseFacilityScreens();
     void openRingWorkshop();
@@ -1524,6 +1553,7 @@ private:
     int ringWorkshopUpgradeMaxLevel(RingWorkshopUpgrade upgrade) const;
     int ringWorkshopUpgradeMoneyCost(RingWorkshopUpgrade upgrade) const;
     int ringWorkshopUpgradeMoonCost(RingWorkshopUpgrade upgrade) const;
+    bool ringWorkshopUpgradeExecutable(RingWorkshopUpgrade upgrade) const;
     float ringWorkshopUpgradeCurrentValue(RingWorkshopUpgrade upgrade) const;
     float ringWorkshopUpgradeNextValue(RingWorkshopUpgrade upgrade) const;
     std::string ringWorkshopUpgradeValueText(RingWorkshopUpgrade upgrade, float value) const;
@@ -1607,6 +1637,10 @@ private:
     void updatePauseMenu(const Input& input, UiContext& ui);
     void choosePauseMenuItem(int item);
     void leavePausePage();
+    enum class OperationSettingsBindingEditMode {
+        Replace,
+        Append,
+    };
     void prepareOptionsMenu();
     void openOptionsMenu();
     bool optionsMenuActive() const;
@@ -1621,6 +1655,8 @@ private:
     void renderOperationSettings(Renderer& renderer) const;
     void renderAudioSettings(Renderer& renderer) const;
     void renderVideoSettings(Renderer& renderer) const;
+    void beginOperationSettingsBindingCapture(OperationSettingsBindingEditMode mode);
+    void clearOperationSettingsPendingEdit();
     void queueOperationSettingsBinding(InputAction action, int column, const InputBinding& binding);
     void applyOperationSettingsBinding(InputAction action, int column, const InputBinding& binding, bool removeConflicts);
     void clearOperationSettingsBinding(InputAction action, int column);
@@ -1752,6 +1788,7 @@ private:
         bool bossVariant,
         int* outRuntimeId = nullptr);
     void ensureDungeonEventEncounterPrepared(DungeonEventInstance& event);
+    void prepareDungeonEventEncountersForView();
     void updateDungeonEvents(float dt, double totalSeconds);
     void handleDungeonEventEnemyEvent(const EnemyEvent& enemyEvent);
     DungeonEventInstance* nearbyDungeonEventNpc();
@@ -1824,6 +1861,7 @@ private:
     int processingBulkRepairTargetCount() const;
     int processingBulkRepairMoneyCost() const;
     int processingBulkRepairOreCost() const;
+    bool processingBulkRepairExecutable() const;
     void updateDungeonDepthTutorials();
     void applyAstralDistortionToLayout();
     AstralDistortionKind chooseAstralDistortionForDepth(int depth, AstralDistortionKind previous) const;
@@ -1832,15 +1870,13 @@ private:
     RuntimeBalance runtimeBalanceForDungeon() const;
     bool astralRunActive() const;
     bool spawnRewardNodeWorldDrop(
-        const RewardNode& node,
+        RewardNode& node,
         Vec2 center,
         std::string_view sourceLabel,
         bool allowGeneratedRewardLoot);
     void initializeRewardNodesFromLayout();
     int grantDungeonMoney(int amount, Vec2 origin);
-    void updateExposedRewardNodes();
     void revealRewardNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
-    void updateExposedMoonFragmentNodes();
     void revealMoonFragmentNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
     void materializeExposedPlacementDrops(bool allowGeneratedRewardLoot);
     void normalizeOpenBuriedPlacementNodes();
@@ -2263,6 +2299,8 @@ private:
     void renderEndingKamishibai(Renderer& renderer) const;
     void renderTitleScreen(Renderer& renderer) const;
     void renderScreenTransitionOverlay(Renderer& renderer);
+    void renderFinalScreenOverlays(Renderer& renderer);
+    void renderDevBuildNotice(Renderer& renderer) const;
     void renderBaseBackdrop(Renderer& renderer) const;
     void renderBaseScreen(Renderer& renderer) const;
     void renderBaseStoryFadeOverlay(Renderer& renderer) const;
@@ -2725,12 +2763,19 @@ private:
     InputBinding operationSettingsPendingBinding_{};
     InputAction operationSettingsPendingAction_ = InputAction::Count;
     int operationSettingsPendingColumn_ = 0;
+    OperationSettingsBindingEditMode operationSettingsPendingEditMode_ = OperationSettingsBindingEditMode::Replace;
     int operationSettingsCategory_ = 0;
     bool operationSettingsLoaded_ = false;
-    std::string operationSettingsStatus_;
     mutable UiCancelControlState baseCancelState_{};
     mutable UiCancelControlState ringCancelState_{};
     UiTabsState ringTabs_{};
+    enum class RingPresetMenuAction {
+        None,
+        Apply,
+        Register,
+    };
+    UiCommandMenuState ringPresetMenu_{};
+    RingPresetMenuAction ringPresetMenuAction_ = RingPresetMenuAction::None;
     UiCommandMenuState ringCommandMenu_{};
     int ringCommandItemIndex_ = -1;
     bool ringCommandPlaceActive_ = false;
@@ -2948,6 +2993,8 @@ private:
     bool debugPaused_ = false;
     bool autoReloadBlocked_ = false;
     bool hotReloadEnabled_ = false;
+    bool devBuildNoticeVisible_ = false;
+    bool devBuildNoticeFailed_ = false;
     bool navigationUiCursorEnabled_ = false;
     float hotReloadPollTimer_ = 0.0f;
     AudioEngine* audio_ = nullptr;

@@ -1572,6 +1572,7 @@ DebugNamedSaveLayout makeDebugNamedSaveInputLayout(int screenWidth, int screenHe
         std::max(0.0f, (static_cast<float>(screenWidth) - width) * 0.5f),
         std::max(0.0f, (static_cast<float>(screenHeight) - height) * 0.5f),
     }, {width, height}};
+    layout.panel = uiEnsureDecoratedWindowMinSize(layout.panel);
     layout.input = {{layout.panel.pos.x + 36.0f, layout.panel.pos.y + 98.0f}, {layout.panel.size.x - 72.0f, 44.0f}};
     layout.status = {{layout.panel.pos.x + 36.0f, layout.panel.pos.y + 150.0f}, {layout.panel.size.x - 72.0f, 28.0f}};
     layout.primaryButton = {{layout.panel.pos.x + layout.panel.size.x - 200.0f, layout.panel.pos.y + layout.panel.size.y - 72.0f}, {156.0f, ui::ButtonHeight}};
@@ -1588,6 +1589,7 @@ DebugNamedSaveLayout makeDebugNamedSaveLoadLayout(int screenWidth, int screenHei
         std::max(0.0f, (static_cast<float>(screenWidth) - width) * 0.5f),
         std::max(0.0f, (static_cast<float>(screenHeight) - height) * 0.5f),
     }, {width, height}};
+    layout.panel = uiEnsureDecoratedWindowMinSize(layout.panel);
     layout.list = {{layout.panel.pos.x + 32.0f, layout.panel.pos.y + 74.0f}, {layout.panel.size.x - 64.0f, layout.panel.size.y - 174.0f}};
     layout.status = {{layout.panel.pos.x + 32.0f, layout.panel.pos.y + layout.panel.size.y - 92.0f}, {layout.panel.size.x - 64.0f, 28.0f}};
     layout.primaryButton = {{layout.panel.pos.x + layout.panel.size.x - 200.0f, layout.panel.pos.y + layout.panel.size.y - 58.0f}, {156.0f, ui::ButtonHeight}};
@@ -12653,10 +12655,29 @@ bool Game::dumpDungeonDebugState()
     }
     file << "\n";
 
+    const auto crateCountByKind = [&](CratePlacementKind kind) {
+        return static_cast<std::size_t>(std::count_if(
+            crateNodes_.begin(),
+            crateNodes_.end(),
+            [kind](const CrateNode& node) {
+                return node.placementKind == kind;
+            }));
+    };
+    const std::size_t nonEmptyCrateTileCount = static_cast<std::size_t>(std::count_if(
+        crateNodes_.begin(),
+        crateNodes_.end(),
+        [&](const CrateNode& node) {
+            return tileMap_.terrainDebugAtWorld(tileWorldCenter(node.tile)).type != TileType::Empty;
+        }));
+
     file << "nodes reward=" << rewardNodeCount()
         << " money=" << moneyNodeCount()
         << " chest=" << chestNodes_.size()
         << " crate=" << crateNodes_.size()
+        << " crateAnchor=" << crateCountByKind(CratePlacementKind::Anchor)
+        << " crateMicro=" << crateCountByKind(CratePlacementKind::MicroFeature)
+        << " crateWallCavity=" << crateCountByKind(CratePlacementKind::WallCavity)
+        << " crateNonEmptyTile=" << nonEmptyCrateTileCount
         << " exposedEnemies=" << exposedEnemyNodeCount()
         << " buriedEnemies=" << buriedEnemyNodeCount()
         << " spawnedEnemyNodes=" << spawnedEnemyNodeCount()

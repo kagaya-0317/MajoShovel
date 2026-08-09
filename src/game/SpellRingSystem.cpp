@@ -1953,8 +1953,6 @@ void SpellRingSystem::updateFluidOrbitPoints(float dt, const RuntimeBalance& bal
 
 void SpellRingSystem::updatePresentation(const Player& player, float dt, const RuntimeBalance& balance)
 {
-    updateActionFlashTimers(dt);
-    updateThrowVisualEnergyTimers(dt);
     const float safeDt = std::max(0.0f, dt);
     advanceOrbitAngles(safeDt, balance);
     const bool ringShiftAllowed = !anyRingInFlight();
@@ -2004,6 +2002,12 @@ void SpellRingSystem::updatePresentation(const Player& player, float dt, const R
     }
     updateFluidOrbitPoints(safeDt, balance);
     refreshItemWorldPositions(safeDt, balance, false);
+}
+
+void SpellRingSystem::updateTransientPresentation(float dt)
+{
+    updateActionFlashTimers(dt);
+    updateThrowVisualEnergyTimers(dt);
 }
 
 void SpellRingSystem::resetRuntimeStateAtPlayer(const Player& player, const RuntimeBalance& balance)
@@ -2221,9 +2225,6 @@ bool SpellRingSystem::tryThrowActiveRing(Player& player, const RuntimeBalance& b
 
 void SpellRingSystem::update(Player& player, const Input& input, float dt, float, bool paused, bool blockPointerThrow, const RuntimeBalance& balance)
 {
-    updateActionFlashTimers(dt);
-    updateThrowVisualEnergyTimers(dt);
-
     if (paused) {
         return;
     }
@@ -3038,6 +3039,102 @@ bool SpellRingSystem::moveItemAngleForRing(int ringIndex, int index, float delta
     }
 
     item.localAngle = candidate;
+    return true;
+}
+
+bool SpellRingSystem::arrangeItemsEvenlyForRing(int ringIndex, const RuntimeBalance& balance)
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return false;
+    }
+
+    std::vector<SpellRingItem>& ringItems = itemsByRing_[static_cast<std::size_t>(ringIndex)];
+    const int itemCount = static_cast<int>(ringItems.size());
+    if (itemCount <= 0) {
+        return false;
+    }
+
+    const RingShape shape = ringShapeForIndex(ringIndex);
+    const RingOrbitTuning tuning = makeRingOrbitTuning(balance);
+    if (itemCount == 1) {
+        ringItems.front().ringIndex = ringIndex;
+        ringItems.front().localAngle = normalizeLocalParam(shape, ringItems.front().localAngle, tuning);
+        return true;
+    }
+
+    struct ArrangeEntry {
+        int itemIndex = 0;
+        float pathParam = 0.0f;
+    };
+
+    std::vector<ArrangeEntry> order;
+    order.reserve(ringItems.size());
+    for (int itemIndex = 0; itemIndex < itemCount; ++itemIndex) {
+        order.push_back({
+            itemIndex,
+            normalizeLocalParam(
+                shape,
+                ringItems[static_cast<std::size_t>(itemIndex)].localAngle,
+                tuning),
+        });
+    }
+    std::stable_sort(order.begin(), order.end(), [](const ArrangeEntry& left, const ArrangeEntry& right) {
+        return left.pathParam < right.pathParam;
+    });
+
+    if (shape == RingShape::Comet) {
+        const float arc = clampCometArcRadians(tuning);
+        for (int positionIndex = 0; positionIndex < itemCount; ++positionIndex) {
+            const int itemIndex = order[static_cast<std::size_t>(positionIndex)].itemIndex;
+            SpellRingItem& item = ringItems[static_cast<std::size_t>(itemIndex)];
+            const float angle = -arc * 0.5f +
+                arc * (static_cast<float>(positionIndex) + 0.5f) / static_cast<float>(itemCount);
+            item.ringIndex = ringIndex;
+            item.localAngle = quantizeLocalParam(shape, angle, tuning);
+        }
+        return true;
+    }
+
+    const float step = FullCircleRadians / static_cast<float>(itemCount);
+    int bestStart = 0;
+    float bestPhase = 0.0f;
+    float bestCost = std::numeric_limits<float>::max();
+    for (int start = 0; start < itemCount; ++start) {
+        const float firstParam = order[static_cast<std::size_t>(start)].pathParam;
+        float phaseSum = 0.0f;
+        for (int offset = 0; offset < itemCount; ++offset) {
+            const ArrangeEntry& entry = order[static_cast<std::size_t>((start + offset) % itemCount)];
+            float param = entry.pathParam;
+            if (param + 0.0001f < firstParam) {
+                param += FullCircleRadians;
+            }
+            phaseSum += param - step * static_cast<float>(offset);
+        }
+
+        const float phase = phaseSum / static_cast<float>(itemCount);
+        float cost = 0.0f;
+        for (int offset = 0; offset < itemCount; ++offset) {
+            const ArrangeEntry& entry = order[static_cast<std::size_t>((start + offset) % itemCount)];
+            const float target = phase + step * static_cast<float>(offset);
+            const float delta = pathParamDistance(shape, entry.pathParam, target, tuning);
+            cost += delta * delta;
+        }
+        if (cost < bestCost) {
+            bestCost = cost;
+            bestStart = start;
+            bestPhase = phase;
+        }
+    }
+
+    for (int offset = 0; offset < itemCount; ++offset) {
+        const int itemIndex = order[static_cast<std::size_t>((bestStart + offset) % itemCount)].itemIndex;
+        SpellRingItem& item = ringItems[static_cast<std::size_t>(itemIndex)];
+        item.ringIndex = ringIndex;
+        item.localAngle = quantizeLocalParam(
+            shape,
+            bestPhase + step * static_cast<float>(offset),
+            tuning);
+    }
     return true;
 }
 

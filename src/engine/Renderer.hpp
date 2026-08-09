@@ -162,6 +162,9 @@ public:
     bool loadUiSubWindowTexture(std::string_view path);
     void unloadUiSubWindowTexture();
     bool hasUiSubWindowTexture() const { return uiSubWindowTexture_.texture != nullptr && uiSubWindowTexture_.valid; }
+    bool loadUiRoundedRectangleTexture(std::string_view path);
+    void unloadUiRoundedRectangleTexture();
+    bool hasUiRoundedRectangleTexture() const { return uiRoundedRectangleTexture_.texture != nullptr && uiRoundedRectangleTexture_.valid; }
     bool loadUiButtonTexture(std::string_view path);
     void unloadUiButtonTexture();
     bool hasUiButtonTexture() const { return uiButtonTexture_.texture != nullptr && uiButtonTexture_.valid; }
@@ -217,7 +220,13 @@ public:
         UiMessageWindowKind kind,
         Color tint = {255, 255, 255, 255});
     void drawUiSubWindowFrame(Vec2 pos, Vec2 size, Color tint = {255, 255, 255, 255});
-    void drawUiButtonFrame(Vec2 pos, float width, int variant, Color tint = {255, 255, 255, 255});
+    void drawUiRoundedRectangle(Vec2 pos, Vec2 size, Color tint = {255, 255, 255, 255});
+    void drawUiButtonFrame(
+        Vec2 pos,
+        float width,
+        int variant,
+        bool selected,
+        Color tint = {255, 255, 255, 255});
     void drawUiTabFrame(Vec2 pos, Vec2 size, bool selected, Color tint = {255, 255, 255, 255});
     void drawUiHorizontalTabs(
         const Vec2* positions,
@@ -276,6 +285,10 @@ private:
         int height = 0;
     };
 
+    static constexpr int GuidedTextureMaxColumns = 6;
+    static constexpr int GuidedTextureMaxRows = 3;
+    static constexpr int GuidedTextureMaxCells = GuidedTextureMaxColumns * GuidedTextureMaxRows;
+
     struct GuidedTexture {
         SDL_Texture* texture = nullptr;
         int width = 0;
@@ -283,11 +296,11 @@ private:
         bool valid = false;
         int columns = 0;
         int rows = 0;
-        std::array<RectF, 15> cells{};
-        std::array<float, 5> columnWidths{};
-        std::array<float, 3> rowHeights{};
-        std::array<float, 15> contentLeftInsets{};
-        std::array<float, 15> contentRightInsets{};
+        std::array<RectF, GuidedTextureMaxCells> cells{};
+        std::array<float, GuidedTextureMaxColumns> columnWidths{};
+        std::array<float, GuidedTextureMaxRows> rowHeights{};
+        std::array<float, GuidedTextureMaxCells> contentLeftInsets{};
+        std::array<float, GuidedTextureMaxCells> contentRightInsets{};
     };
 
     struct ImageTexture {
@@ -368,9 +381,22 @@ private:
     void eraseImageHandle(ImageHandle handle);
     void drawTextureRegion(SDL_Texture* texture, RectF src, Vec2 pos, Vec2 size, Color tint, bool flipHorizontal = false);
     void drawTextureTiled(SDL_Texture* texture, RectF src, Vec2 pos, Vec2 size, Color tint);
-    void drawNineSliceFrame(const GuidedTexture& texture, Vec2 pos, Vec2 size, Color tint);
+    void drawNineSliceFrame(
+        const GuidedTexture& texture,
+        Vec2 pos,
+        Vec2 size,
+        Color tint,
+        bool preserveCornerAspectRatio = false,
+        float sourceTexelInset = 0.0f);
     void drawHorizontalSliceRow(const GuidedTexture& texture, int row, Vec2 pos, float width, Color tint);
     void drawHorizontalSliceRow(const GuidedTexture& texture, int row, Vec2 pos, Vec2 size, Color tint);
+    void drawHorizontalSliceGroup(
+        const GuidedTexture& texture,
+        int row,
+        int firstColumn,
+        Vec2 pos,
+        Vec2 size,
+        Color tint);
     ScreenshotResult saveCurrentFramePng(const std::filesystem::path& path);
 
     SDL_Renderer* renderer_ = nullptr;
@@ -391,6 +417,7 @@ private:
     ImageTexture uiMessageWindowTexture_;
     ImageTexture uiSystemMessageWindowTexture_;
     GuidedTexture uiSubWindowTexture_;
+    GuidedTexture uiRoundedRectangleTexture_;
     GuidedTexture uiButtonTexture_;
     GuidedTexture uiTabTexture_;
     GuidedTexture uiHorizontalTabTexture_;

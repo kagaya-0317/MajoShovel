@@ -1325,6 +1325,7 @@ bool enemyScreenSleepEligible(const Enemy& enemy)
 bool enemyCanBeHit(const Enemy& enemy)
 {
     return enemyVisible(enemy) &&
+        !enemy.dungeonEventActivationLocked &&
         !enemy.death.active &&
         enemy.hp > 0 &&
         !enemy.bossAction.invulnerable;
@@ -6980,6 +6981,7 @@ void EnemySystem::forceDetectInSight(Enemy& enemy, Vec2 playerPosition, bool sho
 
 void EnemySystem::wakeDungeonEventEnemy(Enemy& enemy, Vec2 playerPosition, bool showIcon)
 {
+    enemy.dungeonEventActivationLocked = false;
     enemy.dungeonEventSleeping = false;
     enemy.status.removeState("status_sleep");
     enemy.manualDetectionOnly = false;
@@ -6992,6 +6994,7 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
     enemy.dungeonEventId.clear();
     enemy.dungeonEventBoss = false;
     enemy.dungeonEventSleeping = false;
+    enemy.dungeonEventActivationLocked = false;
     enemy.enemyId = std::string(DefaultEnemyId);
     enemy.enemyName = std::string(DefaultEnemyName);
     enemy.behaviorId.clear();
@@ -8184,7 +8187,7 @@ bool EnemySystem::spawnEventEnemy(
             enemyCatalog,
             options.detectedOnSpawn && !options.sleeping,
             playerPosition,
-            options.sleeping ? 0.0f : -1.0f,
+            (options.sleeping || options.activationLocked) ? 0.0f : -1.0f,
             &runtimeId,
             options.stageId,
             options.depthRank,
@@ -8200,12 +8203,19 @@ bool EnemySystem::spawnEventEnemy(
 
     enemy->dungeonEventId = options.dungeonEventId;
     enemy->dungeonEventSleeping = options.sleeping;
+    enemy->dungeonEventActivationLocked = options.activationLocked;
     enemy->dungeonEventBoss = options.bossVariant;
     if (options.sleeping) {
         (void)enemy->status.applyState("status_sleep", 1.0, -1.0, "dungeon_event:" + options.dungeonEventId, StateApplyMode::KeepLonger);
         enemy->awareness = EnemyAwarenessState::Unaware;
         enemy->awarenessIcon = EnemyAwarenessIcon::None;
         enemy->awarenessIconTimer = 0.0f;
+    }
+    if (options.activationLocked) {
+        enemy->awareness = EnemyAwarenessState::Unaware;
+        enemy->awarenessIcon = EnemyAwarenessIcon::None;
+        enemy->awarenessIconTimer = 0.0f;
+        enemy->velocity = {};
     }
     const float hpMultiplier = std::max(0.1f, options.hpMultiplier);
     if (std::abs(hpMultiplier - 1.0f) > 0.001f) {
@@ -8497,7 +8507,7 @@ int EnemySystem::bossSourceActiveCount() const
 void EnemySystem::appendMinimapMarkers(std::vector<EnemyMinimapMarker>& markers) const
 {
     const auto appendMarker = [this, &markers](const Enemy& enemy) {
-        if (!enemyVisible(enemy) || enemy.death.active || enemy.spawnTimer > 0.0f) {
+        if (!enemyVisible(enemy) || enemy.dungeonEventActivationLocked || enemy.death.active || enemy.spawnTimer > 0.0f) {
             return;
         }
         markers.push_back(EnemyMinimapMarker{
@@ -9334,6 +9344,15 @@ void EnemySystem::update(
 
     for (Enemy& enemy : enemies_.items()) {
         if (!enemy.active) {
+            continue;
+        }
+        if (enemy.dungeonEventActivationLocked) {
+            clearEnemyAction(enemy);
+            enemy.hitFlash = 0.0f;
+            enemy.hpBarTimer = 0.0f;
+            enemy.awarenessIconTimer = 0.0f;
+            enemy.awarenessIcon = EnemyAwarenessIcon::None;
+            enemy.velocity = {};
             continue;
         }
         ensureEnemyHeldDropsInitialized(enemy, objectCatalog);
@@ -11496,7 +11515,7 @@ int EnemySystem::pullMetalEnemies(Vec2 center, TileMap& map, float dt, float rad
     const float effectiveRadius = std::max(8.0f, radius);
     const float radiusSq = effectiveRadius * effectiveRadius;
     for (Enemy& enemy : enemies_.items()) {
-        if (!enemy.active || enemy.spawnTimer > 0.0f || !hasEnemyTag(enemy, "metal")) {
+        if (!enemy.active || enemy.dungeonEventActivationLocked || enemy.spawnTimer > 0.0f || !hasEnemyTag(enemy, "metal")) {
             continue;
         }
         const Vec2 toCenter = center - enemy.position;
@@ -11529,7 +11548,7 @@ int EnemySystem::pullLightEnemies(Vec2 center, TileMap& map, float dt, float rad
     const float radiusSq = effectiveRadius * effectiveRadius;
     const float pullSpeed = VacuumLightEnemyPullSpeed * std::clamp(strength, 0.1f, 3.0f);
     for (Enemy& enemy : enemies_.items()) {
-        if (!enemy.active || enemy.spawnTimer > 0.0f || !canMoveLightEnemy(enemy)) {
+        if (!enemy.active || enemy.dungeonEventActivationLocked || enemy.spawnTimer > 0.0f || !canMoveLightEnemy(enemy)) {
             continue;
         }
         const Vec2 toCenter = center - enemy.position;
@@ -11562,7 +11581,7 @@ int EnemySystem::pushLightEnemies(Vec2 center, TileMap& map, float dt, float rad
     const float radiusSq = effectiveRadius * effectiveRadius;
     const float pushSpeed = WindLightEnemyPushSpeed * std::clamp(strength, 0.1f, 3.0f);
     for (Enemy& enemy : enemies_.items()) {
-        if (!enemy.active || enemy.spawnTimer > 0.0f || !canMoveLightEnemy(enemy)) {
+        if (!enemy.active || enemy.dungeonEventActivationLocked || enemy.spawnTimer > 0.0f || !canMoveLightEnemy(enemy)) {
             continue;
         }
         const Vec2 away = enemy.position - center;
@@ -11606,6 +11625,27 @@ void EnemySystem::applySpawnBias(std::string_view group, double multiplier)
         current * std::clamp(sanitizedMultiplier, SpawnBiasMinMultiplier, SpawnBiasMaxMultiplier),
         SpawnBiasMinMultiplier,
         SpawnBiasMaxMultiplier);
+}
+
+void EnemySystem::activateDungeonEventEnemies(std::string_view eventId, bool wakeSleepingEnemies)
+{
+    if (eventId.empty()) {
+        return;
+    }
+    for (Enemy& enemy : enemies_.items()) {
+        if (!enemy.active || enemy.dungeonEventId != eventId) {
+            continue;
+        }
+
+        enemy.dungeonEventActivationLocked = false;
+        if (enemy.dungeonEventSleeping) {
+            if (wakeSleepingEnemies) {
+                wakeDungeonEventEnemy(enemy, enemy.position + Vec2{1.0f, 0.0f}, true);
+            }
+            continue;
+        }
+        forceDetectInSight(enemy, enemy.position + Vec2{1.0f, 0.0f}, true);
+    }
 }
 
 void EnemySystem::wakeDungeonEventEnemies(std::string_view eventId)

@@ -85,7 +85,7 @@ public:
     bool canAddObjectItem(const ObjectCatalog& catalog, std::string_view objectId) const;
     bool addObjectItem(const ObjectCatalog& catalog, std::string_view objectId, InventoryAddResult* outResult = nullptr);
     bool addRuntimeObjectItem(const ItemData& item, InventoryAddResult* outResult = nullptr);
-    bool sortByCatalogOrder(const ObjectCatalog& catalog);
+    bool sortByItemOrder(const ObjectCatalog& catalog);
     void updateShortcuts(
         const Input& input,
         UiContext& ui,
@@ -220,6 +220,7 @@ public:
         int index,
         SpellRingSystem& spellRing,
         int ringIndex,
+        int unlockedRingCount,
         SpellRingAddResult* outResult = nullptr);
     bool addObjectToRing(
         std::string_view objectId,

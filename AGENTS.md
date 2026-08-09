@@ -71,8 +71,13 @@ Codex が `tools\build.ps1` または `build_game.bat` で検証ビルドを実�
 スロットプールでは満たせない具体的な検証要件がある場合だけとする。その場合は、実行前にスロットを再利用できない理由を明記する。
 ただし、スロットが分離するのはビルド出力先だけであり、複数の Codex スレッドは同じソースツリーを共有する。
 別スレッドが `Game.hpp` や `Game*.cpp` などを編集中にビルドすると、ビルド途中で入力ソースが変わったり、想定外の再コンパイルや一時的なコンパイルエラーが発生したりする。
-検証ビルドを始める前に、実行中の `cmake.exe` / `MSBuild.exe` / `cl.exe` / `link.exe` と作業ツリーの更新状況を確認し、
-同じ共有ファイルを別スレッドが更新中と判断できる場合は、その編集が一段落してから統合ビルドする。
+一方、`dev_auto_reload.ps1` の `build-nopch` と Codex の既定スロットは出力先が分離されているため、ソースの書き換え中でなければ同時にビルドしてよい。
+自動リロードのビルドプロセスが動いているという理由だけで Codex 検証を待ってはならない。
+検証ビルドを始める前に、実行中の `cmake.exe` / `MSBuild.exe` / `cl.exe` / `link.exe`、作業ツリーの更新状況、
+および今回のビルド入力となる `src` と `CMakeLists.txt` の状態を確認する。
+同じ共有ファイルを別スレッドが書き換えている最中と判断できる場合は、そのファイル更新が一段落するまで待つが、別出力先のビルド完了までは待たなくてよい。
+並行ビルドを行う場合は、開始直前に少なくとも `src` と `CMakeLists.txt` のハッシュまたは更新時刻の一覧を記録し、終了後に同じ状態か照合する。
+途中でビルド入力が変わっていた場合、その結果を現行ソースの検証成功として採用しない。編集が落ち着いてから、同じ温まったスロットで必要な検証だけを再実行する。
 スロット数は既定で 4。変更する場合は `-CodexBuildSlots <数>` または環境変数 `MAJOSHOVEL_CODEX_BUILD_SLOTS` を使う。
 `-CodexBuildSlots 0` を明示した場合だけ、従来どおり `%LOCALAPPDATA%\MajoShovel\build-codex\<CODEX_THREAD_ID>` を使う。
 `dev_auto_reload.ps1` の `%LOCALAPPDATA%\MajoShovel\build-nopch` と衝突させないため、Codex 検証で
@@ -144,6 +149,11 @@ exit $code
 
 MSVC ビルドでは並列化を一層だけにする。このプロジェクトでは CMake/MSBuild の job 数で並列化する。
 
+`dev_auto_reload.ps1` と Codex 検証は、既定の出力先が異なるため並行実行してよい。
+同時実行時は CPU・メモリ・ディスク競合で両方が遅くならないよう、Codex 側の `-Jobs` を単独実行時より下げる。
+目安として自動リロード側が `-Jobs 12` なら Codex 側は `-Jobs 4`～`6` とし、論理 CPU 数や実際の負荷に合わせて調整する。
+ただし、並行実行中にソースが更新された場合は、前述のビルド入力照合に従い、古い状態を含む結果を成功扱いしない。
+
 ```powershell
 .\tools\build.ps1 -Jobs 12
 .\tools\dev_auto_reload.ps1 -Jobs 12
@@ -169,7 +179,8 @@ cl : command line error D8040
 この場合、リンク工程が完了せず `%LOCALAPPDATA%\MajoShovel\build-nopch\Release\MajoShovel.exe` が存在しないことがある。
 これはビルド失敗または中断の結果であり、別個のランタイム問題ではない。
 
-`dev_auto_reload.ps1` が同じ出力先をビルド中に、手動で `build.ps1` を重ねて実行しない。
+`dev_auto_reload.ps1` の `build-nopch` と Codex の既定スロットを並行ビルドすることは許可する。
+ただし、`-BuildDir` などで同じ出力先を指定したビルドを重ねて実行してはならない。
 ビルドを中断する必要がある場合は、自分が起動したビルドだけを止める。
 すべての `cl.exe` / `MSBuild.exe` をまとめて kill すると、dev watcher 側のビルドも中断し、実行ファイルが欠けた状態になる。
 

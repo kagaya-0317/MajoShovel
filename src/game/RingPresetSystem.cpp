@@ -277,7 +277,7 @@ bool addCandidateToWorkingRing(
 
 std::string applyStatusText(int presetIndex, const RingPresetApplyResult& result)
 {
-    std::string status = "プリセット" + std::to_string(presetIndex + 1) + "を呼び出しました";
+    std::string status = "プリセット" + std::to_string(presetIndex + 1) + "を呼び出したよ";
     if (result.missingCount > 0 || result.blockedCount > 0) {
         status += " / 配置 " + std::to_string(result.placedCount);
         if (result.missingCount > 0) {
@@ -412,7 +412,7 @@ RingPresetApplyResult RingPresetSystem::applyPreset(
 {
     RingPresetApplyResult result;
     if (!registered(presetIndex)) {
-        result.status = "プリセット" + std::to_string(presetIndex + 1) + "は未登録です";
+        result.status = "プリセット" + std::to_string(presetIndex + 1) + "は未登録だよ";
         return result;
     }
 
@@ -488,31 +488,31 @@ RingPresetApplyResult RingPresetSystem::applyPreset(
     }
 
     if (projectedSlots > inventory.screenSlotCount()) {
-        result.status = "リュックがいっぱいでリングを入れ替えられません";
+        result.status = "リュックがいっぱいでリングを入れ替えられないよ";
         return result;
     }
 
     for (const std::string& instanceId : usedInventoryInstanceIds) {
         InventoryObjectInstance moved;
         if (!workingInventory.takeObjectInstance(instanceId, moved)) {
-            result.status = "リュックのアイテムを移動できませんでした";
+            result.status = "リュックのアイテムを移動できなかったよ";
             return result;
         }
     }
     for (const auto& [stackIndex, useCount] : usedStackCounts) {
         if (stackIndex < 0 || stackIndex >= static_cast<int>(stacks.size())) {
-            result.status = "リュックのアイテムを移動できませんでした";
+            result.status = "リュックのアイテムを移動できなかったよ";
             return result;
         }
         const std::string objectId = stacks[static_cast<std::size_t>(stackIndex)].objectId;
         if (!workingInventory.removeObjectItemCount(objectId, useCount)) {
-            result.status = "リュックのアイテムを移動できませんでした";
+            result.status = "リュックのアイテムを移動できなかったよ";
             return result;
         }
     }
     for (const SpellRingItem& item : ringItemsToReturn) {
         if (!workingInventory.addObjectInstance(objectCatalog, instanceFromRingItem(item, workingInventory, objectCatalog))) {
-            result.status = "リュックがいっぱいでリングを入れ替えられません";
+            result.status = "リュックがいっぱいでリングを入れ替えられないよ";
             return result;
         }
     }

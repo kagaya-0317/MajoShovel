@@ -42,6 +42,7 @@ constexpr float UiLineRightLineX = 275.0f;
 constexpr float UiLineRightLineWidth = 151.0f;
 constexpr float UiLineRightCapX = 426.0f;
 constexpr float UiLineRightCapWidth = 37.0f;
+constexpr float LinearFilteredNineSliceSourceInset = 0.5f;
 constexpr std::size_t InlineImageTriangleVertexCount = 8;
 
 SDL_FColor vertexColor(Color color)
@@ -469,6 +470,7 @@ Renderer::~Renderer()
     unloadUiWindowTexture();
     unloadUiMessageWindowTexture();
     unloadUiSubWindowTexture();
+    unloadUiRoundedRectangleTexture();
     unloadUiButtonTexture();
     unloadUiTabTexture();
     unloadUiHorizontalTabTexture();
@@ -2154,6 +2156,11 @@ void Renderer::unloadUiSubWindowTexture()
     unloadGuidedTexture(uiSubWindowTexture_);
 }
 
+void Renderer::unloadUiRoundedRectangleTexture()
+{
+    unloadGuidedTexture(uiRoundedRectangleTexture_);
+}
+
 void Renderer::unloadUiButtonTexture()
 {
     unloadGuidedTexture(uiButtonTexture_);
@@ -2380,9 +2387,56 @@ bool Renderer::loadUiSubWindowTexture(std::string_view path)
     return loadGuidedTexture(path, 3, 3, true, "UI sub-window texture", uiSubWindowTexture_);
 }
 
+bool Renderer::loadUiRoundedRectangleTexture(std::string_view path)
+{
+    const bool loaded = loadGuidedTexture(
+        path,
+        3,
+        3,
+        true,
+        "UI rounded rectangle texture",
+        uiRoundedRectangleTexture_);
+    if (loaded && uiRoundedRectangleTexture_.texture != nullptr) {
+        SDL_SetTextureScaleMode(uiRoundedRectangleTexture_.texture, SDL_SCALEMODE_LINEAR);
+    }
+    return loaded;
+}
+
 bool Renderer::loadUiButtonTexture(std::string_view path)
 {
-    return loadGuidedTexture(path, 3, 3, true, "UI button texture", uiButtonTexture_);
+    if (!loadGuidedTexture(path, 6, 3, false, "UI button texture", uiButtonTexture_)) {
+        return false;
+    }
+
+    // UI_buttons contains equally wide normal/selected three-slice states. The
+    // final boundary guide sits at the texture edge, so unlike internal guides
+    // it initially remains in the selected right cap. Trim only the common
+    // transparent inset needed to make the two state widths equal.
+    constexpr int SliceColumns = 3;
+    constexpr int SelectedRightColumn = SliceColumns * 2 - 1;
+    auto stateWidth = [&](int firstColumn) {
+        float width = 0.0f;
+        for (int i = 0; i < SliceColumns; ++i) {
+            width += uiButtonTexture_.columnWidths[static_cast<std::size_t>(firstColumn + i)];
+        }
+        return width;
+    };
+
+    float trailingGuideWidth = std::max(0.0f, stateWidth(SliceColumns) - stateWidth(0));
+    for (int row = 0; row < uiButtonTexture_.rows; ++row) {
+        const std::size_t cellIndex = static_cast<std::size_t>(row * uiButtonTexture_.columns + SelectedRightColumn);
+        trailingGuideWidth = std::min(trailingGuideWidth, uiButtonTexture_.contentRightInsets[cellIndex]);
+    }
+    if (trailingGuideWidth > 0.0f &&
+        uiButtonTexture_.columnWidths[SelectedRightColumn] > trailingGuideWidth) {
+        uiButtonTexture_.columnWidths[SelectedRightColumn] -= trailingGuideWidth;
+        for (int row = 0; row < uiButtonTexture_.rows; ++row) {
+            const std::size_t cellIndex = static_cast<std::size_t>(row * uiButtonTexture_.columns + SelectedRightColumn);
+            uiButtonTexture_.cells[cellIndex].w -= trailingGuideWidth;
+            uiButtonTexture_.contentRightInsets[cellIndex] -= trailingGuideWidth;
+        }
+    }
+    return true;
 }
 
 bool Renderer::loadUiTabTexture(std::string_view path)
@@ -2833,8 +2887,17 @@ bool Renderer::imageHitTestAlpha(
     }
 
     const Vec2 topLeft = center - Vec2{size.x * options.anchor.x, size.y * options.anchor.y};
-    if (point.x < topLeft.x || point.y < topLeft.y ||
-        point.x >= topLeft.x + size.x || point.y >= topLeft.y + size.y) {
+    const Vec2 rotationCenter = topLeft + size * 0.5f;
+    const float rotationRadians = options.rotationDegrees * (3.14159265358979323846f / 180.0f);
+    const float rotationCos = std::cos(rotationRadians);
+    const float rotationSin = std::sin(rotationRadians);
+    const Vec2 rotatedOffset = point - rotationCenter;
+    const Vec2 unrotatedPoint = rotationCenter + Vec2{
+        rotationCos * rotatedOffset.x + rotationSin * rotatedOffset.y,
+        -rotationSin * rotatedOffset.x + rotationCos * rotatedOffset.y,
+    };
+    if (unrotatedPoint.x < topLeft.x || unrotatedPoint.y < topLeft.y ||
+        unrotatedPoint.x >= topLeft.x + size.x || unrotatedPoint.y >= topLeft.y + size.y) {
         return false;
     }
 
@@ -2843,8 +2906,8 @@ bool Renderer::imageHitTestAlpha(
         return true;
     }
 
-    float u = (point.x - topLeft.x) / size.x;
-    float v = (point.y - topLeft.y) / size.y;
+    float u = (unrotatedPoint.x - topLeft.x) / size.x;
+    float v = (unrotatedPoint.y - topLeft.y) / size.y;
     if (options.flipX) {
         u = 1.0f - u;
     }
@@ -3019,7 +3082,7 @@ bool Renderer::loadGuidedTexture(
     const std::string labelString(label);
 
 #ifdef _WIN32
-    if (columns <= 0 || columns > 5 || rows <= 0 || rows > 3) {
+    if (columns <= 0 || columns > GuidedTextureMaxColumns || rows <= 0 || rows > GuidedTextureMaxRows) {
         lastAssetError_ = "Invalid " + labelString + " layout";
         return false;
     }
@@ -3138,8 +3201,8 @@ bool Renderer::loadGuidedTexture(
     loaded.columns = columns;
     loaded.rows = rows;
 
-    std::array<int, 6> xEdges{};
-    std::array<int, 5> xSeparators{};
+    std::array<int, GuidedTextureMaxColumns + 1> xEdges{};
+    std::array<int, GuidedTextureMaxColumns> xSeparators{};
     xEdges[0] = 0;
     for (int i = 0; i < columns - 1; ++i) {
         xSeparators[static_cast<std::size_t>(i)] = verticalGuides[static_cast<std::size_t>(i)];
@@ -3249,7 +3312,13 @@ Vec2 Renderer::uiMessageWindowSize(UiMessageWindowKind kind) const
     };
 }
 
-void Renderer::drawNineSliceFrame(const GuidedTexture& texture, Vec2 pos, Vec2 size, Color tint)
+void Renderer::drawNineSliceFrame(
+    const GuidedTexture& texture,
+    Vec2 pos,
+    Vec2 size,
+    Color tint,
+    bool preserveCornerAspectRatio,
+    float sourceTexelInset)
 {
     if (!texture.texture || !texture.valid || texture.columns != 3 || texture.rows != 3) {
         return;
@@ -3259,32 +3328,62 @@ void Renderer::drawNineSliceFrame(const GuidedTexture& texture, Vec2 pos, Vec2 s
     const auto& rh = texture.rowHeights;
     const float fixedWidth = cw[0] + cw[2];
     const float fixedHeight = rh[0] + rh[2];
-    const float scaleX = fixedWidth > 0.0f ? std::min(1.0f, size.x / fixedWidth) : 1.0f;
-    const float scaleY = fixedHeight > 0.0f ? std::min(1.0f, size.y / fixedHeight) : 1.0f;
+    float scaleX = fixedWidth > 0.0f ? std::min(1.0f, size.x / fixedWidth) : 1.0f;
+    float scaleY = fixedHeight > 0.0f ? std::min(1.0f, size.y / fixedHeight) : 1.0f;
+    if (preserveCornerAspectRatio) {
+        scaleX = scaleY = std::min(scaleX, scaleY);
+    }
     const float leftWidth = cw[0] * scaleX;
     const float rightWidth = cw[2] * scaleX;
     const float topHeight = rh[0] * scaleY;
     const float bottomHeight = rh[2] * scaleY;
-    const float centerWidth = std::max(0.0f, size.x - leftWidth - rightWidth);
-    const float centerHeight = std::max(0.0f, size.y - topHeight - bottomHeight);
     const float rightX = pos.x + size.x - rightWidth;
     const float bottomY = pos.y + size.y - bottomHeight;
 
-    auto cell = [&](int row, int col) -> RectF {
-        return texture.cells[static_cast<std::size_t>(row * 3 + col)];
+    std::array<float, 4> xEdges{pos.x, pos.x + leftWidth, rightX, pos.x + size.x};
+    std::array<float, 4> yEdges{pos.y, pos.y + topHeight, bottomY, pos.y + size.y};
+    if (preserveCornerAspectRatio) {
+        const float scale = screenScale();
+        if (scale > 0.0f) {
+            for (float& x : xEdges) {
+                const float screenX = transform({x, pos.y}).x;
+                x += (std::round(screenX) - screenX) / scale;
+            }
+            for (float& y : yEdges) {
+                const float screenY = transform({pos.x, y}).y;
+                y += (std::round(screenY) - screenY) / scale;
+            }
+        }
+    }
+
+    auto sampledCell = [&](int row, int col) -> RectF {
+        RectF source = texture.cells[static_cast<std::size_t>(row * 3 + col)];
+        const float horizontalInset = std::min(std::max(0.0f, sourceTexelInset), source.w * 0.25f);
+        const float verticalInset = std::min(std::max(0.0f, sourceTexelInset), source.h * 0.25f);
+        const float leftInset = col > 0 ? horizontalInset : 0.0f;
+        const float rightInset = col < 2 ? horizontalInset : 0.0f;
+        const float topInset = row > 0 ? verticalInset : 0.0f;
+        const float bottomInset = row < 2 ? verticalInset : 0.0f;
+        source.x += leftInset;
+        source.y += topInset;
+        source.w -= leftInset + rightInset;
+        source.h -= topInset + bottomInset;
+        return source;
     };
 
-    drawTextureRegion(texture.texture, cell(0, 0), pos, {leftWidth, topHeight}, tint);
-    drawTextureRegion(texture.texture, cell(0, 1), {pos.x + leftWidth, pos.y}, {centerWidth, topHeight}, tint);
-    drawTextureRegion(texture.texture, cell(0, 2), {rightX, pos.y}, {rightWidth, topHeight}, tint);
-
-    drawTextureRegion(texture.texture, cell(1, 0), {pos.x, pos.y + topHeight}, {leftWidth, centerHeight}, tint);
-    drawTextureRegion(texture.texture, cell(1, 1), {pos.x + leftWidth, pos.y + topHeight}, {centerWidth, centerHeight}, tint);
-    drawTextureRegion(texture.texture, cell(1, 2), {rightX, pos.y + topHeight}, {rightWidth, centerHeight}, tint);
-
-    drawTextureRegion(texture.texture, cell(2, 0), {pos.x, bottomY}, {leftWidth, bottomHeight}, tint);
-    drawTextureRegion(texture.texture, cell(2, 1), {pos.x + leftWidth, bottomY}, {centerWidth, bottomHeight}, tint);
-    drawTextureRegion(texture.texture, cell(2, 2), {rightX, bottomY}, {rightWidth, bottomHeight}, tint);
+    for (int row = 0; row < 3; ++row) {
+        for (int col = 0; col < 3; ++col) {
+            drawTextureRegion(
+                texture.texture,
+                sampledCell(row, col),
+                {xEdges[static_cast<std::size_t>(col)], yEdges[static_cast<std::size_t>(row)]},
+                {
+                    xEdges[static_cast<std::size_t>(col + 1)] - xEdges[static_cast<std::size_t>(col)],
+                    yEdges[static_cast<std::size_t>(row + 1)] - yEdges[static_cast<std::size_t>(row)],
+                },
+                tint);
+        }
+    }
 }
 
 void Renderer::drawHorizontalSliceRow(const GuidedTexture& texture, int row, Vec2 pos, float width, Color tint)
@@ -3303,12 +3402,31 @@ void Renderer::drawHorizontalSliceRow(const GuidedTexture& texture, int row, Vec
         return;
     }
 
-    auto cell = [&](int col) -> RectF {
-        return texture.cells[static_cast<std::size_t>(row * texture.columns + col)];
+    drawHorizontalSliceGroup(texture, row, 0, pos, size, tint);
+}
+
+void Renderer::drawHorizontalSliceGroup(
+    const GuidedTexture& texture,
+    int row,
+    int firstColumn,
+    Vec2 pos,
+    Vec2 size,
+    Color tint)
+{
+    constexpr int SliceColumnCount = 3;
+    if (!texture.texture || !texture.valid || row < 0 || row >= texture.rows ||
+        firstColumn < 0 || firstColumn + SliceColumnCount > texture.columns ||
+        size.x <= 0.0f || size.y <= 0.0f) {
+        return;
+    }
+
+    auto cell = [&](int sliceColumn) -> RectF {
+        const int column = firstColumn + sliceColumn;
+        return texture.cells[static_cast<std::size_t>(row * texture.columns + column)];
     };
 
-    const float leftWidth = texture.columnWidths[0];
-    const float rightWidth = texture.columnWidths[2];
+    const float leftWidth = texture.columnWidths[static_cast<std::size_t>(firstColumn)];
+    const float rightWidth = texture.columnWidths[static_cast<std::size_t>(firstColumn + 2)];
     const float fixedWidth = leftWidth + rightWidth;
     const float scaleX = fixedWidth > 0.0f && size.x < fixedWidth ? size.x / fixedWidth : 1.0f;
     const float dstLeftWidth = leftWidth * scaleX;
@@ -3696,36 +3814,40 @@ void Renderer::drawUiWindowFrame(Vec2 pos, Vec2 size, Color tint)
 
     const auto& window = uiWindowTexture_;
     const Vec2 minSize = uiWindowMinSize();
-    const float scaleX = minSize.x > 0.0f ? std::min(1.0f, size.x / minSize.x) : 1.0f;
-    const float scaleY = minSize.y > 0.0f ? std::min(1.0f, size.y / minSize.y) : 1.0f;
+    const float centeredTopMinWidth =
+        2.0f * std::max(window.columnWidths[0], window.columnWidths[4]) + window.columnWidths[2];
+    const bool preserveTopOrnamentWidth = size.x >= centeredTopMinWidth;
+    const float scaleX = !preserveTopOrnamentWidth && minSize.x > 0.0f
+        ? std::min(1.0f, size.x / minSize.x)
+        : 1.0f;
     std::array<float, 5> cw{};
     std::array<float, 3> rh{};
     for (std::size_t i = 0; i < cw.size(); ++i) {
         cw[i] = window.columnWidths[i] * scaleX;
     }
     for (std::size_t i = 0; i < rh.size(); ++i) {
-        rh[i] = window.rowHeights[i] * scaleY;
+        rh[i] = window.rowHeights[i];
     }
     const float topHeight = rh[0];
-    const float middleHeight = size.y - rh[0] - rh[2];
-    const float bottomY = pos.y + topHeight + middleHeight;
-    float scaledMinWidth = 0.0f;
-    for (float column : cw) {
-        scaledMinWidth += column;
-    }
-    const float extraWidth = std::max(0.0f, size.x - scaledMinWidth);
-
+    const float middleHeight = std::max(0.0f, size.y - rh[0] - rh[2]);
+    const float bottomY = pos.y + size.y - rh[2];
     auto cell = [&](int row, int col) -> RectF {
         return window.cells[static_cast<std::size_t>(row * 5 + col)];
     };
-    auto splitExtra = [](float extra, float a, float b) -> Vec2 {
-        const float total = std::max(1.0f, a + b);
-        return {a + extra * (a / total), b + extra * (b / total)};
+    auto splitWidth = [](float width, float firstWeight, float secondWeight) -> Vec2 {
+        const float totalWeight = std::max(1.0f, firstWeight + secondWeight);
+        const float first = width * firstWeight / totalWeight;
+        return {first, width - first};
     };
 
     drawTextureRegion(window.texture, cell(1, 2), pos + Vec2{cw[0], topHeight}, {size.x - cw[0] - cw[4], middleHeight}, tint);
 
-    const Vec2 topVariable = splitExtra(extraWidth, cw[1], cw[3]);
+    const Vec2 topVariable = preserveTopOrnamentWidth
+        ? Vec2{
+            size.x * 0.5f - cw[0] - cw[2] * 0.5f,
+            size.x * 0.5f - cw[4] - cw[2] * 0.5f,
+        }
+        : Vec2{cw[1], cw[3]};
     float x = pos.x;
     drawTextureRegion(window.texture, cell(0, 0), {x, pos.y}, {cw[0], topHeight}, tint);
     x += cw[0];
@@ -3739,7 +3861,9 @@ void Renderer::drawUiWindowFrame(Vec2 pos, Vec2 size, Color tint)
     drawTextureRegion(window.texture, cell(1, 0), {pos.x, pos.y + topHeight}, {cw[0], middleHeight}, tint);
     drawTextureRegion(window.texture, cell(1, 4), {pos.x + size.x - cw[4], pos.y + topHeight}, {cw[4], middleHeight}, tint);
 
-    const Vec2 bottomVariable = splitExtra(extraWidth, cw[1], cw[2]);
+    const Vec2 bottomVariable = preserveTopOrnamentWidth
+        ? splitWidth(size.x - cw[0] - cw[3] - cw[4], cw[1], cw[2])
+        : Vec2{cw[1], cw[2]};
     x = pos.x;
     drawTextureRegion(window.texture, cell(2, 0), {x, bottomY}, {cw[0], rh[2]}, tint);
     x += cw[0];
@@ -3780,12 +3904,32 @@ void Renderer::drawUiSubWindowFrame(Vec2 pos, Vec2 size, Color tint)
     drawNineSliceFrame(uiSubWindowTexture_, pos, size, tint);
 }
 
-void Renderer::drawUiButtonFrame(Vec2 pos, float width, int variant, Color tint)
+void Renderer::drawUiRoundedRectangle(Vec2 pos, Vec2 size, Color tint)
+{
+    // Keep bilinear sampling inside each cell so transparent atlas guides do not bleed into seams.
+    drawNineSliceFrame(
+        uiRoundedRectangleTexture_,
+        pos,
+        size,
+        tint,
+        true,
+        LinearFilteredNineSliceSourceInset);
+}
+
+void Renderer::drawUiButtonFrame(Vec2 pos, float width, int variant, bool selected, Color tint)
 {
     if (!hasUiButtonTexture()) {
         return;
     }
-    drawHorizontalSliceRow(uiButtonTexture_, std::clamp(variant, 0, 2), pos, width, tint);
+    const int row = std::clamp(variant, 0, 2);
+    const int firstColumn = selected ? 3 : 0;
+    drawHorizontalSliceGroup(
+        uiButtonTexture_,
+        row,
+        firstColumn,
+        pos,
+        {width, uiButtonTexture_.rowHeights[static_cast<std::size_t>(row)]},
+        tint);
 }
 
 void Renderer::drawUiTabFrame(Vec2 pos, Vec2 size, bool selected, Color tint)
@@ -3813,6 +3957,10 @@ void Renderer::drawUiHorizontalTabs(
         return;
     }
 
+    constexpr int UnselectedRow = 0;
+    constexpr int SelectedRow = 1;
+    constexpr int MixedSelectionRow = 2;
+
     auto cell = [&](int row, int col) -> RectF {
         return tabs.cells[static_cast<std::size_t>(row * tabs.columns + col)];
     };
@@ -3823,13 +3971,26 @@ void Renderer::drawUiHorizontalTabs(
         return tabs.contentRightInsets[static_cast<std::size_t>(row * tabs.columns + col)];
     };
     auto rowFor = [&](bool isSelected) {
-        return isSelected ? 1 : 0;
+        return isSelected ? SelectedRow : UnselectedRow;
+    };
+    auto bodyCell = [&](int row, int col) {
+        RectF source = cell(row, col);
+        const float leftInset = std::min(contentLeftInset(row, col), source.w);
+        const float rightInset = std::min(contentRightInset(row, col), source.w - leftInset);
+        source.x += leftInset;
+        source.w -= leftInset + rightInset;
+        return source;
     };
 
     const float leftCapWidth = tabs.columnWidths[0];
     const float rightCapWidth = tabs.columnWidths[4];
     const float jointWidth = tabs.columnWidths[2];
     const float jointHalfWidth = jointWidth * 0.5f;
+    // Selection glow belongs outside the tab body, so every state shares the unselected cap boundaries.
+    const float canonicalLeftInset = std::min(contentLeftInset(UnselectedRow, 0), leftCapWidth);
+    const float canonicalRightInset = std::min(contentRightInset(UnselectedRow, 4), rightCapWidth);
+    const float leftCapLayoutWidth = leftCapWidth - canonicalLeftInset;
+    const float rightCapLayoutWidth = rightCapWidth - canonicalRightInset;
 
     auto drawHorizontalTiled = [&](RectF source, Vec2 pos, float width, Color tint) {
         if (source.w <= 0.0f || source.h <= 0.0f || width <= 0.0f) {
@@ -3865,8 +4026,8 @@ void Renderer::drawUiHorizontalTabs(
         const float midpoint = left + width * 0.5f;
         const float leftWidth = std::max(0.0f, midpoint - left);
         const float rightWidth = std::max(0.0f, right - midpoint);
-        drawHorizontalTiled(cell(row, 1), {left, y}, leftWidth, tints[index]);
-        drawHorizontalTiled(cell(row, 3), {midpoint, y}, rightWidth, tints[index]);
+        drawHorizontalTiled(bodyCell(row, 1), {left, y}, leftWidth, tints[index]);
+        drawHorizontalTiled(bodyCell(row, 3), {midpoint, y}, rightWidth, tints[index]);
     };
 
     for (int i = 0; i < count; ++i) {
@@ -3878,8 +4039,6 @@ void Renderer::drawUiHorizontalTabs(
         const int row = rowFor(isSelected);
         const float left = positions[i].x;
         const float right = positions[i].x + sizes[i].x;
-        const float leftCapLayoutWidth = std::max(0.0f, leftCapWidth - contentLeftInset(row, 0));
-        const float rightCapLayoutWidth = std::max(0.0f, rightCapWidth - contentRightInset(row, 4));
         const float bodyLeft = i == 0 ? left + std::min(leftCapLayoutWidth, sizes[i].x) : jointCenterX(i - 1) + jointHalfWidth;
         const float bodyRight = i == count - 1 ? right - std::min(rightCapLayoutWidth, sizes[i].x) : jointCenterX(i) - jointHalfWidth;
 
@@ -3887,10 +4046,11 @@ void Renderer::drawUiHorizontalTabs(
             const RectF source = cell(row, 0);
             const float sourceInset = std::min(contentLeftInset(row, 0), source.w);
             const float capWidth = std::min(std::max(0.0f, source.w - sourceInset), sizes[i].x);
+            const float glowOutset = canonicalLeftInset - sourceInset;
             drawTextureRegion(
                 tabs.texture,
                 {source.x + sourceInset, source.y, capWidth, source.h},
-                {left, rowTop(i, row)},
+                {left - glowOutset, rowTop(i, row)},
                 {capWidth, tabs.rowHeights[static_cast<std::size_t>(row)]},
                 tints[i]);
         }
@@ -3899,10 +4059,11 @@ void Renderer::drawUiHorizontalTabs(
             const float sourceInset = std::min(contentRightInset(row, 4), source.w);
             const float sourceWidth = std::max(0.0f, source.w - sourceInset);
             const float capWidth = std::min(sourceWidth, sizes[i].x);
+            const float glowOutset = canonicalRightInset - sourceInset;
             drawTextureRegion(
                 tabs.texture,
                 {source.x + sourceWidth - capWidth, source.y, capWidth, source.h},
-                {right - capWidth, rowTop(i, row)},
+                {right - capWidth + glowOutset, rowTop(i, row)},
                 {capWidth, tabs.rowHeights[static_cast<std::size_t>(row)]},
                 tints[i]);
         }
@@ -3913,7 +4074,7 @@ void Renderer::drawUiHorizontalTabs(
         const float centerX = jointCenterX(i);
         const bool leftSelected = selected[i] != 0;
         const bool rightSelected = selected[i + 1] != 0;
-        const int row = leftSelected == rightSelected ? rowFor(leftSelected) : 2;
+        const int row = leftSelected == rightSelected ? rowFor(leftSelected) : MixedSelectionRow;
         const bool flip = !leftSelected && rightSelected;
         const float jointLayoutTop = std::min(positions[i].y, positions[i + 1].y);
         const float jointLayoutHeight = std::max(positions[i].y + sizes[i].y, positions[i + 1].y + sizes[i + 1].y) - jointLayoutTop;

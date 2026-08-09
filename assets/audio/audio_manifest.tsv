@@ -5,6 +5,7 @@ bgm.dungeon	bgm	bgm/dungeon_placeholder.wav	0.42	true	0	0	ダンジョンBGM
 bgm.boss	bgm	bgm/boss_placeholder.wav	0.48	true	0	0	ボス戦BGM
 se.ui.confirm	se	se/0_Confirm1.wav	1	false	60	32.193	UI 決定
 se.ui.cancel	se	se/0_Cancel1.wav	1	false	60	32.193	UI キャンセル
+se.ui.error	se	se/error.wav	1	false	80	0	UI エラー
 se.ui.menu_open	se	se/sound8.wav	0.95	false	80	13.75	メニューを開く
 se.ui.tab_switch	se	se/0_Cursor1.wav	0.95	false	50	0	タブ切替
 se.ui.book_open	se	se/book.wav	1.25	false	120	0	本を開く
@@ -14,9 +15,12 @@ se.ui.item_use	se	se/0_PowerUp.wav	1	false	80	26.303	アイテム使用
 se.ui.equip	se	se/sound7.wav	1	false	90	7.039	装備
 se.ui.ring_place	se	se/0_Cursor4.wav	1.05	false	90	0	リング配置
 se.ui.upgrade_select	se	se/0_Recharge1.wav	1	false	120	26.303	レベルアップ選択
+se.dev.build_ready	se	se/0_Confirm1.wav	0.8	false	0	32.193	開発用ビルド完了
+se.dev.build_failed	se	se/0_Cancel1.wav	0.8	false	0	32.193	開発用ビルド失敗
 se.facility.forge_upgrade	se	se/facility_forge_upgrade.wav	0.82	false	180	0	拠点強化炉 強化完了
 se.facility.workbench_upgrade	se	se/facility_workbench_upgrade.wav	0.78	false	140	0	作業台 強化完了
 se.facility.workbench_repair	se	se/facility_workbench_repair.wav	0.76	false	160	0	作業台 修理完了
+se.facility.diary_save	se	se/0_Message.wav	0.88	false	180	0	日記 保存完了
 se.merchant.transaction	se	se/merchant_transaction.wav	0.74	false	90	0	商人 取引完了
 se.dialogue.advance	se	se/0_Cursor5.wav	0.7	false	45	0	メッセージ送り
 se.story.phone.incoming	se	se/zz_tmp_story_phone_incoming_placeholder.wav	0.72	false	250	0	電話 着信

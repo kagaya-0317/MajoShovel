@@ -629,7 +629,7 @@ void StageCatalog::loadDefaultStages()
             7,
             "star_vein_dragon",
             StageDefinition::DisplayDetail{
-                .description = "入るたび姿を変える底なしの迷宮。\n持ち込み不可で、初期ステータスから深層を目指す。",
+                .description = "入るたび姿を変える底なしの迷宮\n持ち込み不可で、初期ステータスから奥を目指す",
                 .difficulty = "不明",
                 .size = "底なし",
                 .wallHardness = "不明",

@@ -150,13 +150,14 @@ constexpr int BaseRingSourceOffset = 2;
 constexpr int BaseItemSourceCount = BaseRingSourceOffset + SpellRingCount;
 constexpr int BaseProcessingSourceCount = BaseItemSourceCount;
 constexpr float BaseItemSourceTabOuterGap = 24.0f;
+constexpr float BaseItemSourceTabLeftInset = 24.0f;
 constexpr float BaseItemSourceTabInnerGap = 13.0f;
 constexpr int BookshelfMenuItemCount = 2;
 constexpr int BookshelfVisibleRows = 8;
 constexpr int RingWorkshopImplementedUpgradeCount = 9;
 constexpr int MaxItemEnhanceLevel = 5;
 constexpr int MerchantRefreshDugTileThreshold = 10;
-constexpr int StorageColumns = 8;
+constexpr int StorageColumns = StandardInventoryUiGridColumns;
 constexpr int StorageRowsPerPane = 3;
 constexpr int StoragePaneSlotCount = StorageColumns * StorageRowsPerPane;
 constexpr float StorageSlotW = 72.0f;
@@ -176,10 +177,9 @@ constexpr float StorageDividerY = 368.0f;
 constexpr float StorageHeaderCountGap = 8.0f;
 constexpr float StorageHeaderCountYOffset = 6.0f;
 constexpr int StorageHeaderCountScale = 2;
-constexpr float StoragePageButtonSize = 32.0f;
+constexpr float StoragePageButtonSize = ui::ArrowButtonSize.x;
 constexpr float StoragePageButtonGap = 6.0f;
 constexpr float StoragePageTextWidth = 48.0f;
-constexpr float StoragePageTextYOffset = 7.0f;
 constexpr int StoragePageTextScale = 2;
 constexpr float StorageDetailY = 108.0f;
 constexpr float StorageDragStartDistanceSq = 36.0f;
@@ -200,6 +200,8 @@ constexpr float RingUiCometRadius = 210.0f;
 constexpr float RingUiThirdRingCenterYOffset = 24.0f;
 constexpr float RingUiCometCenterYOffset = 104.0f;
 constexpr float RingUiCometArcRotation = Pi * 1.5f;
+constexpr float RingZeroUiPreviewScale = 0.9f;
+constexpr Vec2 RingZeroUiPreviewOffset{0.0f, -36.0f};
 constexpr float WarpPointSpacing = 320.0f;
 constexpr float WarpPointTouchRadius = 28.0f;
 constexpr float DungeonInspectableInteractionRange = 72.0f;
@@ -229,8 +231,6 @@ constexpr float CapturedWindInterval = 1.20f;
 constexpr float CapturedExplosionTileRadius = 28.0f;
 constexpr int CapturedExplosionTileDamage = 1;
 constexpr int CapturedExplosionEnemyDamage = 3;
-constexpr float RewardPickupRadius = 24.0f;
-constexpr float MoonFragmentPickupRadius = 24.0f;
 constexpr int MoonFragmentMinPerWarpPoint = 1;
 constexpr int MoonFragmentMaxPerWarpPoint = 3;
 constexpr int RewardNodeCountPerRun = 12;
@@ -1108,7 +1108,7 @@ UiDropdownStyle enemyTestDropdownStyle()
     style.fill = {12, 18, 34, 238};
     style.fillHot = {38, 52, 82, 248};
     style.outline = {255, 255, 255, 220};
-    style.emptyLabel = "敵データがありません";
+    style.emptyLabel = "敵データがないよ";
     return style;
 }
 
@@ -1328,7 +1328,7 @@ DialogueSequence baseElderDialogue()
 
 UiRect basePanelRect()
 {
-    return {{360.0f, 92.0f}, {560.0f, 536.0f}};
+    return uiEnsureDecoratedWindowMinSize({{360.0f, 92.0f}, {560.0f, 536.0f}});
 }
 
 UiRect baseMiningStartPanelRect()
@@ -1348,12 +1348,12 @@ UiRect baseUpgradePanelRect()
 
 UiRect baseResultDialogRect()
 {
-    return {{410.0f, 200.0f}, {460.0f, 260.0f}};
+    return uiEnsureDecoratedWindowMinSize({{410.0f, 200.0f}, {460.0f, 260.0f}});
 }
 
 UiRect baseProcessingConfirmRect()
 {
-    return {{360.0f, 118.0f}, {560.0f, 470.0f}};
+    return uiEnsureDecoratedWindowMinSize({{360.0f, 118.0f}, {560.0f, 470.0f}});
 }
 
 UiRect levelUpResultDialogRect()
@@ -1457,8 +1457,7 @@ UiRect baseMiningWarpPointSelectChoiceRect(int index)
 {
     constexpr int Columns = 2;
     constexpr float Gap = 12.0f;
-    constexpr float RowGap = 12.0f;
-    constexpr float Height = 48.0f;
+    constexpr float RowPitch = 60.0f;
     const UiRect panel = baseMiningWarpPointSelectRect();
     const float left = panel.pos.x + 46.0f;
     const float top = panel.pos.y + 126.0f;
@@ -1467,13 +1466,13 @@ UiRect baseMiningWarpPointSelectChoiceRect(int index)
     const int row = index / Columns;
     return {{
         left + static_cast<float>(column) * (width + Gap),
-        top + static_cast<float>(row) * (Height + RowGap),
-    }, {width, Height}};
+        top + static_cast<float>(row) * RowPitch,
+    }, {width, ui::ButtonHeight}};
 }
 
 UiRect baseMiningRegenerateConfirmRect()
 {
-    return {{410.0f, 210.0f}, {460.0f, 300.0f}};
+    return uiEnsureDecoratedWindowMinSize({{410.0f, 210.0f}, {460.0f, 300.0f}});
 }
 
 UiRect baseSellItemRect(int index)
@@ -1500,24 +1499,6 @@ UiRect merchantChoiceRect(int index)
     return {{450.0f, 276.0f + static_cast<float>(index) * 68.0f}, {380.0f, ui::ButtonHeight}};
 }
 
-UiRect merchantGridSlotRect(int index)
-{
-    constexpr int Columns = 8;
-    constexpr float SlotW = 88.0f;
-    constexpr float SlotH = 76.0f;
-    constexpr float Gap = 8.0f;
-    const int row = index / Columns;
-    const int column = index % Columns;
-    return {{72.0f + static_cast<float>(column) * (SlotW + Gap), 170.0f + static_cast<float>(row) * (SlotH + Gap)}, {SlotW, SlotH}};
-}
-
-UiRect baseProcessingGridSlotRect(int index)
-{
-    UiRect rect = merchantGridSlotRect(index);
-    rect.pos.y += 60.0f;
-    return rect;
-}
-
 UiRect merchantDetailPanelRect()
 {
     return {{864.0f, 108.0f}, {330.0f, 520.0f}};
@@ -1528,7 +1509,7 @@ UiRect baseItemSourceTabRect(int index, float y, int tabCount = BaseItemSourceCo
     const int count = std::max(1, tabCount);
     const UiRect panel = merchantPanelRect();
     const UiRect detail = merchantDetailPanelRect();
-    const float left = panel.pos.x + BaseItemSourceTabOuterGap;
+    const float left = panel.pos.x + BaseItemSourceTabOuterGap + BaseItemSourceTabLeftInset;
     const float right = detail.pos.x - BaseItemSourceTabOuterGap;
     const float totalGap = BaseItemSourceTabInnerGap * static_cast<float>(std::max(0, count - 1));
     const float width = std::max(1.0f, (right - left - totalGap) / static_cast<float>(count));
@@ -1628,27 +1609,6 @@ UiRect storageWarehouseSlotRect(int index)
     }, {StorageSlotW, StorageSlotH}};
 }
 
-UiRect storageNextPageButtonRect()
-{
-    return uiPageSelectorRectsFromNextButton(
-        {StorageGridRightX - StoragePageButtonSize, StorageBottomHeaderY - 2.0f},
-        StoragePageTextWidth).next;
-}
-
-UiRect storagePageTextRect()
-{
-    return uiPageSelectorRectsFromNextButton(
-        {StorageGridRightX - StoragePageButtonSize, StorageBottomHeaderY - 2.0f},
-        StoragePageTextWidth).text;
-}
-
-UiRect storagePrevPageButtonRect()
-{
-    return uiPageSelectorRectsFromNextButton(
-        {StorageGridRightX - StoragePageButtonSize, StorageBottomHeaderY - 2.0f},
-        StoragePageTextWidth).prev;
-}
-
 int wrapStoragePageIndex(int page, int delta, int pageCount)
 {
     const int count = std::max(1, pageCount);
@@ -1719,30 +1679,36 @@ UiRect optionsMenuPanelRect()
 
 UiRect pausePanelRect()
 {
-    return {{390.0f, 130.0f}, {500.0f, 460.0f}};
+    constexpr float Width = ui::DecoratedWindowMinWidth;
+    return {{(1280.0f - Width) * 0.5f, 130.0f}, {Width, 460.0f}};
 }
 
 UiRect pauseMenuItemRect(int index)
 {
-    return {{450.0f, 235.0f + static_cast<float>(index) * 58.0f}, {380.0f, ui::ButtonHeight}};
+    const UiRect panel = pausePanelRect();
+    constexpr float Width = 380.0f;
+    return {{
+        panel.pos.x + (panel.size.x - Width) * 0.5f,
+        panel.pos.y + 105.0f + static_cast<float>(index) * 58.0f,
+    }, {Width, ui::ButtonHeight}};
 }
 
 UiRect pauseBackButtonRect()
 {
-    const UiRect panel = pausePanelRect();
-    const Vec2 size{180.0f, ui::ButtonHeight};
-    const float footerTop = panel.pos.y + panel.size.y - uiFooterHeight("x");
-    return {{panel.pos.x + (panel.size.x - size.x) * 0.5f, footerTop - size.y - 12.0f}, size};
+    return uiFooterActionButtonRect(
+        pausePanelRect(),
+        {180.0f, ui::ButtonHeight},
+        UiFooterActionAlignment::Center);
 }
 
 UiRect quitConfirmRect()
 {
-    return {{410.0f, 220.0f}, {460.0f, 260.0f}};
+    return uiEnsureDecoratedWindowMinSize({{410.0f, 220.0f}, {460.0f, 260.0f}});
 }
 
 UiRect warpReturnConfirmRect()
 {
-    return {{410.0f, 220.0f}, {460.0f, 280.0f}};
+    return uiEnsureDecoratedWindowMinSize({{410.0f, 220.0f}, {460.0f, 280.0f}});
 }
 
 UiRect gameOverPanelRect()
@@ -2045,13 +2011,45 @@ UiRect ringPanelRect()
     return {{70.0f, 68.0f}, {1140.0f, 590.0f}};
 }
 
+struct RingUiPreviewStyle {
+    float orbitScale = 1.0f;
+    Vec2 centerOffset{};
+    bool centerDecoration = true;
+    bool radialGuides = true;
+};
+
+RingUiPreviewStyle ringUiPreviewStyle(int ringIndex)
+{
+    if (ringIndex == 0) {
+        return {
+            RingZeroUiPreviewScale,
+            RingZeroUiPreviewOffset,
+            false,
+            false,
+        };
+    }
+    return {};
+}
+
+float ringDetailLeftX()
+{
+    const UiRect panel = ringPanelRect();
+    return panel.pos.x + panel.size.x - DetailOuterRightMargin - RingDetailW;
+}
+
+UiRect ringMainContentRect()
+{
+    const UiRect panel = ringPanelRect();
+    return {panel.pos, {std::max(0.0f, ringDetailLeftX() - panel.pos.x), panel.size.y}};
+}
+
 UiRect ringTabRect(int index, int unlockedRingCount = SpellRingCount)
 {
     constexpr float TabLeft = 116.0f;
     constexpr float TabY = 148.0f;
     constexpr float TabGap = 22.0f;
     const UiRect panel = ringPanelRect();
-    const float detailLeft = panel.pos.x + panel.size.x - DetailOuterRightMargin - RingDetailW;
+    const float detailLeft = ringDetailLeftX();
     const float leftGap = TabLeft - panel.pos.x;
     const float right = detailLeft - leftGap;
     const int tabCount = std::clamp(unlockedRingCount, 1, SpellRingCount);
@@ -2064,14 +2062,15 @@ UiRect ringTabRect(int index, int unlockedRingCount = SpellRingCount)
 Vec2 ringOrbitCenter()
 {
     const UiRect panel = ringPanelRect();
-    const float detailLeft = panel.pos.x + panel.size.x - DetailOuterRightMargin - RingDetailW;
+    const float detailLeft = ringDetailLeftX();
     return {panel.pos.x + (detailLeft - panel.pos.x) * 0.5f, 418.0f};
 }
 
 Vec2 ringUiOrbitCenter(const SpellRingSystem& spellRing)
 {
-    Vec2 center = ringOrbitCenter();
-    if (spellRing.activeRingIndex() == 2) {
+    const int ringIndex = spellRing.activeRingIndex();
+    Vec2 center = ringOrbitCenter() + ringUiPreviewStyle(ringIndex).centerOffset;
+    if (ringIndex == 2) {
         center.y += RingUiThirdRingCenterYOffset;
     }
     if (spellRing.activeRingShape() == RingShape::Comet) {
@@ -2085,15 +2084,15 @@ float ringOrbitRadius()
     return 138.0f;
 }
 
-float ringUiShapeRadius(RingShape shape)
+float ringUiShapeRadius(RingShape shape, int ringIndex)
 {
+    float radius = ringOrbitRadius();
     if (shape == RingShape::FigureEight) {
-        return RingUiFigureEightRadius;
+        radius = RingUiFigureEightRadius;
+    } else if (shape == RingShape::Comet) {
+        radius = RingUiCometRadius;
     }
-    if (shape == RingShape::Comet) {
-        return RingUiCometRadius;
-    }
-    return ringOrbitRadius();
+    return radius * ringUiPreviewStyle(ringIndex).orbitScale;
 }
 
 Vec2 ringWorldToUi(const SpellRingSystem& spellRing, Vec2 worldPosition)
@@ -2142,7 +2141,7 @@ RingOrbitContext ringUiOrbitContext(
 {
     RingOrbitContext context;
     context.shape = spellRing.activeRingShape();
-    context.radius = ringUiShapeRadius(context.shape);
+    context.radius = ringUiShapeRadius(context.shape, spellRing.activeRingIndex());
     context.shapeRotation = 0.0f;
     context.itemIndex = std::max(0, itemIndex);
     context.itemCount = std::max(1, itemCount);
@@ -2264,6 +2263,7 @@ struct MagicOrbitDrawOptions {
     float fluidRandomJitter = 0.0f;
     std::array<float, SpellRingFluidNodeCount> fluidRadialOffsets{};
     std::array<float, SpellRingFluidNodeCount> fluidTangentOffsets{};
+    bool centerDecoration = true;
 };
 
 constexpr std::array<RingShape, 3> MagicRingShapeRenderOrder{{
@@ -2822,7 +2822,8 @@ void drawMagicOrbitPath(Renderer& renderer, const std::vector<Vec2>& orbitPath, 
         renderer.fillCircle(head, 2.2f * widthScale, withAlpha(Color{255, 252, 210, 255}, 172.0f * options.alphaScale));
     }
 
-    if (options.decorations && (options.centerSigil || options.shape == RingShape::FigureEight)) {
+    if (options.decorations && options.centerDecoration &&
+        (options.centerSigil || options.shape == RingShape::FigureEight)) {
         drawMagicOrbitCenter(renderer, center, options);
     }
 }
@@ -3152,7 +3153,7 @@ bool drawRingItemObjectImage(
 UiRect ringDetailRect()
 {
     const UiRect panel = ringPanelRect();
-    const float detailX = panel.pos.x + panel.size.x - DetailOuterRightMargin - RingDetailW;
+    const float detailX = ringDetailLeftX();
     const float detailY = panel.pos.y + DetailOuterTopMargin;
     const float detailH = panel.size.y - DetailOuterTopMargin - DetailOuterBottomMargin;
     return {{detailX, detailY}, {RingDetailW, detailH}};

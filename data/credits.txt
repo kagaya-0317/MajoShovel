@@ -1,10 +1,10 @@
-﻿MajoShovel
+﻿ダンジョンを掘る魔女
 
 制作
-Genta Kagaya
+kagaya
 
 使用ライブラリ
 SDL3
 
 Special Thanks
-MajoShovel を遊んでくれるみなさま
+プレイヤーの皆様

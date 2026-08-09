@@ -1,5 +1,7 @@
 ﻿# Enemy HP Balance Report
 
+> **旧方式の参考資料です。** ストーリーステージ1～3の現行HP設計では、このレポートの単品攻撃力中央値方式ではなく、[`virtual_firepower_spec.md`](virtual_firepower_spec.md) の確定仮想火力を使用します。
+
 Generated: 2026-05-31 09:39:54
 
 Source: Google Sheet Objects="Objects", Enemies="Enemies"

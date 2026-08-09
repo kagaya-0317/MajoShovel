@@ -79,11 +79,17 @@ struct InventoryUiDetailOptions {
     int unlockedRingCount = SpellRingCount;
 };
 
+inline constexpr float StandardInventoryUiGridOriginX = 82.0f;
+inline constexpr int StandardInventoryUiGridColumns = 8;
+inline constexpr int StandardInventoryUiGridVisibleRows = 3;
+inline constexpr Vec2 StandardInventoryUiGridSlotSize{88.0f, 76.0f};
+inline constexpr Vec2 StandardInventoryUiGridSlotGap{8.0f, 8.0f};
+
 struct InventoryUiGridStyle {
-    int columns = 8;
-    int visibleRows = 3;
-    Vec2 slotSize{88.0f, 76.0f};
-    Vec2 slotGap{8.0f, 8.0f};
+    int columns = StandardInventoryUiGridColumns;
+    int visibleRows = StandardInventoryUiGridVisibleRows;
+    Vec2 slotSize = StandardInventoryUiGridSlotSize;
+    Vec2 slotGap = StandardInventoryUiGridSlotGap;
     float imageMaxSize = 48.0f;
     UiScrollAreaStyle scroll{};
 };
@@ -206,6 +212,7 @@ void drawInventoryUiSlot(
     const UiScrollAreaLayout& layout,
     int index,
     const InventoryUiGridStyle& style = {});
+[[nodiscard]] UiRect standardInventoryUiGridSlotRect(int index, float originY);
 [[nodiscard]] const InventoryUiScreenLayout& standardInventoryUiScreenLayout();
 [[nodiscard]] UiRect inventoryUiScreenSlotRect(const InventoryUiScreenLayout& layout, int index);
 void keepInventoryUiGridItemVisible(

@@ -82,7 +82,7 @@ const char* upgradeName(int option)
 {
     switch (option) {
     case 0: return "リング拡張";
-    case 1: return "加速刻印";
+    case 1: return "リング加速";
     case 2: return "重量拡張";
     default: return "";
     }
@@ -91,9 +91,9 @@ const char* upgradeName(int option)
 const char* upgradeDescription(int option)
 {
     switch (option) {
-    case 0: return "リングの半径が広がる";
-    case 1: return "リングの速度が上がる";
-    case 2: return "リングの重量上限が上がる";
+    case 0: return "リングの半径が広がるよ";
+    case 1: return "リングのアイテムの回転速度が上がるよ";
+    case 2: return "リングのアイテムの重量上限が上がるよ";
     default: return "";
     }
 }
@@ -206,7 +206,7 @@ void drawUpgradePrompt(Renderer& renderer, UiRect panel, int unlockedRingCount)
         : ui::HeaderTitlePadding;
     renderer.drawText(
         {panel.pos.x + titlePadding.x, ringPromptY(unlockedRingCount)},
-        "リングの強化を選ぼう",
+        "リングの強化内容を選ぼう",
         ui::TextMuted,
         2);
 }

@@ -63,6 +63,11 @@ enum class SemanticGlyph {
     Pause,
 };
 
+enum class GlyphJoin {
+    Alternative,
+    Chord,
+};
+
 struct Glyph {
     GlyphKind kind = GlyphKind::Key;
     std::string label;
@@ -75,6 +80,7 @@ struct Segment {
     std::string text;
     std::vector<Glyph> glyphs;
     bool newline = false;
+    GlyphJoin glyphJoin = GlyphJoin::Alternative;
 };
 
 const Input* currentInput = nullptr;
@@ -83,9 +89,9 @@ constexpr float IconLabelOffsetX = 1.0f;
 constexpr float IconDrawOffsetY = -2.0f;
 constexpr float IconToTextSpacing = -4.0f;
 constexpr float TextToIconSpacing = 4.0f;
-constexpr float SlashOffsetX = 2.0f;
-constexpr float SlashOffsetY = 2.0f;
-constexpr float SlashNextIconSpacing = -1.0f;
+constexpr float GlyphJoinOffsetX = 2.0f;
+constexpr float GlyphJoinOffsetY = 2.0f;
+constexpr float GlyphJoinNextIconSpacing = -1.0f;
 
 Color withAlpha(Color color, unsigned char alpha)
 {
@@ -321,8 +327,8 @@ std::optional<Glyph> glyphFromBinding(const InputBinding& binding)
         case SDL_GAMEPAD_BUTTON_NORTH: return padButtonGlyph("Y", {248, 210, 96, 255});
         case SDL_GAMEPAD_BUTTON_BACK: return shoulderGlyph("View");
         case SDL_GAMEPAD_BUTTON_START: return shoulderGlyph("Menu");
-        case SDL_GAMEPAD_BUTTON_LEFT_STICK: return stickGlyph("L3", DirAll);
-        case SDL_GAMEPAD_BUTTON_RIGHT_STICK: return stickGlyph("R3", DirAll);
+        case SDL_GAMEPAD_BUTTON_LEFT_STICK: return stickGlyph("L3", DirNone);
+        case SDL_GAMEPAD_BUTTON_RIGHT_STICK: return stickGlyph("R3", DirNone);
         case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: return shoulderGlyph("LB");
         case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: return shoulderGlyph("RB");
         case SDL_GAMEPAD_BUTTON_DPAD_LEFT: return dpadGlyph(DirLeft);
@@ -371,9 +377,15 @@ void appendBindingModifierGlyphs(std::vector<Glyph>& glyphs, const InputBinding&
     appendModifier(InputModifiers::Gui, "Gui");
 }
 
-std::vector<Glyph> glyphsForActions(const Input* input, std::initializer_list<InputAction> actions)
+std::vector<Glyph> glyphsForActions(
+    const Input* input,
+    std::initializer_list<InputAction> actions,
+    GlyphJoin* outJoin = nullptr)
 {
     std::vector<Glyph> result;
+    if (outJoin != nullptr) {
+        *outJoin = GlyphJoin::Alternative;
+    }
     const InputBindingMap& bindings = activeBindings(input);
     const InputDeviceKind primary = activeDevice(input);
     const std::array<InputDeviceKind, 2> deviceOrder{
@@ -392,6 +404,12 @@ std::vector<Glyph> glyphsForActions(const Input* input, std::initializer_list<In
                 if (std::optional<Glyph> glyph = glyphFromBinding(binding)) {
                     appendBindingModifierGlyphs(result, binding);
                     appendGlyph(result, *glyph);
+                    if (outJoin != nullptr &&
+                        actions.size() == 1 &&
+                        binding.device == InputBindingDevice::Keyboard &&
+                        binding.modifiers != InputModifiers::None) {
+                        *outJoin = GlyphJoin::Chord;
+                    }
                     break;
                 }
             }
@@ -404,8 +422,14 @@ std::vector<Glyph> glyphsForActions(const Input* input, std::initializer_list<In
     return result;
 }
 
-std::vector<Glyph> semanticGlyphs(SemanticGlyph semantic, const Input* input)
+std::vector<Glyph> semanticGlyphs(
+    SemanticGlyph semantic,
+    const Input* input,
+    GlyphJoin* outJoin = nullptr)
 {
+    if (outJoin != nullptr) {
+        *outJoin = GlyphJoin::Alternative;
+    }
     const bool gamepad = activeDevice(input) == InputDeviceKind::Gamepad;
     switch (semantic) {
     case SemanticGlyph::Move:
@@ -417,7 +441,7 @@ std::vector<Glyph> semanticGlyphs(SemanticGlyph semantic, const Input* input)
     case SemanticGlyph::NavigateVertical:
         return {dpadGlyph(DirUp | DirDown)};
     case SemanticGlyph::Confirm:
-        return glyphsForActions(input, {InputAction::Confirm});
+        return glyphsForActions(input, {InputAction::Confirm}, outJoin);
     case SemanticGlyph::ConfirmUse:
         return glyphsForActions(input, {InputAction::UseSelectedItem, InputAction::Confirm});
     case SemanticGlyph::AdvanceText:
@@ -429,11 +453,11 @@ std::vector<Glyph> semanticGlyphs(SemanticGlyph semantic, const Input* input)
             ? glyphsForActions(input, {InputAction::Cancel, InputAction::Pause})
             : std::vector<Glyph>{keyGlyph("Esc")};
     case SemanticGlyph::Use:
-        return glyphsForActions(input, {InputAction::UseSelectedItem});
+        return glyphsForActions(input, {InputAction::UseSelectedItem}, outJoin);
     case SemanticGlyph::RingAdd:
-        return glyphsForActions(input, {InputAction::PutSelectedItemOnRing});
+        return glyphsForActions(input, {InputAction::PutSelectedItemOnRing}, outJoin);
     case SemanticGlyph::RingThrow:
-        return glyphsForActions(input, {InputAction::ThrowActiveRing});
+        return glyphsForActions(input, {InputAction::ThrowActiveRing}, outJoin);
     case SemanticGlyph::RingOffset:
         return gamepad
             ? glyphsForActions(input, {
@@ -442,18 +466,21 @@ std::vector<Glyph> semanticGlyphs(SemanticGlyph semantic, const Input* input)
                 InputAction::ShiftRingUp,
                 InputAction::ShiftRingDown,
             })
-            : glyphsForActions(input, {InputAction::OffsetRingCenter});
+            : glyphsForActions(input, {InputAction::OffsetRingCenter}, outJoin);
     case SemanticGlyph::ShortcutCursor:
         return glyphsForActions(input, {InputAction::ShortcutCursorLeft, InputAction::ShortcutCursorRight});
     case SemanticGlyph::RingSwitch:
         return glyphsForActions(input, {InputAction::PreviousActiveRing, InputAction::NextActiveRing});
     case SemanticGlyph::Protection:
-        return glyphsForActions(input, {InputAction::ToggleProtection});
+        return glyphsForActions(input, {InputAction::ToggleProtection}, outJoin);
     case SemanticGlyph::GrabPlace:
-        return glyphsForActions(input, {InputAction::GrabOrPlaceItem});
+        return glyphsForActions(input, {InputAction::GrabOrPlaceItem}, outJoin);
     case SemanticGlyph::ArrangeItems:
-        return glyphsForActions(input, {InputAction::ArrangeItems});
+        return glyphsForActions(input, {InputAction::ArrangeItems}, outJoin);
     case SemanticGlyph::RingRemoveAll:
+        if (outJoin != nullptr) {
+            *outJoin = GlyphJoin::Chord;
+        }
         if (gamepad) {
             return glyphsForActions(input, {
                 InputAction::RingCommandModifier,
@@ -471,9 +498,9 @@ std::vector<Glyph> semanticGlyphs(SemanticGlyph semantic, const Input* input)
             InputAction::NextShortcutRow,
         });
     case SemanticGlyph::Inventory:
-        return glyphsForActions(input, {InputAction::OpenInventory});
+        return glyphsForActions(input, {InputAction::OpenInventory}, outJoin);
     case SemanticGlyph::Pause:
-        return glyphsForActions(input, {InputAction::Pause});
+        return glyphsForActions(input, {InputAction::Pause}, outJoin);
     }
     return {};
 }
@@ -496,7 +523,13 @@ bool matchBoundaryLiteral(std::string_view text, std::size_t offset, std::string
     return true;
 }
 
-bool matchExplicitTag(std::string_view text, std::size_t offset, const Input* input, std::size_t& outEnd, std::vector<Glyph>& outGlyphs)
+bool matchExplicitTag(
+    std::string_view text,
+    std::size_t offset,
+    const Input* input,
+    std::size_t& outEnd,
+    std::vector<Glyph>& outGlyphs,
+    GlyphJoin& outJoin)
 {
     if (offset >= text.size() || text[offset] != '{') {
         return false;
@@ -508,16 +541,16 @@ bool matchExplicitTag(std::string_view text, std::size_t offset, const Input* in
 
     const std::string_view body = text.substr(offset + 1, close - offset - 1);
     if (body == "move") {
-        outGlyphs = semanticGlyphs(SemanticGlyph::Move, input);
+        outGlyphs = semanticGlyphs(SemanticGlyph::Move, input, &outJoin);
     } else if (body == "nav") {
-        outGlyphs = semanticGlyphs(SemanticGlyph::NavigateAll, input);
+        outGlyphs = semanticGlyphs(SemanticGlyph::NavigateAll, input, &outJoin);
     } else if (body == "shortcut") {
-        outGlyphs = semanticGlyphs(SemanticGlyph::ShortcutCursor, input);
+        outGlyphs = semanticGlyphs(SemanticGlyph::ShortcutCursor, input, &outJoin);
     } else if (body == "shortcut-row") {
-        outGlyphs = semanticGlyphs(SemanticGlyph::ShortcutRow, input);
+        outGlyphs = semanticGlyphs(SemanticGlyph::ShortcutRow, input, &outJoin);
     } else if (body.rfind("act:", 0) == 0) {
         if (std::optional<InputAction> action = parseInputAction(body.substr(4))) {
-            outGlyphs = glyphsForActions(input, {*action});
+            outGlyphs = glyphsForActions(input, {*action}, &outJoin);
         }
     } else if (body.rfind("key:", 0) == 0) {
         outGlyphs = {keyGlyph(std::string(body.substr(4)))};
@@ -532,8 +565,8 @@ bool matchExplicitTag(std::string_view text, std::size_t offset, const Input* in
         else if (button == "north") outGlyphs = {padButtonGlyph("Y", {248, 210, 96, 255})};
         else if (button == "back") outGlyphs = {shoulderGlyph("View")};
         else if (button == "start") outGlyphs = {shoulderGlyph("Menu")};
-        else if (button == "left_stick") outGlyphs = {stickGlyph("L3", DirAll)};
-        else if (button == "right_stick") outGlyphs = {stickGlyph("R3", DirAll)};
+        else if (button == "left_stick") outGlyphs = {stickGlyph("L3", DirNone)};
+        else if (button == "right_stick") outGlyphs = {stickGlyph("R3", DirNone)};
         else if (button == "left_shoulder") outGlyphs = {shoulderGlyph("LB")};
         else if (button == "right_shoulder") outGlyphs = {shoulderGlyph("RB")};
         else if (button == "dpad_up") outGlyphs = {dpadGlyph(DirUp)};
@@ -560,32 +593,40 @@ bool matchExplicitTag(std::string_view text, std::size_t offset, const Input* in
     return true;
 }
 
-bool matchPlainGlyph(std::string_view text, std::size_t offset, const Input* input, std::size_t& outEnd, std::vector<Glyph>& outGlyphs)
+bool matchPlainGlyph(
+    std::string_view text,
+    std::size_t offset,
+    const Input* input,
+    std::size_t& outEnd,
+    std::vector<Glyph>& outGlyphs,
+    GlyphJoin& outJoin)
 {
     auto semantic = [&](std::string_view pattern, SemanticGlyph kind) {
         if (matchLiteral(text, offset, pattern, outEnd)) {
-            outGlyphs = semanticGlyphs(kind, input);
+            outGlyphs = semanticGlyphs(kind, input, &outJoin);
             return true;
         }
         return false;
     };
     auto boundarySemantic = [&](std::string_view pattern, SemanticGlyph kind) {
         if (matchBoundaryLiteral(text, offset, pattern, outEnd)) {
-            outGlyphs = semanticGlyphs(kind, input);
+            outGlyphs = semanticGlyphs(kind, input, &outJoin);
             return true;
         }
         return false;
     };
-    auto literalGlyphs = [&](std::string_view pattern, std::vector<Glyph> glyphs) {
+    auto literalGlyphs = [&](std::string_view pattern, std::vector<Glyph> glyphs, GlyphJoin join = GlyphJoin::Alternative) {
         if (matchLiteral(text, offset, pattern, outEnd)) {
             outGlyphs = std::move(glyphs);
+            outJoin = join;
             return true;
         }
         return false;
     };
-    auto boundaryGlyphs = [&](std::string_view pattern, std::vector<Glyph> glyphs) {
+    auto boundaryGlyphs = [&](std::string_view pattern, std::vector<Glyph> glyphs, GlyphJoin join = GlyphJoin::Alternative) {
         if (matchBoundaryLiteral(text, offset, pattern, outEnd)) {
             outGlyphs = std::move(glyphs);
+            outJoin = join;
             return true;
         }
         return false;
@@ -606,15 +647,17 @@ bool matchPlainGlyph(std::string_view text, std::size_t offset, const Input* inp
     if (semantic("Z/X", SemanticGlyph::RingSwitch)) return true;
     if (semantic("Shift+R", SemanticGlyph::RingRemoveAll)) return true;
     if (literalGlyphs("Backspace/Delete", {keyGlyph("Back"), keyGlyph("Del")})) return true;
-    if (literalGlyphs("Shift+1-2", {keyGlyph("Shift"), keyGlyph("1-2")})) return true;
-    if (literalGlyphs("Shift+1-3", {keyGlyph("Shift"), keyGlyph("1-3")})) return true;
-    if (literalGlyphs("Ctrl+S", {keyGlyph("Ctrl"), keyGlyph("S")})) return true;
+    if (literalGlyphs("Shift+1-2", {keyGlyph("Shift"), keyGlyph("1-2")}, GlyphJoin::Chord)) return true;
+    if (literalGlyphs("Shift+1-3", {keyGlyph("Shift"), keyGlyph("1-3")}, GlyphJoin::Chord)) return true;
+    if (literalGlyphs("Shift+1", {keyGlyph("Shift"), keyGlyph("1")}, GlyphJoin::Chord)) return true;
+    if (literalGlyphs("Ctrl+S", {keyGlyph("Ctrl"), keyGlyph("S")}, GlyphJoin::Chord)) return true;
     if (literalGlyphs("1〜8", {keyGlyph("1-8")})) return true;
     if (literalGlyphs("1-8", {keyGlyph("1-8")})) return true;
     if (literalGlyphs("1〜2", {keyGlyph("1-2")})) return true;
     if (literalGlyphs("1-2", {keyGlyph("1-2")})) return true;
     if (literalGlyphs("1〜3", {keyGlyph("1-3")})) return true;
     if (literalGlyphs("1-3", {keyGlyph("1-3")})) return true;
+    if (boundaryGlyphs("1", {keyGlyph("1")})) return true;
     if (literalGlyphs("+1/-1", {keyGlyph("+1"), keyGlyph("-1")})) return true;
     if (literalGlyphs("+10/-10", {keyGlyph("+10"), keyGlyph("-10")})) return true;
     if (boundarySemantic("Tab", SemanticGlyph::ShortcutRow)) return true;
@@ -656,11 +699,12 @@ std::vector<Segment> parseSegments(std::string_view text, const Input* input)
 
         std::size_t end = offset;
         std::vector<Glyph> glyphs;
-        if (matchExplicitTag(text, offset, input, end, glyphs) ||
-            matchPlainGlyph(text, offset, input, end, glyphs)) {
+        GlyphJoin glyphJoin = GlyphJoin::Alternative;
+        if (matchExplicitTag(text, offset, input, end, glyphs, glyphJoin) ||
+            matchPlainGlyph(text, offset, input, end, glyphs, glyphJoin)) {
             flushText();
             if (!glyphs.empty()) {
-                segments.push_back(Segment{{}, std::move(glyphs), false});
+                segments.push_back(Segment{{}, std::move(glyphs), false, glyphJoin});
             }
             offset = end;
             continue;
@@ -731,25 +775,34 @@ Vec2 glyphSize(Renderer& renderer, const Glyph& glyph, const InputHelpStyle& sty
     case GlyphKind::Dpad:
         return {h * 1.18f, h};
     case GlyphKind::Stick:
-        return {h * 1.2f, h};
+        return {h * 1.3f, h * 1.15f};
     }
     return {h, h};
 }
 
-float slashWidth(Renderer& renderer, const InputHelpStyle& style)
+std::string_view glyphJoinText(GlyphJoin join)
 {
-    return measureIconLabel(renderer, "/", std::max(1, style.scale - 1)).x + 2.0f;
+    return join == GlyphJoin::Chord ? "+" : "/";
 }
 
-Vec2 glyphGroupSize(Renderer& renderer, const std::vector<Glyph>& glyphs, const InputHelpStyle& style)
+float glyphJoinWidth(Renderer& renderer, GlyphJoin join, const InputHelpStyle& style)
+{
+    return measureIconLabel(renderer, glyphJoinText(join), std::max(1, style.scale - 1)).x + 2.0f;
+}
+
+Vec2 glyphGroupSize(
+    Renderer& renderer,
+    const std::vector<Glyph>& glyphs,
+    GlyphJoin join,
+    const InputHelpStyle& style)
 {
     float width = 0.0f;
     float height = 0.0f;
     for (std::size_t i = 0; i < glyphs.size(); ++i) {
         const Vec2 size = glyphSize(renderer, glyphs[i], style);
         if (i > 0) {
-            width += slashWidth(renderer, style);
-            width += SlashNextIconSpacing;
+            width += glyphJoinWidth(renderer, join, style);
+            width += GlyphJoinNextIconSpacing;
         }
         width += size.x;
         height = std::max(height, size.y);
@@ -782,7 +835,7 @@ Vec2 measureLine(Renderer& renderer, const std::vector<Segment>& segments, std::
             width += size.x;
             height = std::max(height, size.y);
         } else if (!segment.glyphs.empty()) {
-            const Vec2 size = glyphGroupSize(renderer, segment.glyphs, style);
+            const Vec2 size = glyphGroupSize(renderer, segment.glyphs, segment.glyphJoin, style);
             width += size.x;
             height = std::max(height, size.y);
         }
@@ -925,24 +978,81 @@ void drawDpad(Renderer& renderer, Vec2 pos, Vec2 size, const Glyph& glyph)
     drawDpadButton(renderer, origin + Vec2{unit, unit * 2.0f}, cell, (glyph.directions & DirDown) != 0, glyph.accent);
 }
 
+void drawStickDirectionTriangle(
+    Renderer& renderer,
+    Vec2 center,
+    Vec2 direction,
+    float circleRadius,
+    float gap,
+    float length,
+    float halfBase,
+    Color color)
+{
+    const Vec2 perpendicular{-direction.y, direction.x};
+    const Vec2 baseCenter = center + direction * (circleRadius + gap);
+    const Vec2 tip = baseCenter + direction * length;
+    const std::array<Vec2, 3> points{
+        tip,
+        baseCenter + perpendicular * halfBase,
+        baseCenter - perpendicular * halfBase,
+    };
+    std::array<Vec2, 3> shadow = points;
+    for (Vec2& point : shadow) {
+        point.y += 1.2f;
+    }
+    renderer.fillPolygon(shadow.data(), shadow.size(), {0, 0, 0, 82});
+    renderer.fillPolygon(points.data(), points.size(), color);
+}
+
 void drawStick(Renderer& renderer, Vec2 pos, Vec2 size, const Glyph& glyph, const InputHelpStyle& style)
 {
     const Vec2 center = pos + size * 0.5f;
-    const float radius = std::min(size.x, size.y) * 0.42f;
-    renderer.fillSoftCircle(center + Vec2{0.0f, 2.0f}, radius + 1.0f, {0, 0, 0, 78});
-    renderer.drawSoftRing(center, radius, 4.0f, {190, 204, 226, 220});
-    renderer.fillSoftCircle(center, radius * 0.68f, {28, 36, 52, 244});
-    const Vec2 knobOffset{
-        ((glyph.directions & DirRight) != 0 ? 1.0f : 0.0f) + ((glyph.directions & DirLeft) != 0 ? -1.0f : 0.0f),
-        ((glyph.directions & DirDown) != 0 ? 1.0f : 0.0f) + ((glyph.directions & DirUp) != 0 ? -1.0f : 0.0f),
+    const float minSize = std::min(size.x, size.y);
+    const float outerRadius = minSize * 0.29f;
+    const float innerRadius = outerRadius * 0.62f;
+    const float directionGap = minSize * 0.045f;
+    const float directionLength = minSize * 0.13f;
+    const float directionHalfBase = minSize * 0.11f;
+    const Color directionColor = scaleAlpha(glyph.accent, 0.95f);
+
+    struct StickDirection {
+        int bit;
+        Vec2 vector;
     };
-    Vec2 knob = center;
-    if (lengthSquared(knobOffset) > 0.0f && glyph.directions != DirAll) {
-        knob += normalize(knobOffset) * (radius * 0.26f);
+    constexpr std::array<StickDirection, 4> Directions{{
+        {DirLeft, {-1.0f, 0.0f}},
+        {DirRight, {1.0f, 0.0f}},
+        {DirUp, {0.0f, -1.0f}},
+        {DirDown, {0.0f, 1.0f}},
+    }};
+    for (const StickDirection& direction : Directions) {
+        if ((glyph.directions & direction.bit) == 0) {
+            continue;
+        }
+        drawStickDirectionTriangle(
+            renderer,
+            center,
+            direction.vector,
+            outerRadius,
+            directionGap,
+            directionLength,
+            directionHalfBase,
+            directionColor);
     }
-    renderer.fillSoftCircle(knob, radius * 0.34f, scaleAlpha(glyph.accent, 0.95f));
+
+    renderer.fillSoftCircle(center + Vec2{0.0f, 1.5f}, outerRadius + 1.0f, {0, 0, 0, 82});
+    renderer.fillSoftCircle(center, outerRadius, {28, 36, 52, 244});
+    renderer.drawSoftRing(center, outerRadius, 2.2f, {190, 204, 226, 232});
+    renderer.drawSoftRing(center, innerRadius, 1.6f, scaleAlpha(glyph.accent, 0.9f));
     if (!glyph.label.empty()) {
-        drawCenteredText(renderer, {pos.x, pos.y + size.y * 0.47f}, {size.x, size.y * 0.48f}, glyph.label, {240, 248, 255, 238}, std::max(1, style.scale - 1));
+        const Vec2 labelSize{outerRadius * 2.0f, outerRadius * 2.0f};
+        drawCenteredText(
+            renderer,
+            center - labelSize * 0.5f,
+            labelSize,
+            glyph.label,
+            {240, 248, 255, 244},
+            std::max(1, style.scale - 1));
     }
 }
 
@@ -981,17 +1091,28 @@ void drawTextRun(Renderer& renderer, Vec2 pos, std::string_view text, const Inpu
     }
 }
 
-void drawGlyphGroup(Renderer& renderer, Vec2 pos, const std::vector<Glyph>& glyphs, const InputHelpStyle& style)
+void drawGlyphGroup(
+    Renderer& renderer,
+    Vec2 pos,
+    const std::vector<Glyph>& glyphs,
+    GlyphJoin join,
+    const InputHelpStyle& style)
 {
     Vec2 cursor{pos.x, pos.y + IconDrawOffsetY};
-    const int slashScale = std::max(1, style.scale - 1);
+    const int joinScale = std::max(1, style.scale - 1);
     for (std::size_t i = 0; i < glyphs.size(); ++i) {
         if (i > 0) {
-            const Vec2 slashSize = measureIconLabel(renderer, "/", slashScale);
-            const float slashY = cursor.y + std::max(0.0f, (style.iconHeight - slashSize.y) * 0.5f);
-            drawIconLabel(renderer, {cursor.x + 1.0f + SlashOffsetX, slashY + SlashOffsetY}, "/", style.text, slashScale);
-            cursor.x += slashWidth(renderer, style);
-            cursor.x += SlashNextIconSpacing;
+            const std::string_view joinText = glyphJoinText(join);
+            const Vec2 joinSize = measureIconLabel(renderer, joinText, joinScale);
+            const float joinY = cursor.y + std::max(0.0f, (style.iconHeight - joinSize.y) * 0.5f);
+            drawIconLabel(
+                renderer,
+                {cursor.x + 1.0f + GlyphJoinOffsetX, joinY + GlyphJoinOffsetY},
+                joinText,
+                style.text,
+                joinScale);
+            cursor.x += glyphJoinWidth(renderer, join, style);
+            cursor.x += GlyphJoinNextIconSpacing;
         }
         drawGlyph(renderer, cursor, glyphs[i], style);
         cursor.x += glyphSize(renderer, glyphs[i], style).x;
@@ -1029,7 +1150,8 @@ bool inputHelpExplicitTagAt(std::string_view text, std::size_t offset, std::size
 {
     const Input* resolvedInput = input != nullptr ? input : currentInput;
     std::vector<Glyph> glyphs;
-    return matchExplicitTag(text, offset, resolvedInput, outEnd, glyphs);
+    GlyphJoin glyphJoin = GlyphJoin::Alternative;
+    return matchExplicitTag(text, offset, resolvedInput, outEnd, glyphs, glyphJoin);
 }
 
 Vec2 measureInputHelpText(Renderer& renderer, std::string_view text, const InputHelpStyle& style, const Input* input)
@@ -1097,8 +1219,13 @@ void drawInputHelpText(Renderer& renderer, Vec2 pos, std::string_view text, cons
                 drawTextRun(renderer, {cursor.x, y + (lineSize.y - size.y) * 0.5f}, segment.text, style);
                 cursor.x += size.x;
             } else if (!segment.glyphs.empty()) {
-                const Vec2 size = glyphGroupSize(renderer, segment.glyphs, style);
-                drawGlyphGroup(renderer, {cursor.x, y + (lineSize.y - size.y) * 0.5f}, segment.glyphs, style);
+                const Vec2 size = glyphGroupSize(renderer, segment.glyphs, segment.glyphJoin, style);
+                drawGlyphGroup(
+                    renderer,
+                    {cursor.x, y + (lineSize.y - size.y) * 0.5f},
+                    segment.glyphs,
+                    segment.glyphJoin,
+                    style);
                 cursor.x += size.x;
             }
         }

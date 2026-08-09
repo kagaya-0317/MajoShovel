@@ -23,7 +23,7 @@ int main(int argc, char** argv)
     bool restart = false;
     do {
         auto app = majo::createApp();
-        if (!app->initialize("ダンジョンを掘る魔女", 1280, 720, testPlayMode)) {
+        if (!app->initialize("ダンジョンを掘る魔女", 1280, 720, testPlayMode, devAutoReloadMode)) {
             return 1;
         }
         app->run();

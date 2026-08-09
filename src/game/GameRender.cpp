@@ -149,6 +149,7 @@ constexpr Color RingStatusHudWeightGaugeFillColor{84, 218, 255, 238};
 constexpr Color RingStatusHudWeightGaugeOverColor{255, 72, 84, 238};
 constexpr Color RingStatusHudWeightGaugeLimitColor{255, 248, 190, 245};
 constexpr float RingWeightOverloadEpsilon = 0.0001f;
+constexpr Color RingWeightOverloadedTextColor{255, 112, 112, 255};
 constexpr std::string_view RingStatusHudChargeReadySe = "se.ring.charge_ready";
 constexpr float RingStatusHudReadyHoldSeconds = 1.0f;
 constexpr float RingStatusHudFadeSeconds = 20.0f / 60.0f;
@@ -386,7 +387,7 @@ bool ringStatusHudRightWindowContains(UiRect panel, Vec2 point)
     return rightWindow.contains(point);
 }
 
-bool titlePromptUsesGamepad()
+bool inputHelpUsesGamepad()
 {
     switch (inputHelpDeviceMode()) {
     case InputHelpDeviceMode::KeyboardMouse:
@@ -581,18 +582,41 @@ std::string weightModifierSuffix(double value)
     return "（" + signedWeightShort(value) + "）";
 }
 
-std::string ringWeightStateLabel(float weightRatio, float stopRatio)
+struct RingWeightUiState {
+    float totalWeight = 0.0f;
+    float maxWeight = 0.0f;
+    float weightRatio = 0.0f;
+    float stopRatio = SpellRingSystem::MaxWeightStopRatio;
+    bool overloaded = false;
+};
+
+RingWeightUiState ringWeightUiStateForRing(const SpellRingSystem& spellRing, int ringIndex)
 {
-    if (weightRatio < 0.5f) {
+    ringIndex = std::clamp(ringIndex, 0, SpellRingCount - 1);
+
+    RingWeightUiState state;
+    state.totalWeight = spellRing.totalEquippedWeightForRing(ringIndex);
+    state.maxWeight = spellRing.maxEquippedWeightForRing(ringIndex);
+    state.weightRatio = state.maxWeight > 0.0f
+        ? state.totalWeight / state.maxWeight
+        : (state.totalWeight > 0.0f ? SpellRingSystem::MaxWeightStopRatio : 0.0f);
+    state.stopRatio = spellRing.weightStopRatioForRing(ringIndex);
+    state.overloaded = state.weightRatio > 1.0f + RingWeightOverloadEpsilon;
+    return state;
+}
+
+std::string ringWeightStateLabel(const RingWeightUiState& state)
+{
+    if (state.weightRatio < 0.5f) {
         return "重量余裕あり";
     }
-    if (weightRatio < 0.85f) {
+    if (state.weightRatio < 0.85f) {
         return "重量あと少し";
     }
-    if (weightRatio <= 1.0f + RingWeightOverloadEpsilon) {
+    if (!state.overloaded) {
         return "重量いっぱい";
     }
-    if (weightRatio < stopRatio) {
+    if (state.weightRatio < state.stopRatio) {
         return "重量オーバー";
     }
     return "超重量オーバー";
@@ -605,8 +629,26 @@ std::string ringWeightSpeedStateLine(float speedMultiplier)
     }
 
     char buffer[64];
-    std::snprintf(buffer, sizeof(buffer), "リング速度 ×%.2f倍", speedMultiplier);
+    std::snprintf(buffer, sizeof(buffer), "リング速度 %.2f倍", speedMultiplier);
     return buffer;
+}
+
+void drawRingManagementWeightSummary(
+    Renderer& renderer,
+    Vec2 pos,
+    const SpellRingSystem& spellRing,
+    int ringIndex)
+{
+    constexpr Color NormalColor{188, 202, 224, 255};
+    constexpr float StateLineOffsetY = 30.0f;
+    constexpr int TextScale = 2;
+
+    const RingWeightUiState state = ringWeightUiStateForRing(spellRing, ringIndex);
+    const Color color = state.overloaded ? RingWeightOverloadedTextColor : NormalColor;
+    char buffer[64];
+    std::snprintf(buffer, sizeof(buffer), "重量 %.1f / %.1fkg", state.totalWeight, state.maxWeight);
+    renderer.drawText(pos, buffer, color, TextScale);
+    renderer.drawText(pos + Vec2{0.0f, StateLineOffsetY}, ringWeightStateLabel(state), color, TextScale);
 }
 
 void drawRingDetailLineWithModifier(
@@ -652,25 +694,23 @@ void drawRingDetailPanel(
     const SpellRingSystem& spellRing,
     const EquipmentModifiers& modifiers,
     const RuntimeBalance& balance,
-    int ringIndex)
+    int ringIndex,
+    int unlockedRingCount)
 {
     ringIndex = std::clamp(ringIndex, 0, SpellRingCount - 1);
     drawUiSubPanel(renderer, panel);
 
     const RingEquipmentModifiers& ringModifiers = ringEquipmentModifiersForRing(modifiers, ringIndex);
     const std::vector<SpellRingItem>& items = spellRing.itemsForRing(ringIndex);
-    float y = drawUiDetailHeader(renderer, panel, "リング " + std::to_string(ringIndex + 1));
-
-    char buffer[96];
-    drawRingDetailLineWithModifier(
+    float y = drawUiDetailHeaderWithIcon(
         renderer,
         panel,
-        y,
-        "形状",
-        ringShapeDisplayName(spellRing.ringShapeForIndex(ringIndex)));
+        ringDisplayName(ringIndex, unlockedRingCount),
+        ringDisplayIconImageNumber(ringIndex));
 
+    char buffer[96];
     std::snprintf(buffer, sizeof(buffer), "%02d/%02d", static_cast<int>(items.size()), spellRing.maxItemCountForRing(ringIndex));
-    drawRingDetailLineWithModifier(renderer, panel, y, "装着", buffer);
+    drawRingDetailLineWithModifier(renderer, panel, y, "アイテム", buffer);
 
     const float orbitRadius = spellRing.orbitRadiusForRing(ringIndex);
     std::snprintf(buffer, sizeof(buffer), "%.2fm", worldDistanceToMeters(orbitRadius));
@@ -697,12 +737,13 @@ void drawRingDetailPanel(
         buffer,
         percentModifierSuffix(ringModifiers.ringSpeedMul));
 
+    const RingWeightUiState weightState = ringWeightUiStateForRing(spellRing, ringIndex);
     std::snprintf(
         buffer,
         sizeof(buffer),
         "%.1f/%.1fkg",
-        spellRing.totalEquippedWeightForRing(ringIndex),
-        spellRing.maxEquippedWeightForRing(ringIndex));
+        weightState.totalWeight,
+        weightState.maxWeight);
     drawRingDetailLineWithModifier(
         renderer,
         panel,
@@ -711,35 +752,26 @@ void drawRingDetailPanel(
         buffer,
         weightModifierSuffix(ringModifiers.ringWeightLimitAdd));
 
-    const float totalWeight = spellRing.totalEquippedWeightForRing(ringIndex);
-    const float maxWeight = spellRing.maxEquippedWeightForRing(ringIndex);
-    const float weightRatio = maxWeight > 0.0f
-        ? totalWeight / maxWeight
-        : (totalWeight > 0.0f ? SpellRingSystem::MaxWeightStopRatio : 0.0f);
-    const float stopRatio = spellRing.weightStopRatioForRing(ringIndex);
-    const float weightSpeedMultiplier = spellRing.weightSpeedMultiplierForRing(ringIndex);
-    constexpr Color OverloadedWeightColor{255, 112, 112, 255};
-    const bool overloaded = weightRatio > 1.0f + RingWeightOverloadEpsilon;
-    const Color stateColor = overloaded ? OverloadedWeightColor : ui::Text;
+    const Color stateColor = weightState.overloaded ? RingWeightOverloadedTextColor : ui::Text;
     drawRingDetailLineWithModifier(
         renderer,
         panel,
         y,
-        "状態",
-        ringWeightStateLabel(weightRatio, stopRatio),
+        "",
+        ringWeightStateLabel(weightState),
         {},
         stateColor,
-        overloaded ? OverloadedWeightColor : ui::TextMuted);
-    if (overloaded) {
+        weightState.overloaded ? RingWeightOverloadedTextColor : ui::TextMuted);
+    if (weightState.overloaded) {
         drawRingDetailLineWithModifier(
             renderer,
             panel,
             y,
             "",
-            ringWeightSpeedStateLine(weightSpeedMultiplier),
+            ringWeightSpeedStateLine(spellRing.weightSpeedMultiplierForRing(ringIndex)),
             {},
-            OverloadedWeightColor,
-            OverloadedWeightColor);
+            RingWeightOverloadedTextColor,
+            RingWeightOverloadedTextColor);
     }
 
 }
@@ -1283,9 +1315,36 @@ UiRect ringPlaceWindowRect()
     return {{RingPlaceScreenX, RingPlaceScreenY}, {RingPlaceScreenW, RingPlaceScreenH}};
 }
 
+UiRect ringArrangeButtonRect()
+{
+    return uiFooterActionButtonRect(
+        ringPanelRect(),
+        {180.0f, ui::ButtonHeight},
+        UiFooterActionAlignment::Left);
+}
+
+UiRect ringPresetButtonRect(bool registerPreset)
+{
+    constexpr float ButtonWidth = 196.0f;
+    UiRect rect = uiFooterActionButtonRect(
+        ringMainContentRect(),
+        {ButtonWidth, ui::ButtonHeight},
+        UiFooterActionAlignment::Right);
+    if (!registerPreset) {
+        rect.pos.x -= ButtonWidth + ui::ButtonGap;
+    }
+    return rect;
+}
+
+constexpr std::array<UiCommandMenuItem, RingPresetSlotCount> RingPresetMenuItems{{
+    {"プリセット1", true},
+    {"プリセット2", true},
+    {"プリセット3", true},
+}};
+
 UiRect ringDiscardConfirmRect()
 {
-    return {{390.0f, 220.0f}, {500.0f, 280.0f}};
+    return uiEnsureDecoratedWindowMinSize({{390.0f, 220.0f}, {500.0f, 280.0f}});
 }
 
 UiRect ringPlaceSlotRect(int index)
@@ -1392,15 +1451,15 @@ bool ringInventoryHasAnyAutoPlaceableItem(const InventorySystem& inventory, cons
 std::string ringPlacementUnavailableStatus(const InventorySystem& inventory, const SpellRingSystem& spellRing)
 {
     if (!ringInventoryHasAnyItem(inventory)) {
-        return "配置できるアイテムがありません";
+        return "配置できるアイテムがないよ";
     }
     if (!spellRing.canAddItem()) {
-        return "リング満杯です";
+        return "リング満杯だよ";
     }
     if (!ringInventoryHasAnyAutoPlaceableItem(inventory, spellRing)) {
-        return "過積載限界のため配置できません";
+        return "過積載限界のため配置できないよ";
     }
-    return "この位置には配置できません";
+    return "この位置には配置できないよ";
 }
 
 bool ringPlacementHitAreaContains(Vec2 point, const SpellRingSystem& spellRing, const RuntimeBalance& balance)
@@ -1517,121 +1576,20 @@ void drawRingDiscardConfirmDialog(
     questionStyle.scale = 2;
     const std::string question = fittedInlineItemText(
         renderer,
-        iconPrefix + itemName + "を捨てますか？",
+        iconPrefix + itemName + "を捨てる？",
         body.size.x,
         questionStyle);
     float y = body.pos.y;
     drawInlineItemText(renderer, objectCatalog, {body.pos.x, y}, question, questionStyle);
-    y += measureInlineItemText(renderer, question, questionStyle).y + 18.0f;
+    y += measureInlineItemText(renderer, question, questionStyle).y;
     renderer.drawWrappedText(
         {body.pos.x, y},
-        "（捨てたアイテムは再入手できません）",
+        "（捨てたアイテムは再入手できないよ）",
         body.size.x,
-        {255, 224, 164, 255},
+        ui::Text,
         2);
 
     drawUiConfirmDialogButtons(renderer, state, panel);
-}
-
-float cometArrangeArcRadians(const RingOrbitTuning& tuning)
-{
-    const float maxArcDegrees = std::clamp(tuning.cometMaxArcDegrees, 10.0f, 360.0f);
-    return std::clamp(std::abs(tuning.cometArcDegrees), 10.0f, maxArcDegrees) * (Pi / 180.0f);
-}
-
-struct RingArrangeEntry {
-    int itemIndex = 0;
-    float pathParam = 0.0f;
-};
-
-float ringArrangePathParam(RingShape shape, const RingOrbitTuning& tuning, float localAngle)
-{
-    if (shape == RingShape::Comet) {
-        const float halfArc = cometArrangeArcRadians(tuning) * 0.5f;
-        return std::clamp(localAngle, -halfArc, halfArc);
-    }
-    return normalizeRingAngle(localAngle);
-}
-
-bool arrangeActiveRingItemsEvenly(SpellRingSystem& spellRing, const RuntimeBalance& balance)
-{
-    std::vector<SpellRingItem>& items = spellRing.items();
-    const int count = static_cast<int>(items.size());
-    if (count <= 0) {
-        return false;
-    }
-
-    const RingShape shape = spellRing.activeRingShape();
-    const RingOrbitTuning tuning = makeRingOrbitTuning(balance);
-    const int ringIndex = spellRing.activeRingIndex();
-    if (count == 1) {
-        items.front().ringIndex = ringIndex;
-        items.front().localAngle = spellRing.normalizeLocalAngle(items.front().localAngle, balance);
-        return true;
-    }
-
-    std::vector<RingArrangeEntry> order;
-    order.reserve(items.size());
-    for (int i = 0; i < count; ++i) {
-        order.push_back(RingArrangeEntry{
-            i,
-            ringArrangePathParam(shape, tuning, items[static_cast<std::size_t>(i)].localAngle),
-        });
-    }
-    std::stable_sort(order.begin(), order.end(), [](const RingArrangeEntry& left, const RingArrangeEntry& right) {
-        return left.pathParam < right.pathParam;
-    });
-
-    if (shape == RingShape::Comet) {
-        const float arc = cometArrangeArcRadians(tuning);
-        for (int i = 0; i < count; ++i) {
-            const int itemIndex = order[static_cast<std::size_t>(i)].itemIndex;
-            const float angle = -arc * 0.5f + arc * (static_cast<float>(i) + 0.5f) / static_cast<float>(count);
-            items[static_cast<std::size_t>(itemIndex)].ringIndex = ringIndex;
-            items[static_cast<std::size_t>(itemIndex)].localAngle = spellRing.quantizeLocalAngle(angle, balance);
-        }
-        return true;
-    }
-
-    const float full = Pi * 2.0f;
-    const float step = full / static_cast<float>(count);
-    int bestStart = 0;
-    float bestPhase = 0.0f;
-    float bestCost = std::numeric_limits<float>::max();
-    for (int start = 0; start < count; ++start) {
-        const float firstParam = order[static_cast<std::size_t>(start)].pathParam;
-        float phaseSum = 0.0f;
-        for (int offset = 0; offset < count; ++offset) {
-            const RingArrangeEntry& entry = order[static_cast<std::size_t>((start + offset) % count)];
-            float param = entry.pathParam;
-            if (param + 0.0001f < firstParam) {
-                param += full;
-            }
-            phaseSum += param - step * static_cast<float>(offset);
-        }
-        const float phase = phaseSum / static_cast<float>(count);
-        float cost = 0.0f;
-        for (int offset = 0; offset < count; ++offset) {
-            const RingArrangeEntry& entry = order[static_cast<std::size_t>((start + offset) % count)];
-            const float target = phase + step * static_cast<float>(offset);
-            const float delta = shortestRingAngleDelta(entry.pathParam, target, shape, balance);
-            cost += delta * delta;
-        }
-        if (cost < bestCost) {
-            bestCost = cost;
-            bestStart = start;
-            bestPhase = phase;
-        }
-    }
-
-    for (int offset = 0; offset < count; ++offset) {
-        const int itemIndex = order[static_cast<std::size_t>((bestStart + offset) % count)].itemIndex;
-        const float angle = bestPhase + step * static_cast<float>(offset);
-        items[static_cast<std::size_t>(itemIndex)].ringIndex = ringIndex;
-        items[static_cast<std::size_t>(itemIndex)].localAngle = spellRing.quantizeLocalAngle(angle, balance);
-    }
-
-    return true;
 }
 
 bool returnRingItemToInventory(
@@ -1689,14 +1647,14 @@ bool removeAllRingItemsToInventory(
 {
     std::vector<RingRemoveCandidate> candidates = removableRingItemsByWeight(items);
     if (candidates.empty()) {
-        status = "外せるアイテムがありません";
+        status = "外せるアイテムがないよ";
         return false;
     }
 
     const int removableCount = static_cast<int>(candidates.size());
     const int removeLimit = std::min(removableCount, ringInventoryFreeObjectSlots(inventory));
     if (removeLimit <= 0) {
-        status = "インベントリ満杯のため外せません";
+        status = "インベントリ満杯のため外せないよ";
         return false;
     }
 
@@ -1712,7 +1670,7 @@ bool removeAllRingItemsToInventory(
     }
 
     if (removedIndices.empty()) {
-        status = "インベントリ満杯のため外せません";
+        status = "インベントリ満杯のため外せないよ";
         return false;
     }
 
@@ -1737,9 +1695,9 @@ bool removeAllRingItemsToInventory(
 
     const int removedCount = static_cast<int>(removedIndices.size());
     if (removedCount >= removableCount) {
-        status = "外せるアイテムをすべて戻しました";
+        status = "外せるアイテムをすべて戻したよ";
     } else {
-        status = "空き枠分だけ重い順に" + std::to_string(removedCount) + "個戻しました";
+        status = "空き枠分だけ重い順に" + std::to_string(removedCount) + "個戻したよ";
     }
     return true;
 }
@@ -1752,30 +1710,30 @@ bool removeRingItemToInventory(
     std::string& status)
 {
     if (selection < 0 || selection >= static_cast<int>(items.size())) {
-        status = "アイテム未選択です";
+        status = "アイテム未選択";
         return false;
     }
 
     const SpellRingItem& selectedItem = items[static_cast<std::size_t>(selection)];
     if (selectedItem.objectId.empty()) {
-        status = "このアイテムは外せません";
+        status = "このアイテムは外せないよ";
         return false;
     }
     if (!returnRingItemToInventory(inventory, objectCatalog, selectedItem)) {
-        status = "インベントリ満杯のため外せません";
+        status = "インベントリ満杯のため外せないよ";
         return false;
     }
 
     items.erase(items.begin() + selection);
     selection = std::min(selection, std::max(0, static_cast<int>(items.size()) - 1));
-    status = "インベントリへ戻しました";
+    status = "インベントリへ戻したよ";
     return true;
 }
 
 bool toggleRingItemProtection(std::vector<SpellRingItem>& items, int selection, std::string& status)
 {
     if (selection < 0 || selection >= static_cast<int>(items.size())) {
-        status = "アイテム未選択です";
+        status = "アイテム未選択";
         return false;
     }
 
@@ -1799,22 +1757,22 @@ bool discardRingItem(
     std::string& status)
 {
     if (selection < 0 || selection >= static_cast<int>(items.size())) {
-        status = "アイテム未選択です";
+        status = "アイテム未選択";
         return false;
     }
 
     const SpellRingItem& selectedItem = items[static_cast<std::size_t>(selection)];
     const ItemData* itemData = objectForRingItem(objectCatalog, selectedItem);
     if (selectedItem.objectId.empty() || itemData == nullptr) {
-        status = "このアイテムは捨てられません";
+        status = "このアイテムは捨てられないよ";
         return false;
     }
     if (selectedItem.protectionEnabled) {
-        status = "保護中は捨てられません";
+        status = "保護中のアイテムは捨てられないよ";
         return false;
     }
     if (isImportantItem(*itemData)) {
-        status = "重要アイテムは捨てられません";
+        status = "重要アイテムは捨てられないよ";
         return false;
     }
 
@@ -2248,6 +2206,13 @@ struct OperationSettingsActionRow {
     int category;
 };
 
+enum class OperationSettingsCommand {
+    Replace,
+    Append,
+    Clear,
+    Reset,
+};
+
 struct VideoResolutionPreset {
     int width;
     int height;
@@ -2272,6 +2237,13 @@ constexpr const char* OperationSettingsCategoryLabels[OperationSettingsCategoryC
     "開発",
 };
 
+constexpr std::array<UiCommandMenuItem, 4> OperationSettingsCommandItems{{
+    {"変更", true},
+    {"追加", true},
+    {"削除", true},
+    {"初期化", true},
+}};
+
 constexpr VideoResolutionPreset VideoResolutionPresets[] = {
     {1280, 720},
     {1600, 900},
@@ -2287,7 +2259,7 @@ constexpr OperationSettingsActionRow OperationSettingsActionRows[] = {
     {InputAction::MoveDown, "下へ移動", 0},
     {InputAction::Confirm, "決定", 0},
     {InputAction::Cancel, "戻る", 0},
-    {InputAction::Pause, "ポーズ", 0},
+    {InputAction::Pause, "メニュー", 0},
     {InputAction::OpenInventory, "アイテム画面", 0},
     {InputAction::OpenOptions, "オプション", 0},
     {InputAction::OpenCredits, "クレジット", 0},
@@ -2297,24 +2269,15 @@ constexpr OperationSettingsActionRow OperationSettingsActionRows[] = {
     {InputAction::ShiftRingRight, "リングずらし：右", 1},
     {InputAction::ShiftRingUp, "リングずらし：上", 1},
     {InputAction::ShiftRingDown, "リングずらし：下", 1},
-    {InputAction::RingCommandModifier, "リング一括操作補助", 1},
     {InputAction::UseSelectedItem, "選択アイテム使用", 1},
     {InputAction::PutSelectedItemOnRing, "リングへ入れる", 1},
     {InputAction::GrabOrPlaceItem, "つかむ/置く", 1},
-    {InputAction::ArrangeItems, "整列/並び替え", 1},
+    {InputAction::ArrangeItems, "並び替え", 1},
     {InputAction::PreviousActiveRing, "前のリング", 1},
     {InputAction::NextActiveRing, "次のリング", 1},
-    {InputAction::ToggleProtection, "保護切替", 1},
+    {InputAction::ToggleProtection, "アイテム保護切替", 1},
     {InputAction::ShortcutCursorLeft, "ショートカット左", 2},
     {InputAction::ShortcutCursorRight, "ショートカット右", 2},
-    {InputAction::DirectShortcut1, "ショートカット1", 2},
-    {InputAction::DirectShortcut2, "ショートカット2", 2},
-    {InputAction::DirectShortcut3, "ショートカット3", 2},
-    {InputAction::DirectShortcut4, "ショートカット4", 2},
-    {InputAction::DirectShortcut5, "ショートカット5", 2},
-    {InputAction::DirectShortcut6, "ショートカット6", 2},
-    {InputAction::DirectShortcut7, "ショートカット7", 2},
-    {InputAction::DirectShortcut8, "ショートカット8", 2},
     {InputAction::PreviousShortcutRow, "前のショートカット行", 2},
     {InputAction::NextShortcutRow, "次のショートカット行", 2},
     {InputAction::ToggleDebug, "デバッグ表示", 3},
@@ -2410,18 +2373,16 @@ UiRect operationSettingsHelpWindowRect()
 
 UiRect optionsFooterButtonRect(int index, int count, float width = 225.0f)
 {
-    const UiRect panel = optionsPanelRect();
-    constexpr float Gap = 10.0f;
-    const float totalWidth = width * static_cast<float>(count) + Gap * static_cast<float>(std::max(0, count - 1));
-    return {{
-        panel.pos.x + (panel.size.x - totalWidth) * 0.5f + static_cast<float>(index) * (width + Gap),
-        panel.pos.y + panel.size.y - uiFooterHeight("x") - ui::ButtonHeight - 12.0f,
-    }, {width, ui::ButtonHeight}};
+    return uiFooterActionGroupButtonRect(
+        optionsPanelRect(),
+        {width, ui::ButtonHeight},
+        index,
+        count);
 }
 
 UiRect operationSettingsDialogRect()
 {
-    return {{390.0f, 226.0f}, {500.0f, 270.0f}};
+    return uiEnsureDecoratedWindowMinSize({{390.0f, 226.0f}, {500.0f, 270.0f}});
 }
 
 UiRect optionSettingsContentRect()
@@ -2586,7 +2547,7 @@ std::array<UiRect, VideoSettingsRowCount> videoSettingsRowRects()
 const char* audioSettingsRowLabel(int row)
 {
     switch (row) {
-    case 0: return "Master";
+    case 0: return "マスター音量";
     case 1: return "BGM";
     case 2: return "SE";
     default: return "";
@@ -2859,11 +2820,11 @@ const char* audioSettingsHelpText(int row)
 {
     switch (row) {
     case 0:
-        return "ゲーム全体の音量です。BGMとSEの両方にまとめて反映されます。";
+        return "ゲーム全体の音量だよ　BGMとSEの両方にまとめて反映されるよ";
     case 1:
-        return "音楽の音量です。拠点、ダンジョン、ボス戦などのBGMに反映されます。";
+        return "BGMの音量";
     case 2:
-        return "効果音の音量です。UI、採掘、攻撃、拾得などのSEに反映されます。";
+        return "効果音の音量";
     default:
         return "";
     }
@@ -2873,19 +2834,19 @@ const char* videoSettingsHelpText(int row)
 {
     switch (row) {
     case VideoSettingsRowWindowMode:
-        return "ウィンドウ表示とフルスクリーン表示を切り替えます。フルスクリーンはボーダーレス全画面です。";
+        return "ウィンドウ表示とフルスクリーン表示を切り替えるよ";
     case VideoSettingsRowWindowSize:
-        return "ウィンドウ時の画面サイズです。フルスクリーン中も、次にウィンドウへ戻した時のサイズとして保存します。";
+        return "ウィンドウ時の画面サイズだよ";
     case VideoSettingsRowBrightness:
-        return "ゲージで画面全体の明るさを調整します。暗闇だけでなく、拠点、UI、紙芝居など画面全体に反映されます。";
+        return "画面全体の明るさを調整できるよ";
     case VideoSettingsRowInputIcons:
-        return "操作ヘルプに表示する操作アイコンを選びます。自動では最後に使った入力機器に合わせて切り替えます。";
+        return "操作アイコンの表示形式をキーボード・ゲームパッドから選ぼう　「自動」では最後に使った入力機器に合わせて切り替えるよ";
     case VideoSettingsRowScreenShake:
-        return "被弾やボス演出などの画面揺れの強さです。酔いやすい場合は弱めまたはなしにしてください。";
+        return "被弾やボス演出などの画面揺れ演出の強さだよ";
     case VideoSettingsRowLightweight:
-        return "ONにすると追加ライト、暗幕、影、常時エフェクト、粒子数を抑えて、ダンジョン中の負荷を下げます。";
+        return "ONにすると光・暗幕・影・エフェクト・粒子数などを制限して、画面負荷を下げるよ";
     case VideoSettingsRowVSync:
-        return "VSyncはモニターの更新タイミングに描画を合わせる設定です。画面の裂けを抑えますが、入力遅延やFPSに影響することがあります。";
+        return "モニターの更新タイミングに描画を合わせる設定　ONにすると画面の裂けを抑えるけど、入力遅延やFPSに影響することがあるよ";
     default:
         return "";
     }
@@ -2895,77 +2856,59 @@ const char* operationSettingsActionHelpText(InputAction action)
 {
     switch (action) {
     case InputAction::MoveLeft:
-        return "左方向の移動と、左右を使う画面でのカーソル移動に使います。";
+        return "プレイヤーの移動やカーソル移動";
     case InputAction::MoveRight:
-        return "右方向の移動と、左右を使う画面でのカーソル移動に使います。";
+        return "プレイヤーの移動やカーソル移動";
     case InputAction::MoveUp:
-        return "上方向の移動と、項目一覧でのカーソル移動に使います。";
+        return "プレイヤーの移動やカーソル移動";
     case InputAction::MoveDown:
-        return "下方向の移動と、項目一覧でのカーソル移動に使います。";
+        return "プレイヤーの移動やカーソル移動";
     case InputAction::Confirm:
-        return "メニュー項目や確認ダイアログを決定します。";
+        return "決定したり、調べたり、話しかけたり";
     case InputAction::Cancel:
-        return "現在の画面を戻る、または操作をキャンセルします。";
+        return "現在の画面を戻る、または操作をキャンセル";
     case InputAction::Pause:
-        return "通常画面から一時停止メニューを開きます。";
+        return "メニューを開く";
     case InputAction::OpenInventory:
-        return "アイテム画面を直接開きます。";
+        return "アイテム画面を直接開く";
     case InputAction::OpenOptions:
-        return "タイトル画面からオプションを直接開きます。";
+        return "タイトル画面でオプションを開く";
     case InputAction::OpenCredits:
-        return "タイトル画面からクレジットを直接開きます。";
+        return "タイトル画面でクレジットを開く";
     case InputAction::ThrowActiveRing:
-        return "選択中のアクティブリングを、プレイヤーが向いている方向へ投げます。";
+        return "リング投げを発動する";
     case InputAction::OffsetRingCenter:
-        return "マウスでは、押した位置からドラッグした方向と距離に合わせてリング中心をずらします。";
+        return "マウスでは、押した位置からドラッグした方向と距離に合わせてリング中心をずらすよ";
     case InputAction::ShiftRingLeft:
-        return "リング中心を左へずらします。右スティックの倒し具合に応じて距離が変わります。";
+        return "リング中心を左へずらす";
     case InputAction::ShiftRingRight:
-        return "リング中心を右へずらします。右スティックの倒し具合に応じて距離が変わります。";
+        return "リング中心を右へずらす";
     case InputAction::ShiftRingUp:
-        return "リング中心を上へずらします。右スティックの倒し具合に応じて距離が変わります。";
+        return "リング中心を上へずらす";
     case InputAction::ShiftRingDown:
-        return "リング中心を下へずらします。右スティックの倒し具合に応じて距離が変わります。";
-    case InputAction::RingCommandModifier:
-        return "押しながら「リングへ入れる」を使うと、リング上のアイテムをすべて外します。";
+        return "リング中心を下へずらす";
     case InputAction::UseSelectedItem:
-        return "ショートカットやアイテム画面で選択中のアイテムを使います。";
+        return "ショートカットやアイテム画面で、選択中のアイテムを使う";
     case InputAction::PutSelectedItemOnRing:
-        return "選択中のアイテムをアクティブリングへ入れます。";
+        return "選択中のアイテムをリングへ入れる";
     case InputAction::GrabOrPlaceItem:
-        return "アイテム画面やリング画面で、アイテムをつかむ/置く操作に使います。";
+        return "アイテム画面やリング画面で、アイテムをつかむ/置く";
     case InputAction::ArrangeItems:
-        return "アイテムやリング上の配置を整列、または並び替えします。";
+        return "アイテムやリング上の配置を整列・並び替えする";
     case InputAction::PreviousActiveRing:
-        return "前のアクティブリングへ切り替えます。";
+        return "選択中のリングを前へ切り替える";
     case InputAction::NextActiveRing:
-        return "次のアクティブリングへ切り替えます。";
+        return "選択中のリングを次へ切り替える";
     case InputAction::ToggleProtection:
-        return "アイテムやリング装備の保護ON/OFFを切り替えます。";
+        return "アイテムの保護ON/OFFを切り替える";
     case InputAction::ShortcutCursorLeft:
-        return "ショートカット選択を左へ移動します。";
+        return "アイテムショートカットのカーソル移動";
     case InputAction::ShortcutCursorRight:
-        return "ショートカット選択を右へ移動します。";
+        return "アイテムショートカットのカーソル移動";
     case InputAction::PreviousShortcutRow:
-        return "ショートカットの表示行を1つ前へ切り替えます。";
+        return "アイテムショートカットの表示行を前へ切り替える";
     case InputAction::NextShortcutRow:
-        return "ショートカットの表示行を1つ次へ切り替えます。";
-    case InputAction::DirectShortcut1:
-        return "ショートカット1番を直接選びます。";
-    case InputAction::DirectShortcut2:
-        return "ショートカット2番を直接選びます。";
-    case InputAction::DirectShortcut3:
-        return "ショートカット3番を直接選びます。";
-    case InputAction::DirectShortcut4:
-        return "ショートカット4番を直接選びます。";
-    case InputAction::DirectShortcut5:
-        return "ショートカット5番を直接選びます。";
-    case InputAction::DirectShortcut6:
-        return "ショートカット6番を直接選びます。";
-    case InputAction::DirectShortcut7:
-        return "ショートカット7番を直接選びます。";
-    case InputAction::DirectShortcut8:
-        return "ショートカット8番を直接選びます。";
+        return "アイテムショートカットの表示行を次へ切り替える";
     case InputAction::ToggleShortcutRow:
         return "ショートカットの表示行を切り替えます。";
     case InputAction::ToggleDebug:
@@ -2981,23 +2924,18 @@ const char* operationSettingsActionHelpText(InputAction action)
     case InputAction::ToggleAutoReloadBlock:
         return "開発中の自動リロード停止を切り替えます。";
     default:
-        return "この操作の割当を変更します。";
+        return "";
     }
 }
 
-std::string operationSettingsHelpTitle(const OperationSettingsActionRow& row, int column)
+std::string_view operationSettingsHelpTitle(const OperationSettingsActionRow& row)
 {
-    (void)column;
     return row.label;
 }
 
-std::string operationSettingsHelpDescription(InputAction action, int column)
+std::string_view operationSettingsHelpDescription(InputAction action)
 {
-    std::string description = operationSettingsActionHelpText(action);
-    description += column == OperationSettingsColumnGamepad
-        ? " 決定するとゲームパッド入力の割当を変更します。"
-        : " 決定するとキー/マウス入力の割当を変更します。";
-    return description;
+    return operationSettingsActionHelpText(action);
 }
 
 void drawOptionsHelpWindow(
@@ -3070,22 +3008,6 @@ InputRemapCaptureDeviceGroup operationSettingsCaptureGroupForColumn(int column)
     return column == OperationSettingsColumnGamepad
         ? InputRemapCaptureDeviceGroup::Gamepad
         : InputRemapCaptureDeviceGroup::KeyboardMouse;
-}
-
-std::string operationSettingsBindingDisplayName(const InputBinding& binding)
-{
-    switch (binding.device) {
-    case InputBindingDevice::Keyboard:
-        return inputModifierDisplayPrefix(binding.modifiers) +
-            keyboardScancodeName(binding.code);
-    case InputBindingDevice::MouseButton:
-        return "Mouse " + mouseButtonName(binding.code);
-    case InputBindingDevice::GamepadButton:
-        return "Pad " + gamepadButtonName(binding.code);
-    case InputBindingDevice::GamepadAxis:
-        return "Pad " + gamepadAxisName(binding.code) + (binding.direction < 0 ? "-" : "+");
-    }
-    return "Unknown";
 }
 
 std::string operationSettingsKeyboardGlyphLabel(int scancode)
@@ -3212,6 +3134,13 @@ void removeOperationSettingsBinding(std::vector<InputBinding>& bindings, const I
         bindings.end());
 }
 
+bool hasOperationSettingsBinding(const std::vector<InputBinding>& bindings, const InputBinding& target)
+{
+    return std::any_of(bindings.begin(), bindings.end(), [&target](const InputBinding& binding) {
+        return operationSettingsBindingSamePhysicalInput(binding, target);
+    });
+}
+
 std::vector<InputAction> operationSettingsConflictingActions(
     const InputBindingMap& bindings,
     InputAction targetAction,
@@ -3233,11 +3162,15 @@ std::vector<InputAction> operationSettingsConflictingActions(
     return conflicts;
 }
 
-std::string operationSettingsConflictMessage(const std::vector<InputAction>& actions)
+std::string operationSettingsConflictMessage(
+    const std::vector<InputAction>& actions,
+    std::string_view editVerb)
 {
-    std::string message = "この入力は別の操作に割り当て済みです。\n既存の割当を外して変更しますか？";
+    std::string message = "この入力は別の操作に割り当て済みだよ\n既存の割当を外して";
+    message += editVerb;
+    message += "する？";
     if (!actions.empty()) {
-        message += "\n対象: ";
+        message += "\n重複する操作: ";
         for (std::size_t i = 0; i < actions.size(); ++i) {
             if (i > 0) {
                 message += ", ";
@@ -3349,6 +3282,9 @@ UiSelectableTableResult updateOperationSettingsTableClickSelection(
             continue;
         }
         for (int column = OperationSettingsColumnAction; column <= OperationSettingsColumnGamepad; ++column) {
+            if (!columns[column].enabled) {
+                continue;
+            }
             const UiRect cellRect = uiSelectableTableCellRect(layout, columns, columnCount, row, column, style);
             if (ui.navigationFocused(cellRect)) {
                 state.selectedRow = row;
@@ -3469,6 +3405,8 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     const int ringCount = unlockedRingCount();
     if (spellRing_.activeRingIndex() >= ringCount) {
         clampActiveRingToUnlocked();
+        closeUiCommandMenu(ringPresetMenu_);
+        ringPresetMenuAction_ = RingPresetMenuAction::None;
         closeUiCommandMenu(ringCommandMenu_);
         ringCommandItemIndex_ = -1;
         ringCommandPlaceActive_ = false;
@@ -3494,21 +3432,78 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         ringSnapActive_ = false;
         ringDragItemIndex_ = -1;
     };
+    const auto performRingPresetAction = [this, &ui, &clearRingTransientUi](
+                                             RingPresetMenuAction action,
+                                             int presetIndex) {
+        clearRingTransientUi();
+        closeUiCommandMenu(ringPresetMenu_);
+        ringPresetMenuAction_ = RingPresetMenuAction::None;
+
+        bool succeeded = false;
+        switch (action) {
+        case RingPresetMenuAction::Apply:
+            succeeded = applyRingPresetShortcut(presetIndex);
+            break;
+        case RingPresetMenuAction::Register:
+            succeeded = registerRingPresetShortcut(presetIndex);
+            break;
+        case RingPresetMenuAction::None:
+            break;
+        }
+        ui.emitSound(succeeded ? UiSoundEvent::Confirm : UiSoundEvent::Cancel);
+    };
+    const int presetSlotCount = unlockedRingPresetSlotCount();
+    const auto activateRingPresetButton = [this,
+                                           &clearRingTransientUi,
+                                           &performRingPresetAction,
+                                           presetSlotCount](RingPresetMenuAction action, UiRect buttonRect) {
+        if (presetSlotCount <= 0) {
+            return;
+        }
+        if (presetSlotCount == 1) {
+            performRingPresetAction(action, 0);
+            return;
+        }
+
+        clearRingTransientUi();
+        ringPresetMenuAction_ = action;
+        openUiCommandMenu(
+            ringPresetMenu_,
+            uiCommandMenuAnchorForSlot(buttonRect),
+            ringPanelRect(),
+            presetSlotCount,
+            RingPresetMenuItems.data(),
+            188.0f,
+            2);
+        ringStatus_.clear();
+    };
+
+    if (ringPresetMenu_.visible) {
+        const RingPresetMenuAction action = ringPresetMenuAction_;
+        const int presetSelection = updateUiCommandMenu(
+            ringPresetMenu_,
+            ui,
+            input,
+            RingPresetMenuItems.data(),
+            presetSlotCount);
+        if (presetSelection >= 0) {
+            performRingPresetAction(action, presetSelection);
+        } else if (!ringPresetMenu_.visible) {
+            ringPresetMenuAction_ = RingPresetMenuAction::None;
+        }
+        ui.block(ringPanelRect());
+        return;
+    }
+
     const int registerPreset = input.ringPresetRegisterSlotPressed();
     if (registerPreset >= 0 && registerPreset < RingPresetSlotCount) {
-        clearRingTransientUi();
-        ui.emitSound(registerRingPresetShortcut(registerPreset)
-            ? UiSoundEvent::Confirm
-            : UiSoundEvent::Cancel);
+        performRingPresetAction(RingPresetMenuAction::Register, registerPreset);
         ui.block(ringPanelRect());
         return;
     }
     const int applyPreset = input.shortcutSlotPressed();
     if (applyPreset >= 0 && applyPreset < RingPresetSlotCount) {
-        clearRingTransientUi();
-        ui.emitSound(applyRingPresetShortcut(applyPreset)
-            ? UiSoundEvent::Confirm
-            : UiSoundEvent::Cancel);
+        performRingPresetAction(RingPresetMenuAction::Apply, applyPreset);
         ui.block(ringPanelRect());
         return;
     }
@@ -3516,7 +3511,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     auto& items = spellRing_.items();
     const auto beginRingItemMove = [this, &items](int itemIndex) {
         if (itemIndex < 0 || itemIndex >= static_cast<int>(items.size())) {
-            ringStatus_ = "アイテム未選択です";
+            ringStatus_ = "アイテム未選択";
             return false;
         }
 
@@ -3534,7 +3529,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     };
     const auto openRingItemCommandMenu = [this, &items](int itemIndex, Vec2 anchor) {
         if (itemIndex < 0 || itemIndex >= static_cast<int>(items.size())) {
-            ringStatus_ = "アイテム未選択です";
+            ringStatus_ = "アイテム未選択";
             return false;
         }
 
@@ -3748,7 +3743,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
 
         if (uiCancelRequested(ringCancelState_, input, ui, ringPlaceWindowRect())) {
             ringPlaceModeActive_ = false;
-            ringStatus_ = "配置をキャンセルしました";
+            ringStatus_ = "配置をキャンセルしたよ";
             ui.block(ringPanelRect());
             return;
         }
@@ -3757,7 +3752,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         const auto tryPlaceSelection = [&]() {
             if (!ringPlaceSlotEnabled(inventory_, spellRing_, ringPlaceSelection_, ringPlaceTargetAngle_)) {
                 ui.emitSound(UiSoundEvent::Cancel);
-                ringStatus_ = "このアイテムは配置できません";
+                ringStatus_ = "このアイテムは配置できないよ";
                 return;
             }
 
@@ -3770,7 +3765,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
                 ringSlotSelection_ = std::max(0, result.itemIndex);
                 ringDetailShowsRing_ = false;
                 ringPlaceModeActive_ = false;
-                ringStatus_ = "リングに配置しました";
+                ringStatus_ = "リングに配置したよ";
                 ui.emitSound(UiSoundEvent::Equip);
             } else {
                 ui.emitSound(UiSoundEvent::Cancel);
@@ -3823,7 +3818,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
                     tryPlaceSelection();
                 } else if (inventory_.hasScreenItemAt(i)) {
                     ui.emitSound(UiSoundEvent::Cancel);
-                    ringStatus_ = "このアイテムは配置できません";
+                    ringStatus_ = "このアイテムは配置できないよ";
                 }
                 ui.block(ringPanelRect());
                 return;
@@ -3857,7 +3852,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
             items[static_cast<std::size_t>(ringItemMoveIndex_)].localAngle = ringItemMoveOriginalAngle_;
             ringItemMoveModeActive_ = false;
             ringItemMoveIndex_ = -1;
-            ringStatus_ = "移動をキャンセルしました";
+            ringStatus_ = "移動をキャンセルしたよ";
             ui.emitSound(UiSoundEvent::Cancel);
             ui.block(ringPanelRect());
             return;
@@ -3866,7 +3861,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         if (input.confirmPressed() || input.useItemPressed()) {
             ringItemMoveModeActive_ = false;
             ringItemMoveIndex_ = -1;
-            ringStatus_ = "位置を確定しました";
+            ringStatus_ = "位置を確定したよ";
             ui.emitSound(UiSoundEvent::Confirm);
             ui.block(ringPanelRect());
             return;
@@ -3879,7 +3874,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
                 ringStatus_.clear();
             } else {
                 ui.emitSound(UiSoundEvent::Cancel);
-                ringStatus_ = "その位置には移動できません";
+                ringStatus_ = "その位置には移動できないよ";
             }
         }
 
@@ -3901,9 +3896,11 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     }
     UiTabsInput ringTabsInput{};
     ringTabsInput.focusDelta = input.activeRingDelta();
-    ringTabsInput.commit =
-        !ui.navigationActive() &&
-        (input.confirmPressed() || input.useItemPressed());
+    if (ringTabsInput.focusDelta != 0) {
+        ringTabsInput.directFocusIndex = spellRing_.activeRingIndex();
+    }
+    ringTabsInput.commit = ringTabsInput.focusDelta != 0 ||
+        (!ui.navigationActive() && (input.confirmPressed() || input.useItemPressed()));
     const int ringTabSelection = updateUiTabs(
         ringTabs_,
         ui,
@@ -3932,17 +3929,27 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
 
     const bool actualRing = true;
 
-    if (input.arrangeItemsPressed()) {
+    if (presetSlotCount > 0 && ui.pressed(ringPresetButtonRect(false))) {
+        activateRingPresetButton(RingPresetMenuAction::Apply, ringPresetButtonRect(false));
+        ui.block(ringPanelRect());
+        return;
+    }
+    if (presetSlotCount > 0 && ui.pressed(ringPresetButtonRect(true))) {
+        activateRingPresetButton(RingPresetMenuAction::Register, ringPresetButtonRect(true));
+        ui.block(ringPanelRect());
+        return;
+    }
+    if (input.arrangeItemsPressed() || ui.pressed(ringArrangeButtonRect())) {
         closeUiCommandMenu(ringCommandMenu_);
         ringCommandItemIndex_ = -1;
         ringCommandPlaceActive_ = false;
-        if (arrangeActiveRingItemsEvenly(spellRing_, balance_)) {
+        if (spellRing_.arrangeItemsEvenlyForRing(spellRing_.activeRingIndex(), balance_)) {
             ui.emitSound(UiSoundEvent::ItemMove);
             ringSlotSelection_ = std::clamp(ringSlotSelection_, 0, static_cast<int>(items.size()) - 1);
-            ringStatus_ = "等間隔に整列しました";
+            ringStatus_ = "等間隔に整列したよ";
         } else {
             ui.emitSound(UiSoundEvent::Cancel);
-            ringStatus_ = "アイテム未配置です";
+            ringStatus_ = "アイテム未配置だよ";
         }
         ui.block(ringPanelRect());
         return;
@@ -3968,7 +3975,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         ringDragPending_ = false;
         ringDragActive_ = false;
         ringDragItemIndex_ = -1;
-        ringStatus_ = "ドラッグをキャンセルしました";
+        ringStatus_ = "ドラッグをキャンセルしたよ";
         ui.block(ringPanelRect());
         return;
     }
@@ -4002,7 +4009,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
                 ringDragDisplayAngle_ = ringSnapStartAngle_;
                 ringSnapElapsed_ = 0.0f;
                 ringSnapActive_ = true;
-                ringStatus_ = snapAngle ? "近い空き位置へ補正しました" : "近くに空きがないため元の位置へ戻しました";
+                ringStatus_ = snapAngle ? "近い空き位置へ補正したよ" : "近くに空きがないため元の位置へ戻したよ";
             } else {
                 openRingItemCommandMenu(ringDragItemIndex_, input.mouseScreen());
             }
@@ -4131,7 +4138,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
                 : UiSoundEvent::Cancel);
         } else {
             ui.emitSound(UiSoundEvent::Cancel);
-            ringStatus_ = "アイテム未選択です";
+            ringStatus_ = "アイテム未選択";
         }
         return;
     }
@@ -4144,7 +4151,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
                 : UiSoundEvent::Cancel);
         } else {
             ui.emitSound(UiSoundEvent::Cancel);
-            ringStatus_ = "アイテム未選択です";
+            ringStatus_ = "アイテム未選択";
         }
         return;
     }
@@ -4162,7 +4169,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
                 uiCommandMenuAnchorForSlot(selectedItemRect));
         } else {
             ui.emitSound(UiSoundEvent::Cancel);
-            ringStatus_ = "アイテム未選択です";
+            ringStatus_ = "アイテム未選択";
         }
     }
 }
@@ -4174,10 +4181,8 @@ void Game::prepareOptionsMenu()
     operationSettingsCapture_.cancel();
     operationSettingsConflictConfirm_ = {};
     operationSettingsResetAllConfirm_ = {};
-    operationSettingsPendingAction_ = InputAction::Count;
-    operationSettingsConflictActions_.clear();
+    clearOperationSettingsPendingEdit();
     optionsStatus_.clear();
-    operationSettingsStatus_.clear();
     loadOptionsSettings();
 }
 
@@ -4229,18 +4234,47 @@ void Game::applyOptionsSettings(std::string status)
     optionsStatus_ = std::move(status);
 }
 
+void Game::beginOperationSettingsBindingCapture(OperationSettingsBindingEditMode mode)
+{
+    optionsStatus_.clear();
+    operationSettingsPendingEditMode_ = mode;
+    operationSettingsCapture_.begin(
+        operationSettingsPendingAction_,
+        operationSettingsCaptureGroupForColumn(operationSettingsPendingColumn_));
+}
+
+void Game::clearOperationSettingsPendingEdit()
+{
+    operationSettingsPendingAction_ = InputAction::Count;
+    operationSettingsPendingColumn_ = OperationSettingsColumnKeyboardMouse;
+    operationSettingsPendingBinding_ = {};
+    operationSettingsPendingEditMode_ = OperationSettingsBindingEditMode::Replace;
+    operationSettingsConflictActions_.clear();
+}
+
 void Game::queueOperationSettingsBinding(InputAction action, int column, const InputBinding& binding)
 {
+    if (operationSettingsPendingEditMode_ == OperationSettingsBindingEditMode::Append &&
+        hasOperationSettingsBinding(operationSettingsBindings_[inputActionIndex(action)], binding)) {
+        optionsStatus_ = "この入力はすでに割り当て済みだよ";
+        clearOperationSettingsPendingEdit();
+        return;
+    }
+
     operationSettingsPendingAction_ = action;
     operationSettingsPendingColumn_ = column;
     operationSettingsPendingBinding_ = binding;
     operationSettingsConflictActions_ = operationSettingsConflictingActions(operationSettingsBindings_, action, binding);
     if (!operationSettingsConflictActions_.empty()) {
+        const std::string editVerb =
+            operationSettingsPendingEditMode_ == OperationSettingsBindingEditMode::Append
+            ? "追加"
+            : "変更";
         openUiConfirmDialog(
             operationSettingsConflictConfirm_,
-            "割当の確認",
-            operationSettingsConflictMessage(operationSettingsConflictActions_),
-            "変更する",
+            "操作割当の確認",
+            operationSettingsConflictMessage(operationSettingsConflictActions_, editVerb),
+            editVerb,
             "戻る",
             1);
         return;
@@ -4261,16 +4295,20 @@ void Game::applyOperationSettingsBinding(InputAction action, int column, const I
         }
     }
     auto& target = candidate[inputActionIndex(action)];
-    removeOperationSettingsColumnBindings(target, column);
+    if (operationSettingsPendingEditMode_ == OperationSettingsBindingEditMode::Replace) {
+        removeOperationSettingsColumnBindings(target, column);
+    } else if (hasOperationSettingsBinding(target, binding)) {
+        optionsStatus_ = "この入力はすでに割り当て済みだよ";
+        clearOperationSettingsPendingEdit();
+        return;
+    }
     target.push_back(binding);
     candidate = sanitizeInputBindings(candidate);
 
     operationSettingsBindings_ = candidate;
     optionsSettings_.input.bindings = operationSettingsBindings_;
     applyOptionsSettings("");
-    operationSettingsStatus_ = "割当を変更しました: " + operationSettingsBindingDisplayName(binding);
-    operationSettingsPendingAction_ = InputAction::Count;
-    operationSettingsConflictActions_.clear();
+    clearOperationSettingsPendingEdit();
 }
 
 void Game::clearOperationSettingsBinding(InputAction action, int column)
@@ -4283,14 +4321,12 @@ void Game::clearOperationSettingsBinding(InputAction action, int column)
     auto& target = candidate[inputActionIndex(action)];
     removeOperationSettingsColumnBindings(target, column);
     if (inputActionRequiresBinding(action) && target.empty()) {
-        operationSettingsStatus_ = "必須操作はすべて未設定にはできません";
         return;
     }
     candidate = sanitizeInputBindings(candidate);
     operationSettingsBindings_ = candidate;
     optionsSettings_.input.bindings = operationSettingsBindings_;
     applyOptionsSettings("");
-    operationSettingsStatus_ = "割当を削除しました";
 }
 
 void Game::resetOperationSettingsAction(InputAction action)
@@ -4304,7 +4340,6 @@ void Game::resetOperationSettingsAction(InputAction action)
     operationSettingsBindings_ = sanitizeInputBindings(candidate);
     optionsSettings_.input.bindings = operationSettingsBindings_;
     applyOptionsSettings("");
-    operationSettingsStatus_ = "選択中の操作を初期化しました";
 }
 
 void Game::resetOperationSettingsCategory()
@@ -4317,7 +4352,6 @@ void Game::resetOperationSettingsCategory()
     operationSettingsBindings_ = sanitizeInputBindings(candidate);
     optionsSettings_.input.bindings = operationSettingsBindings_;
     applyOptionsSettings("");
-    operationSettingsStatus_ = "現在の分類を初期化しました";
 }
 
 void Game::resetOperationSettingsAll()
@@ -4325,7 +4359,6 @@ void Game::resetOperationSettingsAll()
     operationSettingsBindings_ = defaultInputBindings();
     optionsSettings_.input.bindings = operationSettingsBindings_;
     applyOptionsSettings("");
-    operationSettingsStatus_ = "すべての操作を初期化しました";
 }
 
 bool Game::handleOperationSettingsEvent(const SDL_Event& event)
@@ -4345,7 +4378,7 @@ bool Game::handleOperationSettingsEvent(const SDL_Event& event)
             static_cast<float>(event.button.y),
         })) {
         operationSettingsCapture_.cancel();
-        operationSettingsStatus_ = "変更をキャンセルしました";
+        clearOperationSettingsPendingEdit();
         return true;
     }
 
@@ -4357,8 +4390,9 @@ bool Game::handleOperationSettingsEvent(const SDL_Event& event)
         queueOperationSettingsBinding(action, column, binding);
     } else if (result == InputRemapCaptureResult::ClearRequested) {
         clearOperationSettingsBinding(action, column);
+        clearOperationSettingsPendingEdit();
     } else if (result == InputRemapCaptureResult::Cancelled) {
-        operationSettingsStatus_ = "変更をキャンセルしました";
+        clearOperationSettingsPendingEdit();
     }
     return true;
 }
@@ -4382,9 +4416,7 @@ void Game::updateOperationSettings(const Input& input, UiContext& ui)
                 operationSettingsPendingBinding_,
                 true);
         } else if (result == UiConfirmDialogResult::Cancelled) {
-            operationSettingsPendingAction_ = InputAction::Count;
-            operationSettingsConflictActions_.clear();
-            operationSettingsStatus_ = "変更をキャンセルしました";
+            clearOperationSettingsPendingEdit();
         }
         ui.block(panel);
         return;
@@ -4394,8 +4426,6 @@ void Game::updateOperationSettings(const Input& input, UiContext& ui)
         const UiConfirmDialogResult result = updateUiConfirmDialog(operationSettingsResetAllConfirm_, ui, input, dialog);
         if (result == UiConfirmDialogResult::Confirmed) {
             resetOperationSettingsAll();
-        } else if (result == UiConfirmDialogResult::Cancelled) {
-            operationSettingsStatus_ = "初期化をキャンセルしました";
         }
         ui.block(panel);
         return;
@@ -4404,7 +4434,7 @@ void Game::updateOperationSettings(const Input& input, UiContext& ui)
     if (operationSettingsCapture_.active()) {
         if (ui.pressed(uiCancelButtonRect(operationSettingsDialogRect()))) {
             operationSettingsCapture_.cancel();
-            operationSettingsStatus_ = "変更をキャンセルしました";
+            clearOperationSettingsPendingEdit();
             ui.emitSound(UiSoundEvent::Cancel);
             ui.block(panel);
             return;
@@ -4413,29 +4443,28 @@ void Game::updateOperationSettings(const Input& input, UiContext& ui)
         return;
     }
 
-    constexpr std::array<UiCommandMenuItem, 3> CommandItems{{
-        {"変更", true},
-        {"削除", true},
-        {"初期化", true},
-    }};
     const int commandSelection = updateUiCommandMenu(
         operationSettingsCommandMenu_,
         ui,
         input,
-        CommandItems.data(),
-        static_cast<int>(CommandItems.size()));
+        OperationSettingsCommandItems.data(),
+        static_cast<int>(OperationSettingsCommandItems.size()));
     if (commandSelection >= 0) {
-        if (commandSelection == 0) {
-            operationSettingsCapture_.begin(
-                operationSettingsPendingAction_,
-                operationSettingsCaptureGroupForColumn(operationSettingsPendingColumn_));
-            operationSettingsStatus_ = operationSettingsPendingColumn_ == OperationSettingsColumnGamepad
-                ? "ゲームパッド入力を押してください"
-                : "キーまたはマウスボタンを押してください";
-        } else if (commandSelection == 1) {
+        switch (static_cast<OperationSettingsCommand>(commandSelection)) {
+        case OperationSettingsCommand::Replace:
+            beginOperationSettingsBindingCapture(OperationSettingsBindingEditMode::Replace);
+            break;
+        case OperationSettingsCommand::Append:
+            beginOperationSettingsBindingCapture(OperationSettingsBindingEditMode::Append);
+            break;
+        case OperationSettingsCommand::Clear:
             clearOperationSettingsBinding(operationSettingsPendingAction_, operationSettingsPendingColumn_);
-        } else {
+            clearOperationSettingsPendingEdit();
+            break;
+        case OperationSettingsCommand::Reset:
             resetOperationSettingsAction(operationSettingsPendingAction_);
+            clearOperationSettingsPendingEdit();
+            break;
         }
     }
     if (operationSettingsCommandMenu_.visible) {
@@ -4519,8 +4548,8 @@ void Game::updateOperationSettings(const Input& input, UiContext& ui)
             operationSettingsCommandMenu_,
             uiCommandMenuAnchorForSlot(selectedCell),
             panel,
-            static_cast<int>(CommandItems.size()),
-            CommandItems.data(),
+            static_cast<int>(OperationSettingsCommandItems.size()),
+            OperationSettingsCommandItems.data(),
             160.0f);
         ui.block(panel);
         return;
@@ -4534,8 +4563,8 @@ void Game::updateOperationSettings(const Input& input, UiContext& ui)
             openUiConfirmDialog(
                 operationSettingsResetAllConfirm_,
                 "初期化の確認",
-                "すべての操作割当を初期状態に戻しますか？",
-                "初期化する",
+                "すべての操作割当を初期状態に戻す？",
+                "初期化",
                 "戻る",
                 1);
             ui.block(panel);
@@ -4613,7 +4642,7 @@ void Game::updateAudioSettings(const Input& input, UiContext& ui)
         if (ui.pressed(optionsFooterButtonRect(i, ButtonCount))) {
             ui.emitSound(UiSoundEvent::Confirm);
             optionsSettings_.audio = AudioSettings{};
-            applyOptionsSettings("音量を初期化しました");
+            applyOptionsSettings("");
             ui.block(panel);
             return;
         }
@@ -4707,7 +4736,7 @@ void Game::updateVideoSettings(const Input& input, UiContext& ui)
             optionsSettings_.video = VideoSettings{};
             optionsSettings_.performance = PerformanceSettings{};
             optionsSettings_.presentation = PresentationSettings{};
-            applyOptionsSettings("画面設定を初期化しました");
+            applyOptionsSettings("");
             ui.block(panel);
             return;
         }
@@ -4998,7 +5027,7 @@ void Game::updateFirstItemAcquisitionNotice(const Input& input, UiContext& ui)
             return;
         }
         ui.emitSound(UiSoundEvent::Cancel);
-        notice.statusText = status.empty() ? "リングへ配置できません" : status;
+        notice.statusText = status.empty() ? "リングへ配置できないよ" : status;
     }
 
     if (ui.pressed(okButton) || input.confirmPressed() || input.useItemPressed()) {
@@ -5138,7 +5167,6 @@ void Game::renderTopInfoBar(Renderer& renderer) const
     const float screenWidth = static_cast<float>(camera_.width());
     const float barWidth = std::max(1.0f, screenWidth - TopInfoBarX * 2.0f);
     renderer.fillRect({TopInfoBarX, TopInfoBarY}, {barWidth, TopInfoBarHeight}, {8, 10, 18, 210});
-    renderer.drawRect({TopInfoBarX, TopInfoBarY}, {barWidth, TopInfoBarHeight}, {96, 104, 132, 170});
 
     const int textScale = 2;
     const Vec2 textMeasure = renderer.measureText("0", textScale);
@@ -5304,7 +5332,7 @@ void Game::renderTitleScreen(Renderer& renderer) const
     if (titleMenuPage_ == TitleMenuPage::Options) {
         UiCancelControlScope cancelScope(titleCancelState_);
         const char* help = optionsPage_ == OptionsPageOperation
-            ? "Z/X 設定切替  {shortcut} 分類切替  ↑/↓ 行選択  ←/→ 列選択  F/Enter 変更  Esc 戻る"
+            ? "Z/X 設定切替  {shortcut} 分類切替  ↑/↓ 行選択  ←/→ 列選択  F/Enter 割当操作  Esc 戻る"
             : (optionsPage_ == OptionsPageAudio
                 ? "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 音量変更  Esc 戻る"
                 : "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 変更  F/Enter 切替  Esc 戻る");
@@ -5355,7 +5383,7 @@ void Game::renderTitleScreen(Renderer& renderer) const
     drawUiButton(renderer, titleTopButtonRect(0), "オプション", false, uiActionButtonStyle());
     drawUiButton(renderer, titleTopButtonRect(1), "クレジット", false, uiActionButtonStyle());
 
-    const std::string prompt = titlePromptUsesGamepad()
+    const std::string prompt = inputHelpUsesGamepad()
         ? "Press {act:Confirm} to Start"
         : "Press {act:Confirm} / Click to Start";
     InputHelpStyle promptStyle;
@@ -5443,6 +5471,54 @@ void Game::renderScreenTransitionOverlay(Renderer& renderer)
         {0.0f, 0.0f},
         {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())},
         overlayColor);
+}
+
+void Game::renderDevBuildNotice(Renderer& renderer) const
+{
+    if (!devBuildNoticeVisible_) {
+        return;
+    }
+
+    constexpr std::string_view ReadyMessage = "ビルド完了　F5で更新を適用";
+    constexpr std::string_view FailedMessage = "ビルド失敗　コンソールを確認";
+    constexpr float HorizontalPadding = 24.0f;
+    constexpr float VerticalPadding = 10.0f;
+    constexpr float TopMargin = 18.0f;
+    constexpr int TextScale = 2;
+
+    renderer.setScreenSpace();
+    const std::string_view message = devBuildNoticeFailed_ ? FailedMessage : ReadyMessage;
+    const Vec2 textSize = renderer.measureText(message, TextScale);
+    const Vec2 panelSize{
+        textSize.x + HorizontalPadding * 2.0f,
+        textSize.y + VerticalPadding * 2.0f,
+    };
+    const Vec2 panelPos{
+        (static_cast<float>(camera_.width()) - panelSize.x) * 0.5f,
+        TopMargin,
+    };
+    const Color panelColor = devBuildNoticeFailed_
+        ? Color{42, 12, 16, 236}
+        : Color{12, 15, 22, 232};
+    const Color borderColor = devBuildNoticeFailed_
+        ? Color{255, 112, 124, 240}
+        : Color{255, 220, 112, 230};
+    const Color textColor = devBuildNoticeFailed_
+        ? Color{255, 210, 214, 255}
+        : Color{255, 241, 188, 255};
+    renderer.fillRect(panelPos, panelSize, panelColor);
+    renderer.drawRect(panelPos, panelSize, borderColor);
+    renderer.drawText(
+        panelPos + Vec2{HorizontalPadding, VerticalPadding},
+        message,
+        textColor,
+        TextScale);
+}
+
+void Game::renderFinalScreenOverlays(Renderer& renderer)
+{
+    renderScreenTransitionOverlay(renderer);
+    renderDevBuildNotice(renderer);
 }
 
 void Game::renderPlayerDamageVignette(Renderer& renderer, double totalSeconds) const
@@ -5649,7 +5725,7 @@ void Game::renderRingStatusHud(Renderer& renderer) const
         const Vec2 textPos = panel.pos + RingStatusHudTextPos;
         renderer.drawText(textPos, ringDisplayName(ringIndex, unlockedRingCount), active ? RingStatusHudNameColor : RingStatusHudInactiveNameColor, 2);
 
-        std::snprintf(buffer, sizeof(buffer), "アイテム %d/%d", static_cast<int>(items.size()), spellRing_.maxItemCountForRing(ringIndex));
+        std::snprintf(buffer, sizeof(buffer), "所持数 %d/%d", static_cast<int>(items.size()), spellRing_.maxItemCountForRing(ringIndex));
         renderer.drawText(
             textPos + Vec2{0.0f, RingStatusHudLineGap},
             buffer,
@@ -6358,7 +6434,7 @@ void Game::renderDungeonMapOverlay(Renderer& renderer, const std::vector<LightSo
 
     const DungeonMinimapBounds bounds = dungeonMinimapBounds(dungeonMinimapCells_);
     if (!bounds.valid) {
-        renderer.drawText(mapRect.pos + Vec2{20.0f, 20.0f}, "地図情報がありません", {170, 178, 190, 255}, 2);
+        renderer.drawText(mapRect.pos + Vec2{20.0f, 20.0f}, "地図情報がないよ", {170, 178, 190, 255}, 2);
         return;
     }
 
@@ -6894,15 +6970,17 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     if (ringItemMoveModeActive_) {
         ringHelpText = "WASD/矢印 位置変更  F/Enter 確定  Esc キャンセル";
     } else {
-        if (presetSlotCount > 0) {
-            const std::string slotRange = presetSlotCount == 1 ? "1" : "1-" + std::to_string(presetSlotCount);
-            ringHelpText = slotRange + " 呼出  Shift+" + slotRange + " 登録  ";
-        }
+        ringHelpText = "F/Enter コマンド  ";
         ringHelpText += ringCount > 1
-            ? "Z/X リング  F/Enter コマンド  "
-            : "WASD/矢印 選択  F/Enter コマンド  ";
+            ? "Z/X リング  "
+            : "WASD/矢印 選択  ";
         ringHelpText += inlineInputActionTag(InputAction::GrabOrPlaceItem) +
-            " 移動  T 整列  R 外す  Shift+R 全部取る  P 保護";
+            " 移動  " + inlineInputActionTag(InputAction::ArrangeItems) +
+            " 並び替え  R 外す  Shift+R 全部外す  P 保護";
+        if (presetSlotCount > 0 && !inputHelpUsesGamepad()) {
+            const std::string slotRange = presetSlotCount == 1 ? "1" : "1-" + std::to_string(presetSlotCount);
+            ringHelpText += "  " + slotRange + " 呼出  Shift+" + slotRange + " 登録";
+        }
     }
     UiWindowScope ringWindow(renderer, "ring.manage", panel, "リング", ringHelpText, UiWindowOptions{true, true});
 
@@ -6926,14 +7004,36 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
         ringTabs.data(),
         ringCount,
         ringTabRects.data());
+    if (!ringItemMoveModeActive_) {
+        drawUiButton(
+            renderer,
+            ringArrangeButtonRect(),
+            "並び替え",
+            false,
+            uiActionButtonStyle());
+        if (presetSlotCount > 0) {
+            drawUiButton(
+                renderer,
+                ringPresetButtonRect(false),
+                "プリセット呼出",
+                false,
+                uiActionButtonStyle());
+            drawUiButton(
+                renderer,
+                ringPresetButtonRect(true),
+                "プリセット登録",
+                false,
+                uiActionButtonStyle());
+        }
+    }
     const bool actualRing = true;
     const auto& items = spellRing_.items();
     (void)actualRing;
     const RingShape activeShape = spellRing_.activeRingShape();
 
-    renderer.drawText(panel.pos + Vec2{48.0f, 160.0f}, "リング配置", {246, 248, 255, 255}, 3);
     const int activeRingIndex = spellRing_.activeRingIndex();
-    drawRingWeightLimitText(renderer, panel.pos + Vec2{50.0f, 198.0f}, spellRing_, activeRingIndex);
+    const RingUiPreviewStyle previewStyle = ringUiPreviewStyle(activeRingIndex);
+    drawRingManagementWeightSummary(renderer, panel.pos + Vec2{50.0f, 160.0f}, spellRing_, activeRingIndex);
     const Vec2 orbitCenter = ringUiOrbitCenter(spellRing_);
     std::vector<Vec2> orbitPath = getRingPathSamplePoints(
         spellRing_.center(),
@@ -6942,20 +7042,18 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     for (Vec2& point : orbitPath) {
         point = applyRingUiShapeRotation(spellRing_, ringWorldToUi(spellRing_, point));
     }
-    drawMagicOrbitPath(
-        renderer,
-        orbitPath,
-        orbitCenter,
-        MagicOrbitDrawOptions{
-            activeShape,
-            true,
-            false,
-            true,
-            true,
-            spellRing_.activeRingIndex(),
-            totalTime,
-            1.0f,
-        });
+    MagicOrbitDrawOptions orbitOptions{
+        activeShape,
+        true,
+        false,
+        true,
+        true,
+        activeRingIndex,
+        totalTime,
+        1.0f,
+    };
+    orbitOptions.centerDecoration = previewStyle.centerDecoration;
+    drawMagicOrbitPath(renderer, orbitPath, orbitCenter, orbitOptions);
     for (int i = 0; i < static_cast<int>(items.size()); ++i) {
         const SpellRingItem& item = items[static_cast<std::size_t>(i)];
         registerUiNavigationTarget(
@@ -6974,6 +7072,8 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
             static_cast<int>(items.size()));
         SpellRingItem displayItem = item;
         displayItem.worldPosition = itemAnchor;
+        // Combat feedback belongs to the live world, not the ring management preview.
+        displayItem.actionFlashTimer = 0.0f;
         const Vec2 itemCenter = ringItemDrawPosition(displayItem, totalTime);
         const Vec2 outward = normalize(itemAnchor - orbitCenter);
         Vec2 forward{-outward.y, outward.x};
@@ -6984,7 +7084,7 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
         const bool moveMode = ringItemMoveModeActive_ && i == ringItemMoveIndex_;
         const bool invalidDragPosition = selected && ringDragActive_ && !spellRing_.canPlaceItemAtAngle(i, displayAngle);
         const ItemData* object = objectForRingItem(objectCatalog_, item);
-        if (activeShape != RingShape::FigureEight) {
+        if (previewStyle.radialGuides && activeShape != RingShape::FigureEight) {
             const Color angleLineColor = moveMode
                 ? Color{255, 142, 42, 150}
                 : (selected ? Color{255, 230, 150, 120} : Color{94, 102, 128, 85});
@@ -6997,7 +7097,7 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
             renderer.drawLine(orbitCenter + tangent * AngleLineHalfWidthPx, itemAnchor + tangent * AngleLineHalfWidthPx, angleLineColor);
             renderer.drawLine(orbitCenter - tangent * AngleLineHalfWidthPx, itemAnchor - tangent * AngleLineHalfWidthPx, angleLineColor);
         }
-        drawRingItemShape(renderer, item, object, itemCenter, outward, forward, totalTime, selected, invalidDragPosition, moveMode);
+        drawRingItemShape(renderer, displayItem, object, itemCenter, outward, forward, totalTime, selected, invalidDragPosition, moveMode);
         std::snprintf(buffer, sizeof(buffer), "%d", i + 1);
         renderer.drawText(
             itemCenter + Vec2{-5.0f, 22.0f},
@@ -7023,8 +7123,21 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     }
 
     const UiRect ringDetailPanel = ringDetailRect();
-    if (ringDetailShowsRing_ || ringSlotSelection_ >= static_cast<int>(items.size())) {
-        drawRingDetailPanel(renderer, ringDetailPanel, spellRing_, equipmentModifiers_, balance_, spellRing_.activeRingIndex());
+    const int ringTabPreviewIndex = ringTabs_.hoveredIndex >= 0
+        ? ringTabs_.hoveredIndex
+        : (ringTabs_.navigationFocused ? ringTabs_.focusedIndex : -1);
+    if (ringTabPreviewIndex >= 0 || ringDetailShowsRing_ || ringSlotSelection_ >= static_cast<int>(items.size())) {
+        const int detailRingIndex = ringTabPreviewIndex >= 0
+            ? ringTabPreviewIndex
+            : spellRing_.activeRingIndex();
+        drawRingDetailPanel(
+            renderer,
+            ringDetailPanel,
+            spellRing_,
+            equipmentModifiers_,
+            balance_,
+            detailRingIndex,
+            unlockedRingCount());
     } else if (ringSlotSelection_ < static_cast<int>(items.size())) {
         const SpellRingItem& item = items[ringSlotSelection_];
         const ItemData* object = objectForRingItem(objectCatalog_, item);
@@ -7078,6 +7191,11 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
         commandCanPlace,
         commandCanRemove);
     drawUiCommandMenu(renderer, ringCommandMenu_, commandItems.items.data(), static_cast<int>(commandItems.items.size()));
+    drawUiCommandMenu(
+        renderer,
+        ringPresetMenu_,
+        RingPresetMenuItems.data(),
+        presetSlotCount);
 
     if (ringPlaceModeActive_) {
         drawUiModalBackdrop(
@@ -7190,10 +7308,12 @@ void Game::renderOperationSettings(Renderer& renderer) const
                 column,
                 tableStyle);
             const bool selectedCell = selectedRow && column == operationSettingsTable_.selectedColumn;
-            registerUiNavigationTarget(
-                cell,
-                UiNavigationRole::Control,
-                selectedCell);
+            if (columns[static_cast<std::size_t>(column)].enabled) {
+                registerUiNavigationTarget(
+                    cell,
+                    UiNavigationRole::Control,
+                    selectedCell);
+            }
             if (selectedCell) {
                 renderer.fillRect(cell.pos, cell.size, Color{56, 76, 154, 190});
             }
@@ -7225,22 +7345,18 @@ void Game::renderOperationSettings(Renderer& renderer) const
 
     if (!rows.empty()) {
         const int row = std::clamp(operationSettingsTable_.selectedRow, 0, static_cast<int>(rows.size()) - 1);
-        const int column = std::clamp(
-            operationSettingsTable_.selectedColumn,
-            OperationSettingsColumnKeyboardMouse,
-            OperationSettingsColumnGamepad);
         const OperationSettingsActionRow& selectedRow = rows[static_cast<std::size_t>(row)];
         drawOptionsHelpWindow(
             renderer,
             operationSettingsHelpWindowRect(),
-            operationSettingsHelpTitle(selectedRow, column),
-            operationSettingsHelpDescription(selectedRow.action, column),
-            operationSettingsStatus_);
+            operationSettingsHelpTitle(selectedRow),
+            operationSettingsHelpDescription(selectedRow.action),
+            optionsStatus_);
     }
 
     constexpr int ButtonCount = 1;
     constexpr const char* ButtonLabels[ButtonCount] = {
-        "操作設定を全初期化",
+        "全初期化",
     };
     for (int i = 0; i < ButtonCount; ++i) {
         const bool hot = false;
@@ -7252,16 +7368,11 @@ void Game::renderOperationSettings(Renderer& renderer) const
             uiActionButtonStyle());
     }
 
-    constexpr std::array<UiCommandMenuItem, 3> CommandItems{{
-        {"変更", true},
-        {"削除", true},
-        {"初期化", true},
-    }};
     drawUiCommandMenu(
         renderer,
         operationSettingsCommandMenu_,
-        CommandItems.data(),
-        static_cast<int>(CommandItems.size()));
+        OperationSettingsCommandItems.data(),
+        static_cast<int>(OperationSettingsCommandItems.size()));
 
     if (operationSettingsCapture_.active()) {
         drawUiModalBackdrop(
@@ -7273,21 +7384,17 @@ void Game::renderOperationSettings(Renderer& renderer) const
             renderer,
             "operation_settings.capture",
             dialog,
-            "入力待ち",
+            operationSettingsPendingEditMode_ == OperationSettingsBindingEditMode::Append
+                ? "操作割当の追加"
+                : "操作割当の変更",
             "×ボタンで中止",
             UiWindowOptions{true, true});
         const std::string line = operationSettingsPendingColumn_ == OperationSettingsColumnGamepad
-            ? "ゲームパッドのボタンまたはスティック/トリガーを入力してください。"
-            : "キーまたはマウスボタンを入力してください。";
+            ? "ゲームパッドのボタンまたはスティック/トリガーを入力してね"
+            : "キーまたはマウスボタンを入力してね";
         const float textMaxWidth = std::max(1.0f, dialog.size.x - 84.0f);
         const Vec2 linePos = dialog.pos + Vec2{42.0f, 104.0f};
         renderer.drawWrappedText(linePos, line, textMaxWidth, ui::Text, 2);
-        const Vec2 lineSize = renderer.measureWrappedText(line, textMaxWidth, 2);
-        renderer.drawText(
-            linePos + Vec2{0.0f, lineSize.y + 16.0f},
-            "最初に入った入力で上書きします。",
-            ui::TextMuted,
-            2);
     }
 
     if (operationSettingsConflictConfirm_.open) {
@@ -7344,7 +7451,7 @@ void Game::renderAudioSettings(Renderer& renderer) const
         optionsStatus_);
 
     constexpr int ButtonCount = 1;
-    constexpr const char* ButtonLabels[ButtonCount] = {"音量設定を全初期化"};
+    constexpr const char* ButtonLabels[ButtonCount] = {"全初期化"};
     for (int i = 0; i < ButtonCount; ++i) {
         drawUiButton(
             renderer,
@@ -7386,7 +7493,7 @@ void Game::renderVideoSettings(Renderer& renderer) const
         optionsStatus_);
 
     constexpr int ButtonCount = 1;
-    constexpr const char* ButtonLabels[ButtonCount] = {"画面設定を全初期化"};
+    constexpr const char* ButtonLabels[ButtonCount] = {"全初期化"};
     for (int i = 0; i < ButtonCount; ++i) {
         drawUiButton(
             renderer,
@@ -7429,14 +7536,14 @@ void Game::renderPauseMenu(Renderer& renderer) const
     UiCancelControlScope cancelScope(pauseCancelState_);
     const char* pauseTitle = pausePage_ == PauseMenuPage::Status
         ? "ステータス"
-        : (pausePage_ == PauseMenuPage::Options ? "オプション" : "PAUSED");
+        : (pausePage_ == PauseMenuPage::Options ? "オプション" : "MENU");
     const char* pauseHelp = pausePage_ == PauseMenuPage::Status
         ? "Esc 戻る"
         : (pausePage_ == PauseMenuPage::Ring
-            ? "Z/X でアクティブリング切替  Esc 戻る"
+            ? "Z/X 選択リング切替  Esc 戻る"
             : (pausePage_ == PauseMenuPage::Options
                 ? (optionsPage_ == OptionsPageOperation
-                    ? "Z/X 設定切替  {shortcut} 分類切替  ↑/↓ 行選択  ←/→ 列選択  F/Enter 変更  Esc 戻る"
+                    ? "Z/X 設定切替  {shortcut} 分類切替  ↑/↓ 行選択  ←/→ 列選択  F/Enter 割当操作  Esc 戻る"
                     : (optionsPage_ == OptionsPageAudio
                         ? "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 音量変更  Esc 戻る"
                         : "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 変更  F/Enter 切替  Esc 戻る"))
@@ -7460,19 +7567,20 @@ void Game::renderPauseMenu(Renderer& renderer) const
 
     if (pausePage_ == PauseMenuPage::Status) {
         constexpr float LeftWidth = 528.0f;
-        const UiRect ringPanel{{panel.pos.x + 46.0f, panel.pos.y + 334.0f}, {LeftWidth, 172.0f}};
+        const UiRect ringPanel{{panel.pos.x + 46.0f, panel.pos.y + 340.0f}, {LeftWidth, 172.0f}};
         const Vec2 profilePos{ringPanel.pos.x, panel.pos.y + 112.0f};
+        const Vec2 profileTitlePos = profilePos + Vec2{0.0f, -12.0f};
         const UiRect portraitRect{{panel.pos.x + 636.0f, panel.pos.y + 36.0f}, {340.0f, 500.0f}};
 
         drawUiSubPanel(renderer, ringPanel);
 
-        renderer.drawText(profilePos, "見習い魔女 ルネ", {246, 235, 255, 255}, 3);
-        renderer.drawText(profilePos + Vec2{1.0f, 0.0f}, "見習い魔女 ルネ", {246, 235, 255, 255}, 3);
+        renderer.drawText(profileTitlePos, "見習い魔女 ルネ", {246, 235, 255, 255}, 3);
+        renderer.drawText(profileTitlePos + Vec2{1.0f, 0.0f}, "見習い魔女 ルネ", {246, 235, 255, 255}, 3);
 
         const int hpMax = std::max(1, player_.maxHp);
         const int hp = std::clamp(player_.hp, 0, hpMax);
         std::snprintf(buffer, sizeof(buffer), "HP  %02d / %02d", hp, hpMax);
-        renderer.drawText(profilePos + Vec2{0.0f, 42.0f}, buffer, {255, 232, 232, 255}, 2);
+        renderer.drawText(profilePos + Vec2{0.0f, 34.0f}, buffer, {255, 232, 232, 255}, 2);
 
         UiGaugeStyle hpGaugeStyle;
         hpGaugeStyle.fill.start = {224, 74, 84, 255};
@@ -7488,12 +7596,12 @@ void Game::renderPauseMenu(Renderer& renderer) const
         constexpr float StatusGaugeWidth = 228.0f;
         drawUiGauge(
             renderer,
-            {profilePos + Vec2{0.0f, 68.0f}, {StatusGaugeWidth, 12.0f}},
+            {profilePos + Vec2{0.0f, 60.0f}, {StatusGaugeWidth, 12.0f}},
             static_cast<float>(hp) / static_cast<float>(hpMax),
             hpGaugeStyle);
 
         const float expGaugeX = ringPanel.pos.x + ringPanel.size.x - StatusGaugeWidth;
-        const Vec2 expLabelPos{expGaugeX, profilePos.y + 42.0f};
+        const Vec2 expLabelPos{expGaugeX, profilePos.y + 34.0f};
         std::snprintf(buffer, sizeof(buffer), "Lv.%d", std::max(1, player_.level));
         renderer.drawText(expLabelPos, buffer, {222, 236, 255, 255}, 2);
         if (playerAtMaxLevel(player_)) {
@@ -7522,7 +7630,7 @@ void Game::renderPauseMenu(Renderer& renderer) const
             : static_cast<float>(std::clamp(player_.xp, 0, xpToNext)) / static_cast<float>(xpToNext);
         drawUiGauge(
             renderer,
-            {{expGaugeX, profilePos.y + 68.0f}, {StatusGaugeWidth, 12.0f}},
+            {{expGaugeX, profilePos.y + 60.0f}, {StatusGaugeWidth, 12.0f}},
             expProgress,
             expGaugeStyle);
 
@@ -7542,7 +7650,7 @@ void Game::renderPauseMenu(Renderer& renderer) const
         drawInlineItemText(
             renderer,
             objectCatalog_,
-            profilePos + Vec2{0.0f, 98.0f},
+            profilePos + Vec2{0.0f, 94.0f},
             inlineWorldIconTag(worldIconKey(WorldIconId::MoneyLarge)) + "所持金 " + std::to_string(std::max(0, money_)) + "G",
             moneyStyle);
 
@@ -7554,7 +7662,7 @@ void Game::renderPauseMenu(Renderer& renderer) const
             const MaterialType type = StatusMaterials[static_cast<std::size_t>(i)];
             std::string name = inlineMaterialIconTag(type);
             name += materialTypeDisplayName(type);
-            const std::string count = "×" + std::to_string(inventory_.materialCount(type));
+            const std::string count = std::to_string(inventory_.materialCount(type));
             const int column = i % 2;
             const int row = i / 2;
             const Vec2 pos{
@@ -7580,13 +7688,17 @@ void Game::renderPauseMenu(Renderer& renderer) const
         const int unlockedRings = unlockedRingCount();
         for (int ringIndex = 0; ringIndex < unlockedRings; ++ringIndex) {
             const float y = ringContent.pos.y + 34.0f + static_cast<float>(ringIndex) * 34.0f;
-            renderer.drawText({ringContent.pos.x, y}, ringDisplayName(ringIndex, unlockedRings), ui::Text, 2);
+            drawUiTextWithIcon(
+                renderer,
+                {ringContent.pos.x, y},
+                ringDisplayName(ringIndex, unlockedRings),
+                ringDisplayIconImageNumber(ringIndex));
 
             const std::vector<SpellRingItem>& items = spellRing_.itemsForRing(ringIndex);
             std::snprintf(
                 buffer,
                 sizeof(buffer),
-                "装着 %02d/%02d",
+                "アイテム %02d/%02d",
                 static_cast<int>(items.size()),
                 spellRing_.maxItemCountForRing(ringIndex));
             renderer.drawText({ringContent.pos.x + 104.0f, y}, buffer, ui::TextMuted, 2);
@@ -7630,17 +7742,8 @@ void Game::renderPauseMenu(Renderer& renderer) const
         }
     } else if (pausePage_ == PauseMenuPage::Items) {
         renderer.drawText(panel.pos + Vec2{48.0f, 102.0f}, "アイテム", {246, 235, 255, 255}, 3);
-        renderer.drawText(panel.pos + Vec2{58.0f, 164.0f}, "通常画面のショートカットHUDとアイテム画面で管理します。", {230, 230, 236, 255}, 2);
-        renderer.drawText(panel.pos + Vec2{58.0f, 206.0f}, "I キーでアイテム画面を開けます。", {198, 198, 206, 255}, 2);
     } else if (pausePage_ == PauseMenuPage::Ring) {
         renderer.drawText(panel.pos + Vec2{48.0f, 102.0f}, "リング", {246, 235, 255, 255}, 3);
-        renderer.drawText(
-            panel.pos + Vec2{58.0f, 164.0f},
-            "アクティブ " + std::string(ringDisplayName(spellRing_.activeRingIndex(), unlockedRingCount())),
-            {230, 230, 236, 255},
-            2);
-        std::snprintf(buffer, sizeof(buffer), "装着アイテム %02d/%02d", static_cast<int>(spellRing_.items().size()), spellRing_.maxItemCount());
-        renderer.drawText(panel.pos + Vec2{58.0f, 206.0f}, buffer, {230, 230, 236, 255}, 2);
     } else if (pausePage_ == PauseMenuPage::Options) {
         renderOptionsMenu(renderer);
     } else if (pausePage_ == PauseMenuPage::QuitConfirm) {
@@ -7763,16 +7866,14 @@ void Game::renderGameOverScreen(Renderer& renderer) const
     const std::string deathCause = playerDeathCauseText(player_);
     std::snprintf(buffer, sizeof(buffer), "死因      %s", deathCause.c_str());
     renderer.drawText(panel.pos + Vec2{136.0f, 130.0f}, buffer, {255, 214, 220, 255}, 2);
-    std::snprintf(buffer, sizeof(buffer), "到達時間  %s", formatRunTime(runStats_.elapsedSeconds).c_str());
-    renderer.drawText(panel.pos + Vec2{136.0f, 168.0f}, buffer, {230, 230, 236, 255}, 2);
     std::snprintf(buffer, sizeof(buffer), "レベル    %d", player_.level);
-    renderer.drawText(panel.pos + Vec2{136.0f, 206.0f}, buffer, {230, 230, 236, 255}, 2);
+    renderer.drawText(panel.pos + Vec2{136.0f, 168.0f}, buffer, {230, 230, 236, 255}, 2);
     std::snprintf(buffer, sizeof(buffer), "撃破数    %d", runStats_.defeatedEnemies);
-    renderer.drawText(panel.pos + Vec2{136.0f, 244.0f}, buffer, {230, 230, 236, 255}, 2);
+    renderer.drawText(panel.pos + Vec2{136.0f, 206.0f}, buffer, {230, 230, 236, 255}, 2);
     std::snprintf(buffer, sizeof(buffer), "掘削数    %d", runStats_.dugTiles);
-    renderer.drawText(panel.pos + Vec2{136.0f, 282.0f}, buffer, {230, 230, 236, 255}, 2);
+    renderer.drawText(panel.pos + Vec2{136.0f, 244.0f}, buffer, {230, 230, 236, 255}, 2);
     std::snprintf(buffer, sizeof(buffer), "入手アイテム数  %d", runStats_.acquiredItems);
-    renderer.drawText(panel.pos + Vec2{136.0f, 320.0f}, buffer, {230, 230, 236, 255}, 2);
+    renderer.drawText(panel.pos + Vec2{136.0f, 282.0f}, buffer, {230, 230, 236, 255}, 2);
 
     for (int i = 0; i < GameOverItemCount; ++i) {
         drawUiButton(renderer, gameOverItemRect(i), gameOverItemName(i), i == gameOverSelection_, i == 0 ? uiActionButtonStyle() : uiCancelButtonStyle());
@@ -7794,16 +7895,13 @@ void Game::renderStageClearScreen(Renderer& renderer) const
     renderer.drawText(panel.pos + Vec2{118.0f, 92.0f}, "クリア結果", ui::Text, 3);
 
     char buffer[160];
-    std::snprintf(buffer, sizeof(buffer), "深部の主を退け、探索記録を拠点へ持ち帰ります。");
-    renderer.drawText(panel.pos + Vec2{136.0f, 148.0f}, buffer, {230, 238, 232, 255}, 2);
-    renderer.drawText(panel.pos + Vec2{136.0f, 186.0f}, "ボス後の会話は完了しました。次は拠点で状況を確認できます。", {230, 238, 232, 255}, 2);
     std::snprintf(buffer, sizeof(buffer), "次ステージ解禁: Stage %d", unlockedStages_);
-    renderer.drawText(panel.pos + Vec2{136.0f, 238.0f}, buffer, {255, 230, 150, 255}, 2);
+    renderer.drawText(panel.pos + Vec2{136.0f, 148.0f}, buffer, {255, 230, 150, 255}, 2);
     std::snprintf(buffer, sizeof(buffer), "クリア時間 %s   掘削数 %d   撃破数 %d",
         formatRunTime(runStats_.elapsedSeconds).c_str(),
         runStats_.dugTiles,
         runStats_.defeatedEnemies);
-    renderer.drawText(panel.pos + Vec2{136.0f, 292.0f}, buffer, {198, 208, 202, 255}, 2);
+    renderer.drawText(panel.pos + Vec2{136.0f, 202.0f}, buffer, {198, 208, 202, 255}, 2);
 
     for (int i = 0; i < StageClearItemCount; ++i) {
         drawUiButton(renderer, stageClearItemRect(i), stageClearItemName(i), i == stageClearSelection_, uiActionButtonStyle());
@@ -8555,7 +8653,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderOpeningKamishibai(renderer);
         finishUiFrame(renderer);
         renderDebugOverlay(renderer, time);
-        renderScreenTransitionOverlay(renderer);
+        renderFinalScreenOverlays(renderer);
         renderer.present();
         return;
     }
@@ -8563,7 +8661,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderEndingKamishibai(renderer);
         finishUiFrame(renderer);
         renderDebugOverlay(renderer, time);
-        renderScreenTransitionOverlay(renderer);
+        renderFinalScreenOverlays(renderer);
         renderer.present();
         return;
     }
@@ -8571,7 +8669,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderTitleScreen(renderer);
         finishUiFrame(renderer);
         renderDebugOverlay(renderer, time);
-        renderScreenTransitionOverlay(renderer);
+        renderFinalScreenOverlays(renderer);
         renderer.present();
         return;
     }
@@ -8579,7 +8677,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderObjectImageScaleEditScreen(renderer);
         finishUiFrame(renderer);
         renderDebugOverlay(renderer, time);
-        renderScreenTransitionOverlay(renderer);
+        renderFinalScreenOverlays(renderer);
         renderer.present();
         return;
     }
@@ -8587,7 +8685,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderEnemyHitboxEditScreen(renderer, time.totalSeconds());
         finishUiFrame(renderer);
         renderDebugOverlay(renderer, time);
-        renderScreenTransitionOverlay(renderer);
+        renderFinalScreenOverlays(renderer);
         renderer.present();
         return;
     }
@@ -8595,7 +8693,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderEnemyPlacementEditScreen(renderer, time.totalSeconds());
         finishUiFrame(renderer);
         renderDebugOverlay(renderer, time);
-        renderScreenTransitionOverlay(renderer);
+        renderFinalScreenOverlays(renderer);
         renderer.present();
         return;
     }
@@ -8603,7 +8701,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderEnemyShadowEditScreen(renderer, time.totalSeconds());
         finishUiFrame(renderer);
         renderDebugOverlay(renderer, time);
-        renderScreenTransitionOverlay(renderer);
+        renderFinalScreenOverlays(renderer);
         renderer.present();
         return;
     }
@@ -8611,7 +8709,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderAudioCueEditScreen(renderer);
         finishUiFrame(renderer);
         renderDebugOverlay(renderer, time);
-        renderScreenTransitionOverlay(renderer);
+        renderFinalScreenOverlays(renderer);
         renderer.present();
         return;
     }
@@ -8619,7 +8717,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderEffectTestScreen(renderer, time.totalSeconds());
         finishUiFrame(renderer);
         renderDebugOverlay(renderer, time);
-        renderScreenTransitionOverlay(renderer);
+        renderFinalScreenOverlays(renderer);
         renderer.present();
         return;
     }
@@ -8627,7 +8725,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderProjectileTestScreen(renderer, time.totalSeconds());
         finishUiFrame(renderer);
         renderDebugOverlay(renderer, time);
-        renderScreenTransitionOverlay(renderer);
+        renderFinalScreenOverlays(renderer);
         renderer.present();
         return;
     }
@@ -8662,6 +8760,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderBaseDebugOverlay(renderer, time);
         renderScreenTransitionOverlay(renderer);
         renderWorldLoadingScreen(renderer, time.totalSeconds());
+        renderDevBuildNotice(renderer);
         renderer.present();
         return;
     }
@@ -9129,7 +9228,7 @@ void Game::render(Renderer& renderer, const Time& time)
     }
     finishUiFrame(renderer);
     renderDebugOverlay(renderer, time);
-    renderScreenTransitionOverlay(renderer);
+    renderFinalScreenOverlays(renderer);
     renderer.present();
 }
 

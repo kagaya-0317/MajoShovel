@@ -709,7 +709,8 @@ bool WorldDropSystem::spawnObjectDrop(
     Vec2 position,
     float spawnedAtSeconds,
     WorldDropSpawnMotion motion,
-    bool temporary)
+    bool temporary,
+    WorldDropSpawnPolicy spawnPolicy)
 {
     if (objectId.empty()) {
         logDropWarning("reward node requested an empty object_id; no item drop spawned");
@@ -722,8 +723,7 @@ bool WorldDropSystem::spawnObjectDrop(
         return false;
     }
 
-    spawnDrop(*object, position, spawnedAtSeconds, motion, temporary);
-    return true;
+    return spawnDrop(*object, position, spawnedAtSeconds, motion, temporary, spawnPolicy);
 }
 
 bool WorldDropSystem::spawnObjectInstanceDrop(
@@ -772,16 +772,20 @@ bool WorldDropSystem::spawnDigItemDrop(const ObjectCatalog& catalog, Vec2 positi
     if (object == nullptr) {
         return false;
     }
-    spawnDrop(*object, position, spawnedAtSeconds);
-    return true;
+    return spawnDrop(*object, position, spawnedAtSeconds);
 }
 
-bool WorldDropSystem::spawnMoneyDrop(int amount, Vec2 position, float spawnedAtSeconds, WorldDropSpawnMotion motion)
+bool WorldDropSystem::spawnMoneyDrop(
+    int amount,
+    Vec2 position,
+    float spawnedAtSeconds,
+    WorldDropSpawnMotion motion,
+    WorldDropSpawnPolicy spawnPolicy)
 {
     if (amount <= 0) {
         return false;
     }
-    if (!canSpawnDrop("money")) {
+    if (!canSpawnDrop("money", spawnPolicy)) {
         return false;
     }
 
@@ -793,6 +797,7 @@ bool WorldDropSystem::spawnMoneyDrop(int amount, Vec2 position, float spawnedAtS
         .velocity = randomDropVelocity(),
         .spawnedAtSeconds = spawnedAtSeconds,
         .ageSeconds = 0.0f,
+        .protectedFromLimitPruning = spawnPolicy == WorldDropSpawnPolicy::Guaranteed,
     };
     configureDropMotion(drop, motion);
     drops_.push_back(std::move(drop));
@@ -804,12 +809,13 @@ bool WorldDropSystem::spawnMaterialDrop(
     int count,
     Vec2 position,
     float spawnedAtSeconds,
-    WorldDropSpawnMotion motion)
+    WorldDropSpawnMotion motion,
+    WorldDropSpawnPolicy spawnPolicy)
 {
     if (type == MaterialType::Count || count <= 0) {
         return false;
     }
-    if (!canSpawnDrop("material")) {
+    if (!canSpawnDrop("material", spawnPolicy)) {
         return false;
     }
 
@@ -821,6 +827,7 @@ bool WorldDropSystem::spawnMaterialDrop(
         .velocity = randomDropVelocity(),
         .spawnedAtSeconds = spawnedAtSeconds,
         .ageSeconds = 0.0f,
+        .protectedFromLimitPruning = spawnPolicy == WorldDropSpawnPolicy::Guaranteed,
     };
     configureDropMotion(drop, motion);
     drops_.push_back(std::move(drop));
@@ -833,8 +840,7 @@ bool WorldDropSystem::spawnRewardDrop(const ObjectCatalog& catalog, Vec2 positio
     if (object == nullptr) {
         return false;
     }
-    spawnDrop(*object, position, spawnedAtSeconds);
-    return true;
+    return spawnDrop(*object, position, spawnedAtSeconds);
 }
 
 bool WorldDropSystem::stealNearestDrop(
@@ -1348,16 +1354,21 @@ const ObjectDefinition* WorldDropSystem::chooseDropForTile(TileType tileType, co
     return chooseDigDrop(catalog, "dug ore tile");
 }
 
-bool WorldDropSystem::canSpawnDrop(std::string_view label)
+bool WorldDropSystem::canSpawnDrop(std::string_view label, WorldDropSpawnPolicy spawnPolicy)
 {
+    const bool guaranteed = spawnPolicy == WorldDropSpawnPolicy::Guaranteed;
     if (dropLimit_ <= 0) {
-        return false;
+        return guaranteed;
     }
-    if (static_cast<int>(drops_.size()) >= dropLimit_) {
-        if (!pruneOneDropForLimit()) {
-            logDropWarning("drop limit reached; skipped " + std::string(label) + " drop");
-            return false;
+    while (static_cast<int>(drops_.size()) >= dropLimit_) {
+        if (pruneOneDropForLimit()) {
+            continue;
         }
+        if (guaranteed) {
+            return true;
+        }
+        logDropWarning("drop limit reached; skipped " + std::string(label) + " drop");
+        return false;
     }
     return true;
 }
@@ -1369,7 +1380,8 @@ bool WorldDropSystem::pruneOneDropForLimit()
     }
 
     auto protectedDrop = [](const WorldDropItem& drop) {
-        return drop.kind == WorldDropKind::Material && drop.id == materialTypeSaveName(MaterialType::MoonFragment);
+        return drop.protectedFromLimitPruning ||
+            (drop.kind == WorldDropKind::Material && drop.id == materialTypeSaveName(MaterialType::MoonFragment));
     };
     auto valueScore = [](const WorldDropItem& drop) {
         if (drop.kind == WorldDropKind::Money) {
@@ -1417,19 +1429,20 @@ Vec2 WorldDropSystem::randomDropVelocity() const
     return fromAngle(angleDistribution(dropRng())) * speedDistribution(dropRng());
 }
 
-void WorldDropSystem::spawnDrop(
+bool WorldDropSystem::spawnDrop(
     const ObjectDefinition& object,
     Vec2 position,
     float spawnedAtSeconds,
     WorldDropSpawnMotion motion,
-    bool temporary)
+    bool temporary,
+    WorldDropSpawnPolicy spawnPolicy)
 {
     if (object.id.empty()) {
         logDropWarning("selected drop object has empty ID");
-        return;
+        return false;
     }
-    if (!canSpawnDrop("object")) {
-        return;
+    if (!canSpawnDrop("object", spawnPolicy)) {
+        return false;
     }
 
     WorldDropItem drop{
@@ -1441,9 +1454,11 @@ void WorldDropSystem::spawnDrop(
         .spawnedAtSeconds = spawnedAtSeconds,
         .ageSeconds = 0.0f,
         .temporary = temporary,
+        .protectedFromLimitPruning = spawnPolicy == WorldDropSpawnPolicy::Guaranteed,
     };
     configureDropMotion(drop, motion);
     drops_.push_back(std::move(drop));
+    return true;
 }
 
 }

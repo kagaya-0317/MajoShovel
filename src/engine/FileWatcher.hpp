@@ -1,23 +1,29 @@
-#pragma once
+﻿#pragma once
 
 #include <filesystem>
+#include <memory>
 #include <string>
-#include <unordered_map>
-#include <vector>
 
 namespace majo {
 
 class FileWatcher {
 public:
+    FileWatcher();
+    ~FileWatcher();
+
+    FileWatcher(FileWatcher&&) noexcept;
+    FileWatcher& operator=(FileWatcher&&) noexcept;
+
+    FileWatcher(const FileWatcher&) = delete;
+    FileWatcher& operator=(const FileWatcher&) = delete;
+
     void watchPath(std::filesystem::path path);
     void reset();
     bool poll(std::string& changedPath);
 
 private:
-    void scan(bool reportChanges, std::string& changedPath, bool& changed);
-
-    std::vector<std::filesystem::path> roots_;
-    std::unordered_map<std::string, std::filesystem::file_time_type> knownFiles_;
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 }

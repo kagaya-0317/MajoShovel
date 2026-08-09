@@ -54,6 +54,12 @@ constexpr int PlayerHandSpriteSheetColumns = 3;
 constexpr int PlayerHandSpriteSheetRows = 3;
 constexpr int GameCursorHotspotX = 3;
 constexpr int GameCursorHotspotY = 3;
+constexpr std::string_view AudioSeDevBuildReady = "se.dev.build_ready";
+constexpr std::string_view AudioSeDevBuildFailed = "se.dev.build_failed";
+constexpr std::string_view DevBuildReadyWindowTitleSuffix = " [*ビルド更新あり*]";
+constexpr std::string_view DevBuildFailedWindowTitleSuffix = " [*ビルド失敗*]";
+constexpr float DevBuildReadyNoticeSeconds = 2.0f;
+constexpr float DevBuildFailedNoticeSeconds = 3.0f;
 
 #ifdef _WIN32
 class GdiPlusSession {
@@ -374,7 +380,36 @@ std::filesystem::path devAutoReloadBlockPath()
     return devSettingsRootPath() / "dev_auto_reload_blocked.txt";
 }
 
+std::filesystem::path devBuildStatusPath()
+{
+    return devSettingsRootPath() / "dev_build_status.txt";
+}
+
+std::filesystem::path devRestartRequestPath()
+{
+    return devSettingsRootPath() / "dev_restart_request.txt";
+}
+
+bool publishDevRestartRequest()
+{
+    const std::filesystem::path path = devRestartRequestPath();
+    std::error_code error;
+    std::filesystem::create_directories(path.parent_path(), error);
+    if (error) {
+        return false;
+    }
+
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file) {
+        return false;
+    }
+    file << "restart\n";
+    file.flush();
+    return file.good();
+}
+
 constexpr std::uint64_t HotReloadPollIntervalMs = 500;
+constexpr std::uint64_t DevBuildStatusPollIntervalMs = 250;
 
 enum class DevLaunchMode {
     PreTitle,
@@ -401,6 +436,35 @@ std::string_view stripUtf8Bom(std::string_view value)
         value.remove_prefix(3);
     }
     return value;
+}
+
+struct DevBuildStatusRecord {
+    std::string kind;
+    std::string token;
+};
+
+std::optional<DevBuildStatusRecord> loadDevBuildStatus()
+{
+    std::ifstream file(devBuildStatusPath(), std::ios::binary);
+    if (!file) {
+        return std::nullopt;
+    }
+
+    std::string line;
+    std::getline(file, line);
+    line = trimAscii(std::string(stripUtf8Bom(line)));
+    const std::size_t separator = line.find('\t');
+    if (separator == std::string::npos) {
+        return std::nullopt;
+    }
+
+    DevBuildStatusRecord record;
+    record.kind = lowerAscii(trimAscii(line.substr(0, separator)));
+    record.token = trimAscii(line.substr(separator + 1));
+    if ((record.kind != "ready" && record.kind != "failed") || record.token.empty()) {
+        return std::nullopt;
+    }
+    return record;
 }
 
 std::optional<DevLaunchMode> parseDevLaunchMode(std::string_view value)
@@ -724,7 +788,12 @@ bool App::saveSettingsNow()
     return true;
 }
 
-bool App::initialize(const char* title, int width, int height, bool testPlayMode)
+bool App::initialize(
+    const char* title,
+    int width,
+    int height,
+    bool testPlayMode,
+    bool devAutoReloadMode)
 {
     setCrashPhase("App.initialize");
     setCrashContextProvider([this]() {
@@ -733,8 +802,15 @@ bool App::initialize(const char* title, int width, int height, bool testPlayMode
     width_ = width;
     height_ = height;
     testPlayMode_ = testPlayMode;
+    devAutoReloadMode_ = testPlayMode && devAutoReloadMode;
+    baseWindowTitle_ = title != nullptr ? title : "";
     autoReloadBlocked_ = false;
     runtimeHotReloadEnabled_ = false;
+    devBuildState_ = DevBuildState::None;
+    devBuildNoticeFailed_ = false;
+    devBuildStatusToken_.clear();
+    devBuildNoticeTimer_ = 0.0f;
+    nextDevBuildStatusPollTicks_ = 0;
     testFreezePaused_ = false;
     restartRequested_ = false;
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
@@ -829,6 +905,10 @@ bool App::loadAssets()
         ok = false;
     }
     if (!renderer_->loadUiSubWindowTexture("assets/system/UI_window2.png")) {
+        logError(renderer_->lastAssetError());
+        ok = false;
+    }
+    if (!renderer_->loadUiRoundedRectangleTexture("assets/system/UI_roundedRectangle.png")) {
         logError(renderer_->lastAssetError());
         ok = false;
     }
@@ -998,11 +1078,18 @@ bool App::reloadAssetForPath(const std::string& changedPath)
     if (fileName == "ui_window2.png") {
         return renderer_->loadUiSubWindowTexture("assets/system/UI_window2.png");
     }
+    if (fileName == "ui_roundedrectangle.png") {
+        return renderer_->loadUiRoundedRectangleTexture("assets/system/UI_roundedRectangle.png");
+    }
     if (fileName == "ui_buttons.png") {
         return renderer_->loadUiButtonTexture("assets/system/UI_buttons.png");
     }
     if (fileName == "ui_buttons2.png") {
         renderer_->invalidateImage("assets/system/UI_buttons2.png");
+        return true;
+    }
+    if (fileName == "ui_arrow.png" || fileName == "ui_arrowwide.png") {
+        renderer_->invalidateImage(changedPath);
         return true;
     }
     if (fileName == "ui_tubs.png") {
@@ -1089,6 +1176,85 @@ bool App::reloadAssetForPath(const std::string& changedPath)
     return loadAssets();
 }
 
+void App::updateWindowTitle()
+{
+    if (window_ == nullptr) {
+        return;
+    }
+
+    std::string title = baseWindowTitle_;
+    if (devBuildState_ == DevBuildState::Ready) {
+        title += DevBuildReadyWindowTitleSuffix;
+    } else if (devBuildState_ == DevBuildState::Failed) {
+        title += DevBuildFailedWindowTitleSuffix;
+    }
+    if (!SDL_SetWindowTitle(window_, title.c_str())) {
+        logWarning(std::string("SDL_SetWindowTitle failed: ") + SDL_GetError());
+    }
+}
+
+void App::checkDevBuildStatus()
+{
+    if (!devAutoReloadMode_) {
+        return;
+    }
+
+    const std::uint64_t now = SDL_GetTicks();
+    if (now < nextDevBuildStatusPollTicks_) {
+        return;
+    }
+    nextDevBuildStatusPollTicks_ = now + DevBuildStatusPollIntervalMs;
+
+    const std::optional<DevBuildStatusRecord> status = loadDevBuildStatus();
+    if (!status) {
+        if (devBuildState_ != DevBuildState::None) {
+            devBuildState_ = DevBuildState::None;
+            devBuildNoticeFailed_ = false;
+            devBuildStatusToken_.clear();
+            devBuildNoticeTimer_ = 0.0f;
+            updateWindowTitle();
+        }
+        return;
+    }
+
+    const DevBuildState nextState = status->kind == "ready"
+        ? DevBuildState::Ready
+        : DevBuildState::Failed;
+    if (devBuildState_ == nextState && devBuildStatusToken_ == status->token) {
+        return;
+    }
+
+    devBuildState_ = nextState;
+    devBuildNoticeFailed_ = nextState == DevBuildState::Failed;
+    devBuildStatusToken_ = status->token;
+    devBuildNoticeTimer_ = devBuildNoticeFailed_
+        ? DevBuildFailedNoticeSeconds
+        : DevBuildReadyNoticeSeconds;
+    updateWindowTitle();
+    if (devBuildNoticeFailed_) {
+        audio_.playSe(AudioSeDevBuildFailed);
+        logWarning("Dev build failed. Check the build console.");
+    } else {
+        audio_.playSe(AudioSeDevBuildReady);
+        logInfo("Dev build ready. Press F5 to apply it.");
+    }
+}
+
+void App::updateDevBuildNotice(float dt)
+{
+    devBuildNoticeTimer_ = std::max(0.0f, devBuildNoticeTimer_ - std::max(0.0f, dt));
+    game_.setDevBuildNotice(devBuildNoticeTimer_ > 0.0f, devBuildNoticeFailed_);
+}
+
+void App::requestRestart()
+{
+    if (devAutoReloadMode_ && !publishDevRestartRequest()) {
+        logWarning("Could not publish the dev restart request; falling back to the process exit code.");
+    }
+    restartRequested_ = true;
+    running_ = false;
+}
+
 void App::checkAssetHotReload()
 {
     if (!runtimeHotReloadEnabled_ || autoReloadBlocked_) {
@@ -1111,7 +1277,6 @@ void App::checkAssetHotReload()
     } else {
         logError("Asset hot reload failed: " + changedPath + "\n" + renderer_->lastAssetError());
     }
-    configureAssetWatcher();
 }
 
 void App::toggleFullscreen()
@@ -1514,8 +1679,7 @@ void App::executeDebugCommand(const std::string& command)
     }
     if (normalized == "restart") {
         logInfo("Debug command: restart");
-        restartRequested_ = true;
-        running_ = false;
+        requestRestart();
         return;
     }
     if (normalized == "quit" || normalized == "exit") {
@@ -1540,7 +1704,10 @@ void App::runAutoSimulationStep(float dt, Time& updateTime)
         autoSimulation_.recordActionResult(*action, result);
     }
     effectiveInput.applyAutomation(autoSimulation_.inputFrame());
-    game_.update(effectiveInput, updateTime);
+    game_.update(
+        effectiveInput,
+        updateTime,
+        *renderer_);
 }
 
 float App::startupLoadProgress() const
@@ -1865,8 +2032,7 @@ void App::run()
             running_ = false;
         }
         if (testPlayMode_ && input_.testRestartPressed()) {
-            restartRequested_ = true;
-            running_ = false;
+            requestRestart();
             continue;
         }
         if (testPlayMode_ && input_.openConsolePressed()) {
@@ -1920,9 +2086,11 @@ void App::run()
             setCrashPhase("App.hotReload");
             FrameProfileScope profile("App.hotReload");
             checkAssetHotReload();
+            checkDevBuildStatus();
         }
         time_.tick();
         updateSettingsSave(time_.deltaSeconds());
+        updateDevBuildNotice(time_.deltaSeconds());
         if (!testFreezePaused_) {
             {
                 FrameProfileScope profile("App.audio");
@@ -1970,7 +2138,10 @@ void App::run()
                 Input effectiveInput = input_;
                 setCrashPhase("App.update");
                 FrameProfileScope profile("App.update");
-                game_.update(effectiveInput, time_);
+                game_.update(
+                    effectiveInput,
+                    time_,
+                    *renderer_);
             }
             const bool autoSimulationOverlayActive =
                 testPlayMode_ && autoSimulation_.state() != autosim::AutoSimulationState::Idle;

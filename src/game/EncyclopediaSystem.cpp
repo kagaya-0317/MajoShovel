@@ -830,7 +830,7 @@ void EncyclopediaSystem::loadEffect(std::string objectId, std::string effectKey)
     objectEffects_[std::move(objectId)].insert(std::move(effectKey));
 }
 
-ObjectEffectDisplaySections EncyclopediaSystem::getObjectEffectDisplaySections(
+ObjectEffectDisplaySections EncyclopediaSystem::buildObjectEffectDisplaySections(
     std::string_view objectId,
     const ObjectCatalog& catalog,
     EffectRevealMode ringRevealMode) const
@@ -851,7 +851,7 @@ ObjectEffectDisplaySections EncyclopediaSystem::getObjectEffectDisplaySections(
             continue;
         }
         if (line.trigger == DiscoveryTrigger::NormalEffect) {
-            sections.useLines.push_back(line.text);
+            sections.useLines.push_back({line.effectKey, line.text});
             continue;
         }
 
@@ -861,9 +861,9 @@ ObjectEffectDisplaySections EncyclopediaSystem::getObjectEffectDisplaySections(
             visible = discovered->contains(line.effectKey) || discovered->contains(canonical);
         }
         if (ringRevealMode == EffectRevealMode::DebugAll || visible) {
-            sections.ringLines.push_back(line.text);
+            sections.ringLines.push_back({line.effectKey, line.text});
         } else if (ringRevealMode == EffectRevealMode::WithUnknown) {
-            sections.ringLines.push_back("？？？");
+            sections.ringLines.push_back({line.effectKey, "？？？"});
         }
     }
 

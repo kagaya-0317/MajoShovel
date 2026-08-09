@@ -14,6 +14,7 @@
 $ErrorActionPreference = "Stop"
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $TargetName = "MajoShovel"
+. (Join-Path $PSScriptRoot "build_support.ps1")
 $CodexBuildSlotsProvided = $PSBoundParameters.ContainsKey("CodexBuildSlots")
 
 function Get-LocalBuildBase {
@@ -359,6 +360,7 @@ function Get-ExecutablePath([string]$BuildPath, [string]$GeneratorKind, [string]
 
 function Invoke-MajoShovelBuild {
     $slotLease = $null
+    $buildOperationMutex = $null
     try {
         $cmake = Find-CMake
         $ninja = Find-Ninja
@@ -393,6 +395,9 @@ function Invoke-MajoShovelBuild {
         $slotLease = $leaseRef.Value
         Assert-BuildDirectoryMatchesPlan $buildPath $generatorKind
 
+        $buildOperationMutex = Enter-MajoShovelBuildOperationLock $buildPath "[build]"
+        Wait-MajoShovelBuildOutputAvailability $buildPath $TargetName "[build]"
+
         if ($Jobs -le 0) {
             $script:Jobs = [Math]::Max(1, [Environment]::ProcessorCount)
         }
@@ -407,7 +412,7 @@ function Invoke-MajoShovelBuild {
 
         $buildArgs = @("--build", $buildPath, "--target", $TargetName, "--parallel", "$Jobs")
         if ($generatorKind -ne "Ninja") {
-            $buildArgs = @("--build", $buildPath, "--config", $Config, "--target", $TargetName, "--parallel", "$Jobs")
+            $buildArgs = Get-MajoShovelVisualStudioBuildArguments $buildPath $Config $TargetName $Jobs
         }
 
         Write-Host "[build] source: $Root"
@@ -429,9 +434,9 @@ function Invoke-MajoShovelBuild {
             return $LASTEXITCODE
         }
 
-        & $cmake @buildArgs
-        if ($LASTEXITCODE -ne 0) {
-            return $LASTEXITCODE
+        $buildExitCode = Invoke-MajoShovelNativeCommandWithProgress $cmake $buildArgs "[build] compiling with $Jobs job(s)" $Root
+        if ($buildExitCode -ne 0) {
+            return $buildExitCode
         }
 
         $exe = Get-ExecutablePath $buildPath $generatorKind $Config
@@ -447,6 +452,7 @@ function Invoke-MajoShovelBuild {
         return 0
     }
     finally {
+        Exit-MajoShovelMutex $buildOperationMutex
         if ($null -ne $slotLease -and $null -ne $slotLease.Lock) {
             $slotLease.Lock.Dispose()
         }

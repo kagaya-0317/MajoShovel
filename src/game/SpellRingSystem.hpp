@@ -156,6 +156,7 @@ public:
     static float baseSpeedMultiplierForRing(int ringIndex);
 
     void initialize(const RuntimeBalance& balance);
+    void updateTransientPresentation(float dt);
     void update(Player& player, const Input& input, float dt, float totalTime, bool paused, bool blockPointerThrow, const RuntimeBalance& balance);
     void updatePresentation(const Player& player, float dt, const RuntimeBalance& balance);
     bool tryThrowActiveRing(Player& player, const RuntimeBalance& balance);
@@ -233,6 +234,7 @@ public:
         float maxDeltaRadians) const;
     bool moveItemAngle(int index, float deltaRadians);
     bool moveItemAngleForRing(int ringIndex, int index, float deltaRadians);
+    bool arrangeItemsEvenlyForRing(int ringIndex, const RuntimeBalance& balance);
     void normalizeItemPlacements();
     void switchActiveRing(int delta);
     void applyObjectParameters(const ObjectCatalog& catalog);

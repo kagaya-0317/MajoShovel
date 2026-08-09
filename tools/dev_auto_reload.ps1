@@ -7,39 +7,17 @@
 $ErrorActionPreference = "Stop"
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $TargetName = "MajoShovel"
+. (Join-Path $PSScriptRoot "build_support.ps1")
 $GameProcess = $null
 $PendingBuild = $true
 $LastChangeTime = Get-Date
 $IsBuilding = $false
-$IgnoreEventsUntil = Get-Date
 $NeedsConfigure = $false
 $RunRoot = $null
 $GameExePath = $null
 $AutoReloadBlocked = $false
 $RebuildRestartExitCode = 85
-
-try {
-    Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-
-public static class MajoShovelDevWin32 {
-    [DllImport("user32.dll")]
-    public static extern IntPtr GetForegroundWindow();
-
-    [DllImport("user32.dll")]
-    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
-
-    [DllImport("user32.dll")]
-    public static extern bool SetForegroundWindow(IntPtr hWnd);
-
-    [DllImport("user32.dll")]
-    public static extern bool IsWindow(IntPtr hWnd);
-}
-"@
-} catch {
-    Write-Host "[dev] foreground preservation disabled: Win32 helper could not be loaded."
-}
+$DevAutoReloadMutex = $null
 
 function Find-CMake {
     $cmd = Get-Command cmake -ErrorAction SilentlyContinue
@@ -98,54 +76,6 @@ function Test-ConfigureNeeded([string]$Path) {
     return $false
 }
 
-function ConvertTo-CommandLineArgument([string]$Value) {
-    if ($null -eq $Value) {
-        return '""'
-    }
-
-    if ($Value.Length -eq 0 -or $Value.IndexOfAny([char[]]" `t`n`r`"") -ge 0) {
-        return '"' + ($Value -replace '"', '\"') + '"'
-    }
-
-    return $Value
-}
-
-function Join-CommandLineArguments([string[]]$Arguments) {
-    return ($Arguments | ForEach-Object { ConvertTo-CommandLineArgument $_ }) -join " "
-}
-
-function Invoke-NativeCommandWithProgress([string]$FilePath, [string[]]$Arguments, [string]$Activity) {
-    $process = New-Object System.Diagnostics.Process
-    $process.StartInfo.FileName = $FilePath
-    $process.StartInfo.Arguments = Join-CommandLineArguments $Arguments
-    $process.StartInfo.WorkingDirectory = $Root
-    $process.StartInfo.UseShellExecute = $false
-
-    $startedAt = Get-Date
-    $frames = @("|", "/", "-", "\")
-    $exitCode = 1
-    [void]$process.Start()
-
-    try {
-        while (-not $process.WaitForExit(200)) {
-            $elapsed = (Get-Date) - $startedAt
-            $frame = $frames[[int]($elapsed.TotalMilliseconds / 200) % $frames.Count]
-            $percent = [int](($elapsed.TotalSeconds * 8) % 100)
-            Write-Progress -Activity $Activity -Status "$frame elapsed $([int]$elapsed.TotalSeconds)s" -PercentComplete $percent
-        }
-        $exitCode = $process.ExitCode
-    }
-    finally {
-        Write-Progress -Activity $Activity -Completed
-        if (-not $process.HasExited) {
-            $process.Kill()
-        }
-        $process.Dispose()
-    }
-
-    return $exitCode
-}
-
 function Get-DevBuildConfigPath {
     $base = $env:LOCALAPPDATA
     if ([string]::IsNullOrWhiteSpace($base)) {
@@ -162,6 +92,110 @@ function Get-AutoReloadBlockPath {
     return Join-Path $base "MajoShovel\dev_auto_reload_blocked.txt"
 }
 
+function Get-BuildStatusPath {
+    $base = $env:LOCALAPPDATA
+    if ([string]::IsNullOrWhiteSpace($base)) {
+        $base = Join-Path $Root ".local"
+    }
+    return Join-Path $base "MajoShovel\dev_build_status.txt"
+}
+
+function Get-RestartRequestPath {
+    $base = $env:LOCALAPPDATA
+    if ([string]::IsNullOrWhiteSpace($base)) {
+        $base = Join-Path $Root ".local"
+    }
+    return Join-Path $base "MajoShovel\dev_restart_request.txt"
+}
+
+function Clear-BuildStatus {
+    $path = Get-BuildStatusPath
+    if (Test-Path -LiteralPath $path) {
+        try {
+            Remove-Item -LiteralPath $path -Force -ErrorAction Stop
+        } catch {
+            Write-Host "[dev] could not clear build status: $($_.Exception.Message)"
+        }
+    }
+}
+
+function Clear-RestartRequest {
+    $path = Get-RestartRequestPath
+    if (Test-Path -LiteralPath $path) {
+        try {
+            Remove-Item -LiteralPath $path -Force -ErrorAction Stop
+        } catch {
+            Write-Host "[dev] could not clear restart request: $($_.Exception.Message)"
+        }
+    }
+}
+
+function Take-RestartRequest {
+    $path = Get-RestartRequestPath
+    if (-not (Test-Path -LiteralPath $path)) {
+        return $false
+    }
+
+    try {
+        Remove-Item -LiteralPath $path -Force -ErrorAction Stop
+        return $true
+    } catch {
+        Write-Host "[dev] could not consume restart request: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Publish-BuildStatus([string]$Status) {
+    if ($Status -ne "ready" -and $Status -ne "failed") {
+        throw "Unknown build status: $Status"
+    }
+
+    $path = Get-BuildStatusPath
+    $temporaryPath = "$path.$PID.tmp"
+    try {
+        $directory = Split-Path $path -Parent
+        New-Item -ItemType Directory -Force -Path $directory | Out-Null
+
+        $exe = Join-Path (Get-BuildConfigPath) "$TargetName.exe"
+        $exeWriteTicks = if (Test-Path -LiteralPath $exe) {
+            (Get-Item -LiteralPath $exe).LastWriteTimeUtc.Ticks
+        } else {
+            0
+        }
+        $token = "$Status`t$PID-$([DateTime]::UtcNow.Ticks)-$exeWriteTicks"
+        $utf8Bom = New-Object System.Text.UTF8Encoding($true)
+        [System.IO.File]::WriteAllText($temporaryPath, $token + [Environment]::NewLine, $utf8Bom)
+        Move-Item -LiteralPath $temporaryPath -Destination $path -Force
+        return $true
+    } catch {
+        Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+        Write-Host "[dev] could not publish build status '$Status': $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Get-BuildStatusKind {
+    $path = Get-BuildStatusPath
+    if (-not (Test-Path -LiteralPath $path)) {
+        return ""
+    }
+    $raw = Get-Content -LiteralPath $path -TotalCount 1 -ErrorAction SilentlyContinue
+    if ($null -eq $raw) {
+        return ""
+    }
+    return ($raw -split "`t", 2)[0].Trim().ToLowerInvariant()
+}
+
+function Test-BuildReady {
+    return (Get-BuildStatusKind) -eq "ready"
+}
+
+function Invalidate-BuildReady {
+    if (Test-BuildReady) {
+        Clear-BuildStatus
+    }
+}
+
 function Get-AutoReloadBlocked {
     $path = Get-AutoReloadBlockPath
     if (-not (Test-Path -LiteralPath $path)) {
@@ -173,61 +207,6 @@ function Get-AutoReloadBlocked {
     }
     $value = $raw.Trim().ToLowerInvariant()
     return $value -eq "1" -or $value -eq "true" -or $value -eq "on" -or $value -eq "yes"
-}
-
-function Get-ForegroundWindowHandle {
-    if (-not ("MajoShovelDevWin32" -as [type])) {
-        return [IntPtr]::Zero
-    }
-    return [MajoShovelDevWin32]::GetForegroundWindow()
-}
-
-function Get-WindowProcessId([IntPtr]$Handle) {
-    if ($Handle -eq [IntPtr]::Zero -or -not ("MajoShovelDevWin32" -as [type])) {
-        return 0
-    }
-
-    [uint32]$processId = 0
-    [void][MajoShovelDevWin32]::GetWindowThreadProcessId($Handle, [ref]$processId)
-    return [int]$processId
-}
-
-function Test-GameIsForeground {
-    if (-not $script:GameProcess -or $script:GameProcess.HasExited) {
-        return $false
-    }
-
-    $foregroundHandle = Get-ForegroundWindowHandle
-    return (Get-WindowProcessId $foregroundHandle) -eq $script:GameProcess.Id
-}
-
-function Restore-ForegroundWindow([IntPtr]$Handle) {
-    if ($Handle -eq [IntPtr]::Zero -or -not ("MajoShovelDevWin32" -as [type])) {
-        return
-    }
-    if (-not [MajoShovelDevWin32]::IsWindow($Handle)) {
-        return
-    }
-
-    [void][MajoShovelDevWin32]::SetForegroundWindow($Handle)
-}
-
-function Wait-ProcessMainWindow([System.Diagnostics.Process]$Process, [int]$TimeoutMs = 2000) {
-    $deadline = (Get-Date).AddMilliseconds($TimeoutMs)
-    while ((Get-Date) -lt $deadline) {
-        if (-not $Process -or $Process.HasExited) {
-            return [IntPtr]::Zero
-        }
-
-        $Process.Refresh()
-        if ($Process.MainWindowHandle -ne [IntPtr]::Zero) {
-            return $Process.MainWindowHandle
-        }
-
-        Start-Sleep -Milliseconds 50
-    }
-
-    return [IntPtr]::Zero
 }
 
 function Normalize-BuildConfig([string]$Value) {
@@ -268,8 +247,11 @@ $BuildPath = Resolve-BuildPath $BuildDir
 if ($Jobs -le 0) {
     $Jobs = [Math]::Max(1, [Environment]::ProcessorCount)
 }
+$DevAutoReloadMutex = Enter-MajoShovelDevAutoReloadInstanceLock $BuildPath
 $NeedsConfigure = Test-ConfigureNeeded $BuildPath
 $RunRoot = Join-Path $BuildPath ".dev-run"
+Clear-BuildStatus
+Clear-RestartRequest
 
 function Get-BuildConfigPath {
     return Join-Path $BuildPath $Config
@@ -329,7 +311,7 @@ function Stop-Game {
     Remove-OldRunDirs
 }
 
-function Start-Game([bool]$ActivateGame = $true, [IntPtr]$PreviousForegroundWindow = [IntPtr]::Zero) {
+function Start-Game {
     $buildConfigPath = Get-BuildConfigPath
     $exe = Join-Path $buildConfigPath "$TargetName.exe"
     if (-not (Test-Path $exe)) {
@@ -347,11 +329,8 @@ function Start-Game([bool]$ActivateGame = $true, [IntPtr]$PreviousForegroundWind
 
     Write-Host "[dev] starting game..."
     $script:GameExePath = $runExe
+    Clear-RestartRequest
     $script:GameProcess = Start-Process -FilePath $runExe -ArgumentList @("--test-play", "--dev-auto-reload") -WorkingDirectory $Root -PassThru
-    if (-not $ActivateGame) {
-        [void](Wait-ProcessMainWindow $script:GameProcess)
-        Restore-ForegroundWindow $PreviousForegroundWindow
-    }
     Remove-OldRunDirs $runDir
     Start-Sleep -Milliseconds 300
     if ($script:GameProcess.HasExited) {
@@ -361,10 +340,33 @@ function Start-Game([bool]$ActivateGame = $true, [IntPtr]$PreviousForegroundWind
     }
 }
 
+function Restart-ExistingGameCopy {
+    if ([string]::IsNullOrWhiteSpace($script:GameExePath) -or -not (Test-Path -LiteralPath $script:GameExePath)) {
+        Write-Host "[dev] previous game copy is unavailable; cannot restore it after build failure."
+        return $false
+    }
+
+    Write-Host "[dev] restarting the previous game copy after build failure..."
+    Clear-RestartRequest
+    $script:GameProcess = Start-Process -FilePath $script:GameExePath -ArgumentList @("--test-play", "--dev-auto-reload") -WorkingDirectory $Root -PassThru
+    Remove-OldRunDirs (Split-Path $script:GameExePath -Parent)
+    Start-Sleep -Milliseconds 300
+    if ($script:GameProcess.HasExited) {
+        Write-Host "[dev] previous game copy exited immediately with code $($script:GameProcess.ExitCode)."
+        $script:GameProcess = $null
+        return $false
+    }
+    return $true
+}
+
 function Invoke-GameBuild {
     $cmake = Find-CMake
     $script:IsBuilding = $true
+    $buildOperationMutex = $null
     try {
+        $buildOperationMutex = Enter-MajoShovelBuildOperationLock $BuildPath "[dev]"
+        Wait-MajoShovelBuildOutputAvailability $BuildPath $TargetName "[dev]"
+
         if ($script:NeedsConfigure) {
             Write-Host "[dev] configuring..."
             & $cmake -S $Root -B $BuildPath -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
@@ -376,17 +378,26 @@ function Invoke-GameBuild {
         }
 
         Write-Host "[dev] building with $Jobs job(s)..."
-        $buildExitCode = Invoke-NativeCommandWithProgress $cmake @("--build", $BuildPath, "--config", $Config, "--target", $TargetName, "--parallel", "$Jobs") "[dev] building with $Jobs job(s)"
+        $cleanFirst = Test-MajoShovelVisualStudioDependencyTrackingIncomplete $BuildPath $Config $TargetName
+        if ($cleanFirst) {
+            Write-Host "[dev] incomplete compiler dependency tracking detected; rebuilding once to prevent mixed object layouts."
+        }
+        $buildArgs = Get-MajoShovelVisualStudioBuildArguments $BuildPath $Config $TargetName $Jobs $cleanFirst
+        $buildExitCode = Invoke-MajoShovelNativeCommandWithProgress $cmake $buildArgs "[dev] building with $Jobs job(s)" $Root
         if ($buildExitCode -ne 0) {
             Write-Host "[dev] build failed. Fix errors and save again."
+            return $false
+        }
+        if (Test-MajoShovelVisualStudioDependencyTrackingIncomplete $BuildPath $Config $TargetName) {
+            Write-Host "[dev] build finished, but compiler dependency tracking is still incomplete; refusing to launch a mixed binary."
             return $false
         }
 
         return $true
     }
     finally {
+        Exit-MajoShovelMutex $buildOperationMutex
         $script:IsBuilding = $false
-        $script:IgnoreEventsUntil = (Get-Date).AddSeconds(2)
     }
 }
 
@@ -400,11 +411,8 @@ function Test-RebuildPath($path) {
 }
 
 function Request-Rebuild($path) {
-    if ($script:IsBuilding -or (Get-Date) -lt $script:IgnoreEventsUntil) {
-        return
-    }
-
     if (Test-RebuildPath $path) {
+        Invalidate-BuildReady
         $cmakePath = [System.IO.Path]::GetFullPath((Join-Path $Root "CMakeLists.txt"))
         $fullPath = [System.IO.Path]::GetFullPath($path)
         if ([System.String]::Equals($fullPath, $cmakePath, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -413,7 +421,11 @@ function Request-Rebuild($path) {
 
         $script:PendingBuild = $true
         $script:LastChangeTime = Get-Date
-        Write-Host "[dev] code changed: $path"
+        if ($script:IsBuilding) {
+            Write-Host "[dev] code changed during build; queued another build: $path"
+        } else {
+            Write-Host "[dev] code changed: $path"
+        }
         return
     }
 
@@ -474,7 +486,8 @@ Write-Host "[dev] run copies: $RunRoot"
 Write-Host "[dev] build jobs: $Jobs"
 Write-Host "[dev] build config: $Config"
 Write-Host "[dev] auto reload block: $AutoReloadBlocked (toggle in game with F2)"
-Write-Host "[dev] code changes rebuild while the current game keeps running; successful builds restart the game copy."
+Write-Host "[dev] code changes rebuild while the current game keeps running."
+Write-Host "[dev] successful builds wait for F5 before applying the prepared game copy."
 Write-Host "[dev] data/assets runtime reload keeps the existing game window."
 
 try {
@@ -489,22 +502,45 @@ try {
         $canRunPendingBuild = -not $AutoReloadBlocked -or -not $hasRunningGame
         if ($canRunPendingBuild -and $PendingBuild -and ((Get-Date) - $LastChangeTime).TotalMilliseconds -ge 700) {
             $PendingBuild = $false
-            if (Invoke-GameBuild) {
-                $foregroundBeforeRestart = Get-ForegroundWindowHandle
-                $hadRunningGame = $hasRunningGame
-                $activateRestartedGame = -not $hadRunningGame -or (Test-GameIsForeground)
-                Stop-Game
-                Start-Game $activateRestartedGame $foregroundBeforeRestart
+            $hadRunningGame = $hasRunningGame
+            $buildSucceeded = Invoke-GameBuild
+            if ($buildSucceeded) {
+                if ($hadRunningGame) {
+                    if ($PendingBuild) {
+                        Write-Host "[dev] a newer code change is queued; waiting for its build before publishing."
+                    } elseif (Publish-BuildStatus "ready") {
+                        Write-Host "[dev] build ready. Press F5 in the game to apply it."
+                    }
+                } else {
+                    Clear-BuildStatus
+                    Start-Game
+                }
+            } elseif ($hadRunningGame -and -not $PendingBuild) {
+                if (Publish-BuildStatus "failed") {
+                    Write-Host "[dev] build failure published to the running game."
+                }
             }
         }
 
         if ($GameProcess -and $GameProcess.HasExited) {
             $exitCode = $GameProcess.ExitCode
             $GameProcess = $null
-            if ($exitCode -eq $RebuildRestartExitCode) {
-                Write-Host "[dev] F5 restart requested: rebuilding before restart..."
-                if (Invoke-GameBuild) {
-                    Start-Game $true
+            $restartRequestFound = Take-RestartRequest
+            Write-Host "[dev] game exited with code $exitCode (restart request: $restartRequestFound)."
+            if ($restartRequestFound -or $exitCode -eq $RebuildRestartExitCode) {
+                if (Test-BuildReady) {
+                    Write-Host "[dev] F5 apply requested: starting the prepared build..."
+                    Clear-BuildStatus
+                    Start-Game
+                } else {
+                    Write-Host "[dev] F5 restart requested without a prepared build: building before restart..."
+                    if (Invoke-GameBuild) {
+                        Clear-BuildStatus
+                        Start-Game
+                    } else {
+                        [void](Publish-BuildStatus "failed")
+                        [void](Restart-ExistingGameCopy)
+                    }
                 }
             }
         }
@@ -513,9 +549,14 @@ try {
     }
 }
 finally {
+    Clear-BuildStatus
+    Clear-RestartRequest
     Stop-Game
     Get-EventSubscriber | Where-Object { $_.SourceObject -is [System.IO.FileSystemWatcher] } | Unregister-Event
     foreach ($watcher in $watchers) {
         $watcher.Dispose()
+    }
+    if ($DevAutoReloadMutex) {
+        Exit-MajoShovelMutex $DevAutoReloadMutex
     }
 }

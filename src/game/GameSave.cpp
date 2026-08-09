@@ -1717,8 +1717,13 @@ bool Game::loadSaveData(const std::filesystem::path& path)
                 >> drop.position.y
                 >> drop.spawnedAtSeconds
                 >> drop.ageSeconds;
+            const bool parsedRequiredFields = !stream.fail();
+            int protectedFromLimitPruning = 0;
+            if (parsedRequiredFields && stream >> protectedFromLimitPruning) {
+                drop.protectedFromLimitPruning = protectedFromLimitPruning != 0;
+            }
             WorldDropKind kind = WorldDropKind::Object;
-            bool validDrop = !stream.fail() &&
+            bool validDrop = parsedRequiredFields &&
                 !stageId.empty() &&
                 worldDropKindFromSaveName(kindName, kind) &&
                 !drop.id.empty() &&
@@ -2282,6 +2287,7 @@ bool Game::loadSaveData(const std::filesystem::path& path)
             tileMap_.setTerrainEdit(edit.tile, edit.type);
         }
         worldDrops_.restoreDropsForSave(std::move(loadedDungeonState.worldDrops));
+        materializeExposedPlacementDrops(true);
         captureDungeonState();
         syncWarpStateForCurrentStage();
         restoredDungeonStateFromSave = true;
@@ -2708,7 +2714,8 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
                     << drop.position.x << " "
                     << drop.position.y << " "
                     << drop.spawnedAtSeconds << " "
-                    << drop.ageSeconds << "\n";
+                    << drop.ageSeconds << " "
+                    << drop.protectedFromLimitPruning << "\n";
             }
         }
     }
@@ -2836,7 +2843,7 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
         return false;
     }
 
-    message = "セーブしました";
+    message = "セーブしたよ";
     return true;
 }
 

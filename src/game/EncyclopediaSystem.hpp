@@ -59,9 +59,15 @@ enum class EffectRevealMode {
     DebugAll,
 };
 
+struct ObjectEffectDisplayLine {
+    // Keep the semantic key alongside the localized text so UI formatting does not parse labels as effect identity.
+    std::string effectKey;
+    std::string text;
+};
+
 struct ObjectEffectDisplaySections {
-    std::vector<std::string> useLines;
-    std::vector<std::string> ringLines;
+    std::vector<ObjectEffectDisplayLine> useLines;
+    std::vector<ObjectEffectDisplayLine> ringLines;
 };
 
 class EncyclopediaSystem {
@@ -94,7 +100,7 @@ public:
     EncyclopediaStage enemyStage(std::string_view enemyId) const;
     bool hasObjectEffect(std::string_view objectId, std::string_view effectKey) const;
     std::vector<std::string> objectEffects(std::string_view objectId) const;
-    ObjectEffectDisplaySections getObjectEffectDisplaySections(
+    [[nodiscard]] ObjectEffectDisplaySections buildObjectEffectDisplaySections(
         std::string_view objectId,
         const ObjectCatalog& catalog,
         EffectRevealMode ringRevealMode) const;

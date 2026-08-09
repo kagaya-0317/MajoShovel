@@ -436,6 +436,7 @@ struct Enemy {
     bool screenSleepAllowed = false;
     bool dungeonEventBoss = false;
     bool dungeonEventSleeping = false;
+    bool dungeonEventActivationLocked = false;
     int id = 0;
     std::string dungeonEventId;
     std::string enemyId;
