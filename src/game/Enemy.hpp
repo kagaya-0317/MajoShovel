@@ -417,6 +417,7 @@ struct EnemyHeldDrop {
     int quantity = 1;
     float deathDropChance = 0.0f;
     std::optional<ItemInstance> instance;
+    std::optional<ItemData> runtimeItem;
 };
 
 struct EnemyDeathRuntime {
@@ -427,6 +428,16 @@ struct EnemyDeathRuntime {
     float knockbackTimer = 0.0f;
     unsigned int shakeSeed = 0;
     bool suppressRewards = false;
+};
+
+struct EnemyFleeNavigationRuntime {
+    Vec2 waypoint{};
+    Vec2 heading{};
+    Vec2 failedDirection{};
+    float replanTimer = 0.0f;
+    float blockedSeconds = 0.0f;
+    float failedDirectionTimer = 0.0f;
+    bool waypointActive = false;
 };
 
 struct Enemy {
@@ -558,8 +569,9 @@ struct Enemy {
     bool stealItemEnabled = false;
     std::string stealTarget;
     float stealRadius = 0.0f;
-    float stealEscapeDistance = 0.0f;
+    float stealSeekRadius = 0.0f;
     int stealMaxCarry = 0;
+    EnemyFleeNavigationRuntime fleeNavigation;
     EnemyDeathRuntime death;
     float hitFlash = 0.0f;
     float hpBarTimer = 0.0f;

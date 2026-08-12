@@ -1,5 +1,7 @@
 ﻿#include "game/EnemyImageRenderer.hpp"
 
+#include "game/EnemyFacing.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -57,12 +59,7 @@ struct EnemySpriteSheetSpec {
     std::array<float, EnemySpriteMaxAnimationFrames> attackForwardOffsetsPx{};
 };
 
-enum class EnemySpriteDirection {
-    Down,
-    Left,
-    Right,
-    Up,
-};
+using EnemySpriteDirection = EnemyFacingDirection;
 
 enum class EnemySpriteMotion {
     Idle,
@@ -72,31 +69,17 @@ enum class EnemySpriteMotion {
 
 EnemySpriteDirection directionFromVector(Vec2 direction)
 {
-    if (std::abs(direction.x) > std::abs(direction.y)) {
-        return direction.x >= 0.0f ? EnemySpriteDirection::Right : EnemySpriteDirection::Left;
-    }
-    return direction.y >= 0.0f ? EnemySpriteDirection::Down : EnemySpriteDirection::Up;
+    return enemyFacingDirection(direction);
 }
 
 Vec2 vectorForDirection(EnemySpriteDirection direction)
 {
-    switch (direction) {
-    case EnemySpriteDirection::Down:
-        return {0.0f, 1.0f};
-    case EnemySpriteDirection::Left:
-        return {-1.0f, 0.0f};
-    case EnemySpriteDirection::Right:
-        return {1.0f, 0.0f};
-    case EnemySpriteDirection::Up:
-        return {0.0f, -1.0f};
-    }
-    return {0.0f, 1.0f};
+    return enemyFacingDirectionVector(direction);
 }
 
 EnemySpriteDirection directionFromFacing(float angle)
 {
-    const Vec2 facing{std::cos(angle), std::sin(angle)};
-    return directionFromVector(facing);
+    return enemyFacingDirection(angle);
 }
 
 EnemySpriteDirection directionForEnemy(const Enemy& enemy, const EnemyImageDrawOptions& options)

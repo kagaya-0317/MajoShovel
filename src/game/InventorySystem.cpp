@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -1228,16 +1229,68 @@ bool InventorySystem::canAddObjectItem(const ObjectCatalog& catalog, std::string
         return true;
     }
 
-    if (isStackableObject(*item)) {
-        const auto stackIt = std::find_if(objectStacks_.begin(), objectStacks_.end(), [item](const InventoryObjectStack& stack) {
+    const bool existingStack = std::any_of(
+        objectStacks_.begin(),
+        objectStacks_.end(),
+        [item](const InventoryObjectStack& stack) {
             return stack.objectId == item->id;
         });
-        if (stackIt != objectStacks_.end()) {
-            return true;
-        }
+    if (existingStack || isStackableObject(*item)) {
+        return canAddObjectStack(item->id);
     }
 
     return static_cast<int>(objectStacks_.size() + objectInstances_.size()) < ShortcutSlotCount;
+}
+
+bool InventorySystem::canAddObjectStack(std::string_view objectId, int count) const
+{
+    if (objectId.empty() || count <= 0) {
+        return false;
+    }
+    const auto existingStack = std::find_if(
+        objectStacks_.begin(),
+        objectStacks_.end(),
+        [objectId](const InventoryObjectStack& stack) {
+            return stack.objectId == objectId;
+        });
+    if (existingStack != objectStacks_.end()) {
+        return existingStack->count <= std::numeric_limits<int>::max() - count;
+    }
+    return static_cast<int>(objectStacks_.size() + objectInstances_.size()) < ShortcutSlotCount;
+}
+
+bool InventorySystem::addObjectStack(const ItemData& item, int count, InventoryAddResult* outResult)
+{
+    clearInventoryAddResult(outResult);
+    if (item.id.empty() || count <= 0) {
+        return false;
+    }
+    if (!canAddObjectStack(item.id, count)) {
+        status_ = "インベントリ満杯";
+        return false;
+    }
+
+    const auto stackIt = std::find_if(
+        objectStacks_.begin(),
+        objectStacks_.end(),
+        [&item](const InventoryObjectStack& stack) {
+            return stack.objectId == item.id;
+        });
+    if (stackIt != objectStacks_.end()) {
+        stackIt->count += count;
+        stackIt->item = item;
+        stackIt->objectId = item.id;
+        status_ = "Picked up: " + item.name;
+        setInventoryAddResult(outResult, InventoryAddKind::Stack, item.id, {}, count);
+        return true;
+    }
+
+    syncPackedItemSlots();
+    packedItemLayout_.insertEntry(static_cast<int>(objectStacks_.size()));
+    objectStacks_.push_back(InventoryObjectStack{item, count});
+    status_ = "Picked up: " + item.name;
+    setInventoryAddResult(outResult, InventoryAddKind::Stack, item.id, {}, count);
+    return true;
 }
 
 bool InventorySystem::addObjectItem(const ObjectCatalog& catalog, std::string_view objectId, InventoryAddResult* outResult)
@@ -1266,37 +1319,23 @@ bool InventorySystem::addObjectItem(const ObjectCatalog& catalog, std::string_vi
         return true;
     }
 
-    if (!isStackableObject(*item)) {
-        if (static_cast<int>(objectStacks_.size() + objectInstances_.size()) >= ShortcutSlotCount) {
-            status_ = "インベントリ満杯";
-            return false;
-        }
-        InventoryObjectInstance objectInstance = createObjectInstance(*item);
-        status_ = "Picked up: " + item->name;
-        setInventoryAddResult(outResult, InventoryAddKind::Instance, item->id, objectInstance.instance.instanceId);
-        return true;
-    }
-
-    for (InventoryObjectStack& stack : objectStacks_) {
-        if (stack.objectId == item->id) {
-            ++stack.count;
-            stack.item = *item;
-            status_ = "Picked up: " + item->name;
-            setInventoryAddResult(outResult, InventoryAddKind::Stack, item->id);
-            return true;
-        }
+    const bool existingStack = std::any_of(
+        objectStacks_.begin(),
+        objectStacks_.end(),
+        [item](const InventoryObjectStack& stack) {
+            return stack.objectId == item->id;
+        });
+    if (existingStack || isStackableObject(*item)) {
+        return addObjectStack(*item, 1, outResult);
     }
 
     if (static_cast<int>(objectStacks_.size() + objectInstances_.size()) >= ShortcutSlotCount) {
         status_ = "インベントリ満杯";
         return false;
     }
-
-    syncPackedItemSlots();
-    packedItemLayout_.insertEntry(static_cast<int>(objectStacks_.size()));
-    objectStacks_.push_back(InventoryObjectStack{*item, 1});
+    InventoryObjectInstance objectInstance = createObjectInstance(*item);
     status_ = "Picked up: " + item->name;
-    setInventoryAddResult(outResult, InventoryAddKind::Stack, item->id);
+    setInventoryAddResult(outResult, InventoryAddKind::Instance, item->id, objectInstance.instance.instanceId);
     return true;
 }
 
@@ -1315,38 +1354,23 @@ bool InventorySystem::addRuntimeObjectItem(const ItemData& item, InventoryAddRes
         return true;
     }
 
-    if (!isStackableObject(item)) {
-        if (static_cast<int>(objectStacks_.size() + objectInstances_.size()) >= ShortcutSlotCount) {
-            status_ = "インベントリ満杯";
-            return false;
-        }
-        InventoryObjectInstance objectInstance = createObjectInstance(item);
-        status_ = "Picked up: " + item.name;
-        setInventoryAddResult(outResult, InventoryAddKind::Instance, item.id, objectInstance.instance.instanceId);
-        return true;
-    }
-
-    for (InventoryObjectStack& stack : objectStacks_) {
-        if (stack.objectId == item.id) {
-            ++stack.count;
-            stack.item = item;
-            stack.objectId = item.id;
-            status_ = "Picked up: " + item.name;
-            setInventoryAddResult(outResult, InventoryAddKind::Stack, item.id);
-            return true;
-        }
+    const bool existingStack = std::any_of(
+        objectStacks_.begin(),
+        objectStacks_.end(),
+        [&item](const InventoryObjectStack& stack) {
+            return stack.objectId == item.id;
+        });
+    if (existingStack || isStackableObject(item)) {
+        return addObjectStack(item, 1, outResult);
     }
 
     if (static_cast<int>(objectStacks_.size() + objectInstances_.size()) >= ShortcutSlotCount) {
         status_ = "インベントリ満杯";
         return false;
     }
-
-    syncPackedItemSlots();
-    packedItemLayout_.insertEntry(static_cast<int>(objectStacks_.size()));
-    objectStacks_.push_back(InventoryObjectStack{item, 1});
+    InventoryObjectInstance objectInstance = createObjectInstance(item);
     status_ = "Picked up: " + item.name;
-    setInventoryAddResult(outResult, InventoryAddKind::Stack, item.id);
+    setInventoryAddResult(outResult, InventoryAddKind::Instance, item.id, objectInstance.instance.instanceId);
     return true;
 }
 
@@ -1547,6 +1571,7 @@ void InventorySystem::drawDiscardConfirmDialog(Renderer& renderer, const ObjectC
     }
 
     const UiRect panel = inventoryDiscardConfirmRect();
+    UiModalNavigationScope navigationScope(panel);
     drawUiModalBackdrop(renderer, inventoryModalBackdropRect(), {0, 0, 0, 96});
     UiWindowScope window(
         renderer,
@@ -2483,15 +2508,16 @@ bool InventorySystem::addShortcutSelectionToRing(SpellRingSystem& spellRing, Spe
     return addScreenItemToRing(selectedShortcutIndex(), spellRing, std::nullopt, outResult);
 }
 
-void InventorySystem::toggleSelectedProtection()
+bool InventorySystem::toggleSelectedProtection()
 {
     InventoryObjectInstance* selected = selectedObjectInstance();
     if (selected == nullptr) {
         status_ = "個体アイテムのみ保護できます";
-        return;
+        return false;
     }
     selected->instance.protectionEnabled = !selected->instance.protectionEnabled;
     status_ = selected->instance.protectionEnabled ? "保護ON" : "保護OFF";
+    return true;
 }
 
 void InventorySystem::queueRingEquipFx(Vec2 sourceScreen, const SpellRingAddResult& result)
@@ -2518,36 +2544,33 @@ void InventorySystem::updateShortcuts(
     std::vector<EffectDiscoveryEvent>* discoveryEvents,
     const EncyclopediaSystem* encyclopedia)
 {
-    int hoveredSlotIndex = -1;
-    if (!ui.pointerConsumed()) {
-        for (int column = 0; column < ShortcutColumns; ++column) {
-            const UiRect rect = shortcutHudSlotRect(column, screenWidth, screenHeight);
-            if (ui.pointerInside(rect)) {
-                hoveredSlotIndex = shortcutRow_ * ShortcutColumns + column;
-                break;
-            }
+    int pressedSlotIndex = -1;
+    for (int column = 0; column < ShortcutColumns; ++column) {
+        const UiRect rect = shortcutHudSlotRect(column, screenWidth, screenHeight);
+        if (ui.pressed(rect) && !ui.navigationActive()) {
+            pressedSlotIndex = shortcutRow_ * ShortcutColumns + column;
         }
     }
 
-    if (hoveredSlotIndex >= 0 && input.mouseLeftPressed() && !ui.pointerConsumed()) {
+    if (pressedSlotIndex >= 0) {
         const int previousShortcutIndex = selectedShortcutIndex();
-        const bool activateSelectedSlot = hoveredSlotIndex == previousShortcutIndex;
-        selectShortcutIndex(hoveredSlotIndex);
+        const bool activateSelectedSlot = pressedSlotIndex == previousShortcutIndex;
+        selectShortcutIndex(pressedSlotIndex);
         ui.emitCursorMoveIfChanged(previousShortcutIndex, selectedShortcutIndex());
         if (activateSelectedSlot) {
-            const InventoryObjectStack* objectStack = objectStackAtScreenIndex(hoveredSlotIndex);
-            const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(hoveredSlotIndex);
+            const InventoryObjectStack* objectStack = objectStackAtScreenIndex(pressedSlotIndex);
+            const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(pressedSlotIndex);
             const ItemData* item = objectStack != nullptr
                 ? &objectStack->item
                 : (objectInstance != nullptr ? &objectInstance->item : nullptr);
             if (item != nullptr && isStaffObject(*item)) {
                 const bool wasEquipped = objectInstance != nullptr && isStaffEquipped(objectInstance->instance.instanceId);
-                const bool changed = toggleStaffEquipmentScreenItem(hoveredSlotIndex, spellRing);
-                ui.emitSound(changed ? (wasEquipped ? UiSoundEvent::Confirm : UiSoundEvent::Equip) : UiSoundEvent::Cancel);
+                const bool changed = toggleStaffEquipmentScreenItem(pressedSlotIndex, spellRing);
+                ui.emitActionResult(changed, wasEquipped ? UiSoundEvent::Confirm : UiSoundEvent::Equip);
             } else {
-                ui.emitSound(useShortcutSelection(player, spellRing, effectDispatcher, magic, discoveryEvents, encyclopedia)
-                    ? UiSoundEvent::ItemUse
-                    : UiSoundEvent::Cancel);
+                ui.emitActionResult(
+                    useShortcutSelection(player, spellRing, effectDispatcher, magic, discoveryEvents, encyclopedia),
+                    UiSoundEvent::ItemUse);
             }
         }
         ui.consumePointer();
@@ -2566,9 +2589,9 @@ void InventorySystem::updateShortcuts(
     ui.emitCursorMoveIfChanged(previousShortcutIndex, selectedShortcutIndex());
 
     if (input.useItemPressed()) {
-        ui.emitSound(useShortcutSelection(player, spellRing, effectDispatcher, magic, discoveryEvents, encyclopedia)
-            ? UiSoundEvent::ItemUse
-            : UiSoundEvent::Cancel);
+        ui.emitActionResult(
+            useShortcutSelection(player, spellRing, effectDispatcher, magic, discoveryEvents, encyclopedia),
+            UiSoundEvent::ItemUse);
     }
     if (input.addRingPressed()) {
         SpellRingAddResult result{};
@@ -2576,12 +2599,11 @@ void InventorySystem::updateShortcuts(
             ui.emitSound(UiSoundEvent::Equip);
             queueRingEquipFx(shortcutHudSlotCenter(selectedShortcutColumn_, screenWidth, screenHeight), result);
         } else {
-            ui.emitSound(UiSoundEvent::Cancel);
+            ui.rejectAction();
         }
     }
     if (input.pressed(InputAction::ToggleProtection)) {
-        ui.emitSound(selectedObjectInstance() != nullptr ? UiSoundEvent::Confirm : UiSoundEvent::Cancel);
-        toggleSelectedProtection();
+        ui.emitActionResult(toggleSelectedProtection());
     }
 }
 
@@ -2608,7 +2630,7 @@ void InventorySystem::updateScreen(
         const UiRect confirmPanel = inventoryDiscardConfirmRect();
         const UiConfirmDialogResult result = updateUiConfirmDialog(discardConfirm_, ui, input, confirmPanel);
         if (result == UiConfirmDialogResult::Confirmed) {
-            discardScreenItem(discardConfirmSlotIndex_, false);
+            ui.emitActionResult(discardScreenItem(discardConfirmSlotIndex_, false), UiSoundEvent::ItemUse);
             discardConfirmSlotIndex_ = -1;
         } else if (result == UiConfirmDialogResult::Cancelled) {
             discardConfirmSlotIndex_ = -1;
@@ -2640,7 +2662,7 @@ void InventorySystem::updateScreen(
                 ringTargetCount)) {
             ui.emitSound(UiSoundEvent::Equip);
         } else {
-            ui.emitSound(UiSoundEvent::Cancel);
+            ui.rejectAction();
         }
         closeRingTargetCommandMenu();
         slotCommandMenuIndex_ = -1;
@@ -2680,12 +2702,14 @@ void InventorySystem::updateScreen(
         if (action == SlotCommandAction::Use) {
             if (itemInteraction_.grabActive()) {
                 status_ = "つかみ中は使用できないよ";
-            } else {
-                useShortcutSelection(player, spellRing, effectDispatcher, magic, discoveryEvents, encyclopedia);
+                ui.rejectAction();
+            } else if (!useShortcutSelection(player, spellRing, effectDispatcher, magic, discoveryEvents, encyclopedia)) {
+                ui.rejectAction();
             }
         } else if (action == SlotCommandAction::AddToRing) {
             if (itemInteraction_.grabActive()) {
                 status_ = "つかみ中はリング移動できないよ";
+                ui.rejectAction();
             } else if (ringTargetCount > 1) {
                 const Vec2 submenuAnchor{
                     slotCommandMenu_.panel.pos.x + slotCommandMenu_.panel.size.x,
@@ -2693,32 +2717,35 @@ void InventorySystem::updateScreen(
                 };
                 openRingTargetCommandMenu(slotCommandMenuIndex_, submenuAnchor, spellRing, ringTargetCount);
             } else {
-                ui.emitSound(addScreenItemToRingForRing(slotCommandMenuIndex_, spellRing, 0, ringTargetCount)
-                    ? UiSoundEvent::Equip
-                    : UiSoundEvent::Cancel);
+                ui.emitActionResult(
+                    addScreenItemToRingForRing(slotCommandMenuIndex_, spellRing, 0, ringTargetCount),
+                    UiSoundEvent::Equip);
             }
         } else if (action == SlotCommandAction::ToggleStaffEquipment) {
             if (itemInteraction_.grabActive()) {
                 status_ = "つかみ中は装備変更できないよ";
+                ui.rejectAction();
             } else {
                 const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(slotCommandMenuIndex_);
                 const bool wasEquipped = objectInstance != nullptr && isStaffEquipped(objectInstance->instance.instanceId);
                 const bool changed = toggleStaffEquipmentScreenItem(slotCommandMenuIndex_, spellRing);
-                ui.emitSound(changed ? (wasEquipped ? UiSoundEvent::Confirm : UiSoundEvent::Equip) : UiSoundEvent::Cancel);
+                ui.emitActionResult(changed, wasEquipped ? UiSoundEvent::Confirm : UiSoundEvent::Equip);
             }
         } else if (action == SlotCommandAction::ToggleProtection) {
             if (itemInteraction_.grabActive()) {
                 status_ = "つかみ中は保護変更できないよ";
-            } else {
-                toggleSelectedProtection();
+                ui.rejectAction();
+            } else if (!toggleSelectedProtection()) {
+                ui.rejectAction();
             }
         } else if (action == SlotCommandAction::Discard) {
             if (itemInteraction_.grabActive()) {
                 status_ = "つかみ中は捨てられないよ";
+                ui.rejectAction();
             } else if (!itemDiscardEnabled) {
                 openDiscardConfirmDialog(slotCommandMenuIndex_);
-            } else {
-                discardScreenItem(slotCommandMenuIndex_, itemDiscardEnabled);
+            } else if (!discardScreenItem(slotCommandMenuIndex_, itemDiscardEnabled)) {
+                ui.rejectAction();
             }
         }
         if (!ringTargetCommandMenu_.open) {
@@ -2763,7 +2790,7 @@ void InventorySystem::updateScreen(
     }
 
     if (input.arrangeItemsPressed() || ui.pressed(inventorySortButtonRect())) {
-        ui.emitSound(sortByItemOrder(catalog) ? UiSoundEvent::ItemMove : UiSoundEvent::Cancel);
+        ui.emitActionResult(sortByItemOrder(catalog), UiSoundEvent::ItemMove);
         ui.block(inventoryScreenRect());
         return;
     }
@@ -2827,7 +2854,7 @@ void InventorySystem::updateScreen(
         if (interaction.item.valid()) {
             openSlotCommandMenu(interaction.slotIndex, itemUseEnabled, itemDiscardEnabled);
         } else {
-            ui.emitSound(UiSoundEvent::Cancel);
+            ui.rejectAction();
         }
         break;
     case ItemGridInteractionEvent::GrabStarted:
@@ -2850,7 +2877,7 @@ void InventorySystem::updateScreen(
                 : "配置";
             ui.emitSound(UiSoundEvent::ItemMove);
         } else {
-            ui.emitSound(UiSoundEvent::Cancel);
+            ui.rejectAction();
             status_ = "配置できないよ";
         }
         break;
@@ -2858,24 +2885,26 @@ void InventorySystem::updateScreen(
     case ItemGridInteractionEvent::ProtectionRequested:
         if (!interaction.item.valid() || interaction.item.stack) {
             status_ = "個体アイテムのみ保護できます";
-            ui.emitSound(UiSoundEvent::Cancel);
+            ui.rejectAction();
         } else {
             const bool protectedNow =
                 objectInstanceProtectionEnabled(interaction.item.stableId).value_or(false);
-            ui.emitSound(setObjectInstanceProtection(
+            ui.emitActionResult(setObjectInstanceProtection(
                 interaction.item.stableId,
-                !protectedNow)
-                    ? UiSoundEvent::Confirm
-                    : UiSoundEvent::Cancel);
+                !protectedNow));
         }
         break;
     case ItemGridInteractionEvent::ProtectionBlocked:
         status_ = "つかみ中は保護変更できないよ";
-        ui.emitSound(UiSoundEvent::Cancel);
+        ui.rejectAction();
         break;
     case ItemGridInteractionEvent::GrabCancelled:
-        status_ = "アイテム未選択";
-        ui.emitSound(UiSoundEvent::Cancel);
+        status_ = interaction.item.valid() ? "配置をキャンセルしたよ" : "アイテム未選択";
+        if (interaction.item.valid()) {
+            ui.emitSound(UiSoundEvent::Cancel);
+        } else {
+            ui.rejectAction();
+        }
         break;
     }
     if (interaction.consumed) {
@@ -2885,7 +2914,7 @@ void InventorySystem::updateScreen(
 
     if (input.addRingPressed()) {
         if (itemInteraction_.grabActive()) {
-            ui.emitSound(UiSoundEvent::Cancel);
+            ui.rejectAction();
             status_ = "つかみ中は配置してください";
         } else if (ringTargetCount > 1 && hasScreenItem(selectedShortcutIndex())) {
             const UiRect slotRect = inventorySlotRect(selectedShortcutIndex());
@@ -2897,11 +2926,11 @@ void InventorySystem::updateScreen(
             ui.block(inventoryScreenRect());
             return;
         } else {
-            ui.emitSound(addScreenItemToRingForRing(
+            ui.emitActionResult(addScreenItemToRingForRing(
                 selectedShortcutIndex(),
                 spellRing,
                 0,
-                ringTargetCount) ? UiSoundEvent::Equip : UiSoundEvent::Cancel);
+                ringTargetCount), UiSoundEvent::Equip);
         }
     }
     ui.block(inventoryScreenRect());
@@ -3002,7 +3031,10 @@ void InventorySystem::render(
             itemInteraction_,
             itemKeyAtScreenIndex(i),
             GrabbedSlotContentAlpha);
-        drawInventoryUiSlot(renderer, rect, entryViewForSlot(i), style);
+        const InventoryUiEntryView entry = entryViewForSlot(i);
+        applyInventoryUiPowerBadgeDiscovery(style, encyclopedia);
+        applyInventoryUiStackCount(style, entry);
+        drawInventoryUiSlot(renderer, rect, entry, style);
     }
 
     const int grabbedOrigin = itemInteraction_.grabbedOriginPlacement();
@@ -3086,7 +3118,12 @@ UiRect InventorySystem::shortcutHudPanelRect(int screenWidth, int screenHeight) 
     return makeShortcutHudPanelRect(screenWidth, screenHeight);
 }
 
-void InventorySystem::renderShortcutHud(Renderer& renderer, const SpellRingSystem& spellRing, int screenWidth, int screenHeight) const
+void InventorySystem::renderShortcutHud(
+    Renderer& renderer,
+    const SpellRingSystem& spellRing,
+    const EncyclopediaSystem& encyclopedia,
+    int screenWidth,
+    int screenHeight) const
 {
     renderer.setScreenSpace();
 
@@ -3152,12 +3189,11 @@ void InventorySystem::renderShortcutHud(Renderer& renderer, const SpellRingSyste
         const UiRect slotRect = shortcutHudSlotRect(column, screenWidth, screenHeight);
         const InventoryUiEntryView entry = entryViewForSlot(slotIndex);
         InventoryUiSlotStyle style{selected && !drewFrame, false, shortcutHudIconMaxSize(hudPanel)};
+        style.showPersistentSelection = true;
         style.showFrame = !drewFrame;
         style.registerNavigationTarget = false;
-        if (entry.item != nullptr && entry.instance == nullptr && entry.stackCount > 1) {
-            style.showTopRightCount = true;
-            style.topRightCount = entry.stackCount;
-        }
+        applyInventoryUiPowerBadgeDiscovery(style, encyclopedia);
+        applyInventoryUiStackCount(style, entry);
         drawInventoryUiSlot(renderer, slotRect, entry, style);
     }
 

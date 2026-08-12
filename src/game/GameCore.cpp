@@ -51,6 +51,7 @@ constexpr std::string_view AudioSeExplosionTick = "se.explosion.tick";
 constexpr std::string_view AudioSeDiscovery = "se.discovery";
 constexpr std::string_view AudioSeMoneySpawn = "se.money.spawn";
 constexpr std::string_view AudioSeMoneyArrive = "se.money.arrive";
+constexpr std::string_view AudioSeEffectDiscovery = "se.discovery.effect";
 constexpr std::string_view AudioSeMonsterDiscovery = "se.discovery.monster";
 constexpr std::string_view AudioSeUiConfirm = "se.ui.confirm";
 constexpr std::string_view AudioSeUiCancel = "se.ui.cancel";
@@ -290,13 +291,26 @@ std::string enemyStealLogLabel(const EnemyEvent& event, const ObjectCatalog& obj
     }
     if (!event.objectDropId.empty()) {
         const ObjectDefinition* object = objectCatalog.registry.findById(event.objectDropId);
-        const std::string name = object != nullptr && !object->name.empty()
-            ? object->name
-            : event.objectDropId;
+        const ItemData* item = event.objectDropRuntimeItem ? &*event.objectDropRuntimeItem : object;
+        const std::string name = item != nullptr && !item->name.empty() ? item->name : event.objectDropId;
         const std::string icon = object != nullptr ? inlineItemTag(event.objectDropId) : "";
         return icon + name;
     }
     return {};
+}
+
+DamagePopupStyle enemyDamagePopupStyle(const EnemyEvent& event)
+{
+    if (event.frontGuarded) {
+        return DamagePopupStyle::Guard;
+    }
+    if (event.weakPointHit) {
+        return DamagePopupStyle::WeakPoint;
+    }
+    if (event.critical) {
+        return DamagePopupStyle::Critical;
+    }
+    return DamagePopupStyle::Enemy;
 }
 
 bool readTextFile(const std::filesystem::path& path, std::string& outText, std::string& outError)
@@ -1424,8 +1438,8 @@ void Game::resetWorldUiState()
     baseStorageDepositSelection_ = 0;
     baseStorageWithdrawSelection_ = 0;
     baseStorageWarehousePage_ = 0;
-    baseStorageQuantityDialog_ = {};
-    baseStorageQuantityPending_ = {};
+    baseQuantityDialog_ = {};
+    baseQuantityPending_ = {};
     baseSellActive_ = false;
     baseMerchantMode_ = MerchantUiMode::Closed;
     baseMerchantActionSelection_ = 0;
@@ -1943,8 +1957,8 @@ void Game::enterBase()
     baseStorageDepositSelection_ = 0;
     baseStorageWithdrawSelection_ = 0;
     baseStorageWarehousePage_ = 0;
-    baseStorageQuantityDialog_ = {};
-    baseStorageQuantityPending_ = {};
+    baseQuantityDialog_ = {};
+    baseQuantityPending_ = {};
     baseSellActive_ = false;
     baseMerchantMode_ = MerchantUiMode::Closed;
     baseMerchantSellSource_ = 0;
@@ -4122,7 +4136,7 @@ void Game::updateScreenMode(
         return;
     }
 
-    if (debugNamedSaveInputActive_ || debugNamedLoadActive_) {
+    if (debugNamedSaveDialogMode_ != DebugNamedSaveDialogMode::Closed) {
         updateDebugNamedSaveUi(input, ui);
         return;
     }
@@ -4311,24 +4325,32 @@ void Game::updateScreenMode(
             if (dungeonMapOverlayScrollbarDragAxis_ != 0 && input.mouseLeftHeld()) {
                 if (dungeonMapOverlayScrollbarDragAxis_ == 1 && maxScroll.y > 0.0f) {
                     const UiRect track = dungeonMapOverlayVerticalScrollTrackRect();
+                    (void)ui.selectionFocused(track);
                     const UiRect thumb = dungeonMapOverlayVerticalScrollThumbRect();
                     const float movable = std::max(1.0f, track.size.y - thumb.size.y);
                     const float thumbY = std::clamp(ui.mouse().y - dungeonMapOverlayScrollbarDragOffset_, track.pos.y, track.pos.y + movable);
                     dungeonMapOverlayScroll_.y = ((thumbY - track.pos.y) / movable) * maxScroll.y;
                 } else if (dungeonMapOverlayScrollbarDragAxis_ == 2 && maxScroll.x > 0.0f) {
                     const UiRect track = dungeonMapOverlayHorizontalScrollTrackRect();
+                    (void)ui.selectionFocused(track);
                     const UiRect thumb = dungeonMapOverlayHorizontalScrollThumbRect();
                     const float movable = std::max(1.0f, track.size.x - thumb.size.x);
                     const float thumbX = std::clamp(ui.mouse().x - dungeonMapOverlayScrollbarDragOffset_, track.pos.x, track.pos.x + movable);
                     dungeonMapOverlayScroll_.x = ((thumbX - track.pos.x) / movable) * maxScroll.x;
                 }
                 ui.consumePointer();
-            } else if (input.mouseLeftPressed() && !ui.pointerConsumed()) {
+            } else {
                 const UiRect verticalTrack = dungeonMapOverlayVerticalScrollTrackRect();
                 const UiRect verticalThumb = dungeonMapOverlayVerticalScrollThumbRect();
                 const UiRect horizontalTrack = dungeonMapOverlayHorizontalScrollTrackRect();
                 const UiRect horizontalThumb = dungeonMapOverlayHorizontalScrollThumbRect();
-                if (maxScroll.y > 0.0f && verticalTrack.contains(ui.mouse())) {
+                const bool verticalPressed = maxScroll.y > 0.0f &&
+                    ui.pressed(verticalTrack) &&
+                    !ui.navigationActive();
+                const bool horizontalPressed = maxScroll.x > 0.0f &&
+                    ui.pressed(horizontalTrack) &&
+                    !ui.navigationActive();
+                if (verticalPressed) {
                     dungeonMapOverlayScrollbarDragAxis_ = 1;
                     dungeonMapOverlayScrollbarDragOffset_ = verticalThumb.contains(ui.mouse())
                         ? ui.mouse().y - verticalThumb.pos.y
@@ -4337,7 +4359,7 @@ void Game::updateScreenMode(
                     const float thumbY = std::clamp(ui.mouse().y - dungeonMapOverlayScrollbarDragOffset_, verticalTrack.pos.y, verticalTrack.pos.y + movable);
                     dungeonMapOverlayScroll_.y = ((thumbY - verticalTrack.pos.y) / movable) * maxScroll.y;
                     ui.consumePointer();
-                } else if (maxScroll.x > 0.0f && horizontalTrack.contains(ui.mouse())) {
+                } else if (horizontalPressed) {
                     dungeonMapOverlayScrollbarDragAxis_ = 2;
                     dungeonMapOverlayScrollbarDragOffset_ = horizontalThumb.contains(ui.mouse())
                         ? ui.mouse().x - horizontalThumb.pos.x
@@ -4407,9 +4429,7 @@ void Game::updateScreenMode(
             return;
         }
         if (input.shortcutSlotPressed() >= 0 && input.shortcutSlotPressed() < RingPresetSlotCount) {
-            ui.emitSound(applyRingPresetShortcut(input.shortcutSlotPressed())
-                ? UiSoundEvent::Confirm
-                : UiSoundEvent::Cancel);
+            ui.emitActionResult(applyRingPresetShortcut(input.shortcutSlotPressed()));
             return;
         }
         if (input.activeRingDelta() != 0) {
@@ -4773,7 +4793,30 @@ void Game::update(const Input& input, const Time& time, Renderer& renderer)
 
     checkHotReload(time.deltaSeconds());
     reloadNoticeTimer_ = std::max(0.0f, reloadNoticeTimer_ - time.deltaSeconds());
-    encyclopedia_.update(time.deltaSeconds());
+    const bool discoveryPopupStartAllowed =
+        mode_ == ScreenMode::Playing &&
+        player_.hp > 0 &&
+        !playerDeathSequenceActive() &&
+        !levels_.isChoosing() &&
+        !gameProgressPaused() &&
+        !dungeonEventUiSuppressed() &&
+        !dungeonMapOverlayOpen_ &&
+        !screenTransition_.active() &&
+        !worldBuildActive() &&
+        !debugPaused_;
+    if (const std::optional<EncyclopediaPopupStartedEvent> popupStarted =
+            encyclopedia_.update(time.deltaSeconds(), discoveryPopupStartAllowed)) {
+        switch (popupStarted->cue) {
+        case EncyclopediaPopupCue::EffectDiscovery:
+            playAudioSe(AudioSeEffectDiscovery);
+            break;
+        case EncyclopediaPopupCue::MonsterDiscovery:
+            playAudioSeAt(AudioSeMonsterDiscovery, popupStarted->position);
+            break;
+        case EncyclopediaPopupCue::None:
+            break;
+        }
+    }
     updateDungeonLogs(time.deltaSeconds());
     handleRingItemAddedEvents();
 
@@ -5227,6 +5270,9 @@ void Game::update(const Input& input, const Time& time, Renderer& renderer)
                 [this](int amount, Vec2 origin) {
                     return grantDungeonMoney(amount, origin);
                 },
+                [this](int amount, Vec2 origin) {
+                    return takeDungeonMoney(amount, origin);
+                },
                 witchSelfLightCenter(player_.position),
                 std::vector<LightSource>{},
                 effectDispatcher_,
@@ -5421,10 +5467,8 @@ void Game::update(const Input& input, const Time& time, Renderer& renderer)
                 effects_.spawnTileBreak(event.position, event.terrainTileType, event.terrainColor);
             } else if (event.type == EnemyEventType::Inspected) {
                 const auto enemyIt = enemyCatalog_.enemiesById.find(event.enemyId);
-                if (gameplayRewardsEnabled() &&
-                    enemyIt != enemyCatalog_.enemiesById.end() &&
-                    encyclopedia_.noteEnemyInspected(enemyIt->second, event.position)) {
-                    playAudioSeAt(AudioSeMonsterDiscovery, event.position);
+                if (gameplayRewardsEnabled() && enemyIt != enemyCatalog_.enemiesById.end()) {
+                    encyclopedia_.noteEnemyInspected(enemyIt->second, event.position);
                 }
             } else if (event.type == EnemyEventType::BossResolved) {
                 handleDungeonEventEnemyEvent(event);
@@ -5572,7 +5616,9 @@ void Game::update(const Input& input, const Time& time, Renderer& renderer)
                             *event.objectDropInstance,
                             safeLootLandingPosition(event.position, rng),
                             runStats_.elapsedSeconds,
-                            makeWorldLootJumpMotion(event.position, rng));
+                            makeWorldLootJumpMotion(event.position, rng),
+                            false,
+                            event.objectDropRuntimeItem ? &*event.objectDropRuntimeItem : nullptr);
                     } else {
                         for (int i = 0; i < dropCount; ++i) {
                             worldDrops_.spawnObjectDrop(
@@ -5593,7 +5639,9 @@ void Game::update(const Input& input, const Time& time, Renderer& renderer)
                         *event.objectDropInstance,
                         safeLootLandingPosition(event.position, rng),
                         runStats_.elapsedSeconds,
-                        makeWorldLootJumpMotion(event.position, rng));
+                        makeWorldLootJumpMotion(event.position, rng),
+                        false,
+                        event.objectDropRuntimeItem ? &*event.objectDropRuntimeItem : nullptr);
                 }
             } else if (event.type == EnemyEventType::CapturedExplosion) {
                 continue;
@@ -5603,9 +5651,7 @@ void Game::update(const Input& input, const Time& time, Renderer& renderer)
                     effects_.spawnDamagePopup(
                         event.position,
                         event.damageAmount,
-                        event.weakPointHit
-                            ? DamagePopupStyle::WeakPoint
-                            : (event.critical ? DamagePopupStyle::Critical : DamagePopupStyle::Enemy));
+                        enemyDamagePopupStyle(event));
                 }
             } else if (event.damageAmount >= 0) {
                 effects_.spawnDamagePopup(event.position, event.damageAmount, DamagePopupStyle::Enemy);

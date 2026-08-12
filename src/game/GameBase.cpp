@@ -23,10 +23,11 @@ namespace majo {
 namespace {
 
 constexpr std::string_view AudioSeNewItemJingle = "se.item.new.jingle";
-constexpr std::string_view AudioSeEffectDiscovery = "se.discovery.effect";
 constexpr std::string_view AudioSeForgeUpgrade = "se.facility.forge_upgrade";
 constexpr std::string_view AudioSeWorkbenchUpgrade = "se.facility.workbench_upgrade";
 constexpr std::string_view AudioSeWorkbenchRepair = "se.facility.workbench_repair";
+constexpr std::string_view AudioSeRingWorkshopUpgrade = "se.facility.ring_workshop_upgrade";
+constexpr std::string_view AudioSeRingWorkshopRespec = "se.facility.ring_workshop_respec";
 constexpr std::string_view AudioSeMerchantTransaction = "se.merchant.transaction";
 constexpr std::string_view AudioSeDiarySave = "se.facility.diary_save";
 constexpr std::string_view BaseFacilityWindowHelpText = "↑/↓ 選択  F/Enter 決定  Esc 戻る";
@@ -1289,7 +1290,6 @@ constexpr float MerchantSellGridY = 230.0f;
 constexpr float ProcessingGridY = 230.0f;
 constexpr float StorageTransferGridY = 254.0f;
 constexpr float StorageWithdrawGridY = 190.0f;
-constexpr float StorageWithdrawSortButtonGap = 22.0f;
 constexpr float StorageWithdrawBatchModeButtonWidth = 220.0f;
 constexpr float BaseRingPreviewScale = 0.9f;
 constexpr float BaseProcessingRingYOffset = 64.0f;
@@ -2051,14 +2051,20 @@ int storageDepositSourceTabIndex(int source)
     return 0;
 }
 
-UiRect storageDepositSourceRect(int tabIndex)
+UiRect storageDepositSourceRect(int tabIndex, int tabCount)
 {
-    constexpr float StorageDepositSourceTabWidth = 180.0f;
-    constexpr float StorageDepositSourceTabPitch = 194.0f;
-    UiRect rect = merchantSellSourceRect(tabIndex);
-    rect.pos.x = storageItemCircleLeftX() + static_cast<float>(tabIndex) * StorageDepositSourceTabPitch;
+    const int count = std::clamp(tabCount, 1, StorageDepositSourceCount);
+    const UiRect firstSlot = storageTransferGridSlotRect(0);
+    const UiRect lastSlot = storageTransferGridSlotRect(StorageColumns - 1);
+    const float left = firstSlot.pos.x;
+    const float right = lastSlot.pos.x + lastSlot.size.x;
+    const float totalGap = BaseItemSourceTabInnerGap * static_cast<float>(count - 1);
+    const float tabWidth = (right - left - totalGap) / static_cast<float>(count);
+
+    UiRect rect = merchantSellSourceRect(tabIndex, count);
+    rect.pos.x = left + static_cast<float>(tabIndex) * (tabWidth + BaseItemSourceTabInnerGap);
     rect.pos.y += StorageTransferLayoutYOffset;
-    rect.size.x = StorageDepositSourceTabWidth;
+    rect.size.x = tabWidth;
     return rect;
 }
 
@@ -2067,9 +2073,14 @@ Vec2 storageTransferCountTextPos()
     return {storageItemCircleLeftX(), 116.0f + StorageTransferLayoutYOffset};
 }
 
-UiRect storageQuantityDialogRect()
+UiRect baseQuantityDialogRect(Vec2 screenSize)
 {
-    return uiEnsureDecoratedWindowMinSize({{430.0f, 130.0f}, {420.0f, 396.0f}});
+    UiRect panel = uiEnsureDecoratedWindowMinSize({{}, {420.0f, 336.0f}});
+    panel.pos = {
+        (screenSize.x - panel.size.x) * 0.5f,
+        (screenSize.y - panel.size.y) * 0.5f,
+    };
+    return panel;
 }
 
 UiRect storageTransferSortButtonRect()
@@ -2089,10 +2100,7 @@ Vec2 storageWithdrawCountTextPos()
 
 UiRect storageWithdrawSortButtonRect()
 {
-    UiRect rect = storageTransferSortButtonRect();
-    const UiRect lastSlot = storageWithdrawSlotRect(StorageWithdrawSlotCount - 1);
-    rect.pos.y = lastSlot.pos.y + lastSlot.size.y + StorageWithdrawSortButtonGap;
-    return rect;
+    return storageTransferSortButtonRect();
 }
 
 UiRect smallActionDialogRect(int choiceCount = 2)
@@ -2140,9 +2148,12 @@ UiRect storageActionDialogRect()
     return smallActionDialogRect(3);
 }
 
-UiRect storageBulkDialogRect()
+UiRect storageBulkDialogRect(int actionCount)
 {
-    return smallActionDialogRect(4);
+    UiRect rect = smallActionDialogRect(actionCount);
+    const UiRect screen = baseMapBounds();
+    rect.pos.y = screen.pos.y + (screen.size.y - rect.size.y) * 0.5f;
+    return rect;
 }
 
 UiRect storageActionChoiceRect(int index)
@@ -2150,9 +2161,9 @@ UiRect storageActionChoiceRect(int index)
     return smallActionChoiceRectForDialog(storageActionDialogRect(), index);
 }
 
-UiRect storageBulkChoiceRect(int index)
+UiRect storageBulkChoiceRect(UiRect dialog, int index)
 {
-    return smallActionChoiceRectForDialog(storageBulkDialogRect(), index);
+    return smallActionChoiceRectForDialog(dialog, index);
 }
 
 std::string formatDiaryPlayTime(std::int64_t seconds)
@@ -2366,6 +2377,7 @@ InventoryUiGridStyle bookshelfGridStyle()
 {
     InventoryUiGridStyle style;
     style.visibleRows = 5;
+    style.showPowerBadges = false;
     style.scroll.wheelStep = style.slotSize.y + style.slotGap.y;
     style.scroll.scrollbarPaddingX = 2.0f;
     style.scroll.scrollbarPaddingY = 0.0f;
@@ -2459,6 +2471,58 @@ constexpr float RingWorkshopScrollButtonPitch = 46.0f;
 constexpr float RingWorkshopScrollBottomPadding = 12.0f;
 constexpr float RingWorkshopScrollButtonInsetX = 14.0f;
 constexpr float RingWorkshopScrollButtonWidth = 338.0f;
+constexpr float RingWorkshopRadiusSliderStepMeters = 0.01f;
+
+UiSliderState& ringWorkshopRadiusSliderState()
+{
+    static UiSliderState state;
+    return state;
+}
+
+UiConfirmDialogState& ringWorkshopRespecConfirmState()
+{
+    static UiConfirmDialogState state;
+    return state;
+}
+
+UiSliderSpec ringWorkshopRadiusSliderSpec(float minMeters, float maxMeters)
+{
+    UiSliderSpec spec;
+    spec.minValue = minMeters;
+    spec.maxValue = maxMeters > minMeters + 0.001f
+        ? maxMeters
+        : minMeters + RingWorkshopRadiusSliderStepMeters;
+    spec.step = RingWorkshopRadiusSliderStepMeters;
+    spec.valueDecimalPlaces = 2;
+    spec.valueSuffix = "m";
+    return spec;
+}
+
+UiSliderStyle ringWorkshopRadiusSliderStyle(bool enabled)
+{
+    UiSliderStyle style;
+    style.trackThickness = 4.0f;
+    style.thumbRadius = 8.0f;
+    if (!enabled) {
+        style.track = {76, 84, 104, 130};
+        style.activeTrack = ui::TextDisabled;
+        style.thumb = ui::TextDisabled;
+        style.thumbOutline = {255, 255, 255, 48};
+    }
+    return style;
+}
+
+UiTabsInput ringWorkshopRingTabsInput(const Input& input, int ringCount)
+{
+    UiTabsInput tabsInput = makeUiCycleTabsInput(input, ringCount);
+
+    const int directRingFocus = input.shortcutSlotPressed();
+    if (directRingFocus >= 0 && directRingFocus < ringCount) {
+        tabsInput.directFocusIndex = directRingFocus;
+    }
+    tabsInput.commit = tabsInput.focusDelta != 0 || tabsInput.directFocusIndex >= 0;
+    return tabsInput;
+}
 
 template <std::size_t N>
 int updateVerticalTabClickSelection(
@@ -2638,7 +2702,7 @@ UiRect ringWorkshopRespecKindRect(int index)
 UiRect ringWorkshopRespecConfirmRect()
 {
     const UiRect detail = ringWorkshopRespecDetailPanelRect();
-    const Vec2 size{220.0f, ui::ButtonHeight};
+    const Vec2 size{300.0f, ui::ButtonHeight};
     const float leftAreaLeft = ringWorkshopPanelRect().pos.x + 72.0f;
     const float leftAreaRight = detail.pos.x - 24.0f;
     return {{
@@ -2693,7 +2757,7 @@ UiRect ringWorkshopUpgradeConfirmRect()
     return {{detail.pos.x + (detail.size.x - size.x) * 0.5f, 572.0f}, size};
 }
 
-UiRect ringWorkshopRadiusGaugeRect(const UiScrollAreaLayout& scroll)
+UiRect ringWorkshopRadiusSliderRect(const UiScrollAreaLayout& scroll)
 {
     return {{
         scroll.content.pos.x + RingWorkshopScrollButtonInsetX,
@@ -2801,6 +2865,7 @@ void drawRoguelikeDepartureConfirmDialog(Renderer& renderer, const UiConfirmDial
     }
 
     const UiRect panel = baseRoguelikeDepartureConfirmRect();
+    UiModalNavigationScope navigationScope(panel);
     UiWindowScope window(
         renderer,
         "base.roguelike_departure.confirm",
@@ -2917,17 +2982,25 @@ void drawPageSelector(Renderer& renderer, const UiPageSelectorRects& rects, std:
     drawUiArrowButton(renderer, rects.next, UiArrowDirection::Right, UiArrowButtonVariant::Standard, enabled);
 }
 
+enum class StoragePageSelectorInputMode {
+    CycleShortcutAndArrows,
+    ArrowsOnly,
+};
+
 bool updateStoragePageSelector(
     UiContext& ui,
     const Input& input,
     const UiPageSelectorRects& rects,
     int& page,
-    int pageCount)
+    int pageCount,
+    StoragePageSelectorInputMode inputMode)
 {
     const int count = std::max(1, pageCount);
     page = std::clamp(page, 0, count - 1);
 
-    int delta = input.activeRingDelta();
+    int delta = inputMode == StoragePageSelectorInputMode::CycleShortcutAndArrows
+        ? uiCycleInputDelta(input, count)
+        : 0;
     if (delta == 0 && updateUiArrowButton(
             ui,
             rects.prev,
@@ -2992,19 +3065,35 @@ Vec2 batchItemSelectionSummaryPos()
     return {actionButton.pos.x + actionButton.size.x + 22.0f, actionButton.pos.y + 10.0f};
 }
 
+std::string batchItemSelectionCountText(int selectedCount)
+{
+    return std::to_string(selectedCount) + "個選択中";
+}
+
+void openStorageBatchTransferFailureDialog(
+    UiResultDialogState& dialog,
+    bool withdrawing,
+    std::string detail)
+{
+    std::vector<std::string> lines;
+    lines.reserve(detail.empty() ? 1 : 2);
+    lines.push_back(withdrawing ? "取り出せなかった" : "しまえなかった");
+    if (!detail.empty()) {
+        lines.push_back(std::move(detail));
+    }
+    openUiResultDialog(dialog, {}, std::move(lines));
+}
+
 UiRect storageWithdrawBatchModeButtonRect()
 {
     UiRect rect = batchItemModeButtonRect();
-    rect.pos.y = storageWithdrawSortButtonRect().pos.y;
     rect.size.x = StorageWithdrawBatchModeButtonWidth;
     return rect;
 }
 
 UiRect storageWithdrawBatchActionButtonRect(int index)
 {
-    UiRect rect = batchItemActionButtonRect(index);
-    rect.pos.y = storageWithdrawSortButtonRect().pos.y;
-    return rect;
+    return batchItemActionButtonRect(index);
 }
 
 Vec2 storageWithdrawBatchSelectionSummaryPos()
@@ -3052,6 +3141,17 @@ std::string batchItemWindowHelpText(
     help += inlineInputActionTag(InputAction::GrabOrPlaceItem) +
         " つかむ/置く  P 保護  ";
     return help + batchAction + " " + std::string(modeLabel) + "  Esc 戻る";
+}
+
+std::string withUiCycleHelp(
+    std::string help,
+    int itemCount,
+    std::string_view targetLabel)
+{
+    if (itemCount <= 1) {
+        return help;
+    }
+    return "Z/X " + std::string(targetLabel) + "  " + help;
 }
 
 UiRect baseItemSourceSlotRect(UiRect(*sourceSlotRect)(int), int index)
@@ -3262,7 +3362,56 @@ UiRect baseRingPreviewItemRect(
     float previewScale,
     float totalSeconds)
 {
-    const Vec2 center = baseRingPreviewItemDrawCenter(previewCenter, item, spellRing, balance, ringIndex, itemIndex, itemCount, previewScale, totalSeconds);
+    const Vec2 anchor = baseRingPreviewItemAnchor(
+        previewCenter,
+        item,
+        spellRing,
+        balance,
+        ringIndex,
+        itemIndex,
+        itemCount,
+        previewScale);
+    Vec2 outward = normalize(anchor - previewCenter);
+    if (lengthSquared(outward) <= 0.0001f) {
+        outward = {0.0f, -1.0f};
+    }
+    const Vec2 center = ringItemActionDrawPosition(
+        item,
+        baseRingPreviewItemDrawCenter(
+            previewCenter,
+            item,
+            spellRing,
+            balance,
+            ringIndex,
+            itemIndex,
+            itemCount,
+            previewScale,
+            totalSeconds),
+        outward);
+    return {center - RingItemUiRectSize * 0.5f, RingItemUiRectSize};
+}
+
+UiRect baseRingPreviewItemNavigationRect(
+    Vec2 previewCenter,
+    const SpellRingItem& item,
+    const SpellRingSystem& spellRing,
+    const RuntimeBalance& balance,
+    int ringIndex,
+    int itemIndex,
+    int itemCount,
+    float previewScale)
+{
+    const Vec2 center = elevatedDrawPosition(
+        baseRingPreviewItemAnchor(
+            previewCenter,
+            item,
+            spellRing,
+            balance,
+            ringIndex,
+            itemIndex,
+            itemCount,
+            previewScale),
+        RingItemBaseAltitude);
     return {center - RingItemUiRectSize * 0.5f, RingItemUiRectSize};
 }
 
@@ -3304,7 +3453,7 @@ UiRect merchantSellRingItemRect(
         ringIndex,
         itemIndex,
         itemCount,
-        StorageRingPreviewScale,
+        MerchantSellRingPreviewScale,
         totalSeconds);
 }
 
@@ -3325,14 +3474,37 @@ UiRect storageRingItemRect(
         ringIndex,
         itemIndex,
         itemCount,
-        MerchantSellRingPreviewScale,
+        StorageRingPreviewScale,
         totalSeconds);
+}
+
+enum class BaseRingPreviewDisabledMode {
+    None,
+    Storage,
+    MerchantSell,
+};
+
+bool baseRingPreviewItemDisabled(
+    BaseRingPreviewDisabledMode mode,
+    const SpellRingItem& item,
+    const ItemData* object)
+{
+    switch (mode) {
+    case BaseRingPreviewDisabledMode::None:
+        return false;
+    case BaseRingPreviewDisabledMode::Storage:
+        return item.objectId.empty();
+    case BaseRingPreviewDisabledMode::MerchantSell:
+        return item.protectionEnabled || object == nullptr || isImportantItem(*object);
+    }
+    return false;
 }
 
 void drawBaseRingPreview(
     Renderer& renderer,
     const SpellRingSystem& spellRing,
     const ObjectCatalog& objectCatalog,
+    const EncyclopediaSystem& encyclopedia,
     const RuntimeBalance& balance,
     Vec2 center,
     Vec2 weightTextPos,
@@ -3340,7 +3512,8 @@ void drawBaseRingPreview(
     int selectedIndex,
     float previewScale,
     float totalSeconds,
-    bool showProtectionLabel = true)
+    bool showProtectionIcon = true,
+    BaseRingPreviewDisabledMode disabledMode = BaseRingPreviewDisabledMode::None)
 {
     const std::vector<SpellRingItem>& items = spellRing.itemsForRing(ringIndex);
     const RingShape shape = spellRing.ringShapeForIndex(ringIndex);
@@ -3377,8 +3550,34 @@ void drawBaseRingPreview(
         if (lengthSquared(forward) <= 0.0001f) {
             forward = {1.0f, 0.0f};
         }
-        const bool selected = i == selectedIndex;
+        const UiRect itemRect = baseRingPreviewItemRect(
+            center,
+            item,
+            spellRing,
+            balance,
+            ringIndex,
+            i,
+            static_cast<int>(items.size()),
+            previewScale,
+            totalSeconds);
+        const UiRect navigationRect = baseRingPreviewItemNavigationRect(
+            center,
+            item,
+            spellRing,
+            balance,
+            ringIndex,
+            i,
+            static_cast<int>(items.size()),
+            previewScale);
+        registerUiNavigationTarget(
+            navigationRect,
+            UiNavigationRole::Grid,
+            i == selectedIndex);
+        const bool selected = uiControlVisualState(navigationRect).selected;
         const ItemData* object = objectForRingItem(objectCatalog, item);
+        const float contentAlpha = baseRingPreviewItemDisabled(disabledMode, item, object)
+            ? InventoryUiDisabledIconAlpha
+            : 1.0f;
         if (previewStyle.radialGuides && shape != RingShape::FigureEight) {
             const Color angleLineColor = selected ? Color{255, 230, 150, 120} : Color{94, 102, 128, 85};
             Vec2 tangent = normalize(Vec2{-outward.y, outward.x});
@@ -3389,21 +3588,30 @@ void drawBaseRingPreview(
             renderer.drawLine(center + tangent * AngleLineHalfWidthPx, itemAnchor + tangent * AngleLineHalfWidthPx, angleLineColor);
             renderer.drawLine(center - tangent * AngleLineHalfWidthPx, itemAnchor - tangent * AngleLineHalfWidthPx, angleLineColor);
         }
-        drawRingItemShape(
-            renderer,
-            item,
-            object,
-            itemCenter,
-            outward,
-            forward,
-            totalSeconds,
-            selected,
-            false,
-            false,
-            showProtectionLabel);
-        char label[16];
-        std::snprintf(label, sizeof(label), "%d", i + 1);
-        renderer.drawText(itemCenter + Vec2{-5.0f, 22.0f}, label, selected ? Color{255, 230, 150, 255} : Color{174, 182, 198, 255}, 1);
+        {
+            UiControlMotionScope motion(renderer, navigationRect, UiControlMotion::PressOnly);
+            drawRingItemShape(
+                renderer,
+                item,
+                object,
+                itemCenter,
+                outward,
+                forward,
+                totalSeconds,
+                selected,
+                false,
+                false,
+                showProtectionIcon,
+                contentAlpha,
+                &encyclopedia);
+            char label[16];
+            std::snprintf(label, sizeof(label), "%d", i + 1);
+            renderer.drawText(
+                itemCenter + Vec2{-5.0f, 22.0f},
+                label,
+                selected ? Color{255, 230, 150, 255} : Color{174, 182, 198, 255},
+                1);
+        }
     }
 }
 
@@ -3411,6 +3619,7 @@ void drawBaseProcessingRingPreview(
     Renderer& renderer,
     const SpellRingSystem& spellRing,
     const ObjectCatalog& objectCatalog,
+    const EncyclopediaSystem& encyclopedia,
     const RuntimeBalance& balance,
     int ringIndex,
     int selectedIndex,
@@ -3420,6 +3629,7 @@ void drawBaseProcessingRingPreview(
         renderer,
         spellRing,
         objectCatalog,
+        encyclopedia,
         balance,
         baseProcessingRingPreviewCenter(spellRing, ringIndex),
         baseProcessingRingPreviewWeightTextPos(),
@@ -3433,6 +3643,7 @@ void drawMerchantSellRingPreview(
     Renderer& renderer,
     const SpellRingSystem& spellRing,
     const ObjectCatalog& objectCatalog,
+    const EncyclopediaSystem& encyclopedia,
     const RuntimeBalance& balance,
     int ringIndex,
     int selectedIndex,
@@ -3442,6 +3653,7 @@ void drawMerchantSellRingPreview(
         renderer,
         spellRing,
         objectCatalog,
+        encyclopedia,
         balance,
         merchantSellRingPreviewCenter(spellRing, ringIndex),
         merchantSellRingPreviewWeightTextPos(),
@@ -3449,7 +3661,8 @@ void drawMerchantSellRingPreview(
         selectedIndex,
         MerchantSellRingPreviewScale,
         totalSeconds,
-        false);
+        true,
+        BaseRingPreviewDisabledMode::MerchantSell);
 }
 
 void drawBatchItemSelectionBadge(Renderer& renderer, UiRect rect)
@@ -3478,6 +3691,7 @@ void drawStorageRingPreview(
     Renderer& renderer,
     const SpellRingSystem& spellRing,
     const ObjectCatalog& objectCatalog,
+    const EncyclopediaSystem& encyclopedia,
     const RuntimeBalance& balance,
     int ringIndex,
     int selectedIndex,
@@ -3487,13 +3701,16 @@ void drawStorageRingPreview(
         renderer,
         spellRing,
         objectCatalog,
+        encyclopedia,
         balance,
         storageRingPreviewCenter(spellRing, ringIndex),
         storageRingPreviewWeightTextPos(),
         ringIndex,
         selectedIndex,
         StorageRingPreviewScale,
-        totalSeconds);
+        totalSeconds,
+        true,
+        BaseRingPreviewDisabledMode::Storage);
 }
 
 struct ProcessingResultSnapshot {
@@ -3764,7 +3981,7 @@ std::string processingPercentChangeLine(std::string_view label, double beforeVal
     return buffer;
 }
 
-struct ProcessingPreviewRow {
+struct ConfirmPreviewRow {
     std::string label;
     std::string beforeValue;
     std::string afterValue;
@@ -3813,7 +4030,7 @@ std::string processingInlineItemName(const ProcessingResultSnapshot& snapshot)
     return text;
 }
 
-void drawProcessingPreviewRow(Renderer& renderer, UiRect content, float& y, const ProcessingPreviewRow& row)
+void drawConfirmPreviewRow(Renderer& renderer, UiRect content, float& y, const ConfirmPreviewRow& row)
 {
     constexpr float ValueX = 184.0f;
     renderer.drawText({content.pos.x, y}, row.label, ui::TextMuted, 2);
@@ -3822,6 +4039,41 @@ void drawProcessingPreviewRow(Renderer& renderer, UiRect content, float& y, cons
     drawUiTextRun(renderer, valuePos, "→", ui::TextMuted);
     drawUiTextRun(renderer, valuePos, row.afterValue, ConfirmAfterValueColor);
     y += 31.0f;
+}
+
+UiRect baseActionConfirmBodyRect(UiRect panel)
+{
+    constexpr float ContentInset = ui::PanelPadding + 12.0f;
+    constexpr float BodyTopOffset = -2.0f;
+    const float bodyTop = panel.pos.y + ui::HeaderHeight + BodyTopOffset;
+    return {{
+        panel.pos.x + ContentInset,
+        bodyTop,
+    }, {
+        panel.size.x - ContentInset * 2.0f,
+        std::max(0.0f, uiConfirmDialogButtonRect(panel, 0).pos.y - bodyTop - 16.0f),
+    }};
+}
+
+UiRect baseActionConfirmRequirementRect(
+    UiRect panel,
+    UiRect body,
+    float contentBottom,
+    std::size_t requirementCount)
+{
+    constexpr float RequirementTopPadding = ui::SubPanelPadding.y;
+    constexpr float RequirementTitleToRows = 34.0f;
+    constexpr float RequirementRowHeight = 31.0f;
+    constexpr float RequirementBottomPadding = 18.0f;
+    const float materialTop = contentBottom + 7.0f;
+    const float requiredRows = static_cast<float>(std::max<std::size_t>(1, requirementCount));
+    const float preferredMaterialHeight =
+        RequirementTopPadding + RequirementTitleToRows + RequirementRowHeight * requiredRows + RequirementBottomPadding;
+    const float buttonTop = uiConfirmDialogButtonRect(panel, 0).pos.y;
+    const float materialHeight = std::max(
+        86.0f,
+        std::min(preferredMaterialHeight, buttonTop - materialTop - 14.0f));
+    return {{body.pos.x, materialTop}, {body.size.x, materialHeight}};
 }
 
 std::string processingRepairDurabilityLine(const ProcessingResultSnapshot& before, const ProcessingResultSnapshot& after)
@@ -4147,22 +4399,32 @@ bool Game::isHighValueBuyObject(const ItemData& item) const
     return std::find(highValueBuyObjectIds_.begin(), highValueBuyObjectIds_.end(), item.id) != highValueBuyObjectIds_.end();
 }
 
-bool Game::merchantProductCanFit(const ItemData* item) const
+int Game::merchantProductPurchasableQuantity(const MerchantProduct& product) const
 {
-    if (item == nullptr) {
-        return false;
+    if (product.quantity <= 0 || product.price < 0 ||
+        objectCatalog_.registry.findById(product.objectId) == nullptr) {
+        return 0;
     }
-    const auto& stacks = inventory_.objectStacks();
-    const bool existingStack = std::any_of(stacks.begin(), stacks.end(), [&](const InventoryObjectStack& stack) {
-        return stack.objectId == item->id;
-    });
-    return existingStack || backpackUsedSlots() < inventory_.screenSlotCount();
+
+    const int affordableQuantity = product.price > 0
+        ? money_ / product.price
+        : product.quantity;
+    const int candidateQuantity = std::min(product.quantity, affordableQuantity);
+    InventorySystem previewInventory = inventory_;
+    int purchasableQuantity = 0;
+    while (purchasableQuantity < candidateQuantity &&
+        previewInventory.addObjectItem(objectCatalog_, product.objectId)) {
+        ++purchasableQuantity;
+    }
+    return purchasableQuantity;
 }
 
 bool Game::canBuyMerchantProduct(const MerchantProduct& product) const
 {
-    const ItemData* item = objectCatalog_.registry.findById(product.objectId);
-    return product.quantity > 0 && item != nullptr && money_ >= product.price && merchantProductCanFit(item);
+    return product.quantity > 0 &&
+        product.price >= 0 &&
+        money_ >= product.price &&
+        inventory_.canAddObjectItem(objectCatalog_, product.objectId);
 }
 
 void Game::refreshHighValueBuyObjects(bool force)
@@ -4863,7 +5125,8 @@ Game::BaseRingInteractionResult Game::updateBaseRingItemInteraction(
     int source,
     int& selection,
     BaseRingPreviewKind previewKind,
-    float animationSeconds)
+    float animationSeconds,
+    BaseRingInteractionMode mode)
 {
     BaseRingInteractionResult result{};
     if (!baseItemSourceIsRing(source)) {
@@ -4877,12 +5140,12 @@ Game::BaseRingInteractionResult Game::updateBaseRingItemInteraction(
     if (itemCount <= 0) {
         selection = 0;
         (void)cancelBaseRingItemInteraction(true);
-        if (input.grabOrPlacePressed() ||
-            input.pressed(InputAction::ToggleProtection) ||
+        if ((mode == BaseRingInteractionMode::Manage &&
+                (input.grabOrPlacePressed() || input.pressed(InputAction::ToggleProtection))) ||
             input.confirmPressed() ||
             input.useItemPressed()) {
             baseStatus_ = "アイテム未選択";
-            ui.emitSound(UiSoundEvent::Cancel);
+            ui.rejectAction();
             result.consumed = true;
         }
         return result;
@@ -4896,50 +5159,45 @@ Game::BaseRingInteractionResult Game::updateBaseRingItemInteraction(
         target.valid = index >= 0;
         return target;
     };
-    const auto rectAt = [this, previewKind, ringIndex, itemCount, animationSeconds](
-                            const SpellRingItem& item,
-                            int index) {
-        switch (previewKind) {
-        case BaseRingPreviewKind::Storage:
-            return storageRingItemRect(
-                item,
-                spellRing_,
-                balance_,
-                ringIndex,
-                index,
-                itemCount,
-                animationSeconds);
-        case BaseRingPreviewKind::Processing:
-            return baseProcessingRingItemRect(
-                item,
-                spellRing_,
-                balance_,
-                ringIndex,
-                index,
-                itemCount,
-                animationSeconds);
-        case BaseRingPreviewKind::Merchant:
-            return merchantSellRingItemRect(
-                item,
-                spellRing_,
-                balance_,
-                ringIndex,
-                index,
-                itemCount,
-                animationSeconds);
-        }
-        return UiRect{};
-    };
     const auto previewCenterAndScale = [this, previewKind, ringIndex]() {
         switch (previewKind) {
         case BaseRingPreviewKind::Storage:
-            return std::pair{storageRingPreviewCenter(spellRing_, ringIndex), MerchantSellRingPreviewScale};
+            return std::pair{storageRingPreviewCenter(spellRing_, ringIndex), StorageRingPreviewScale};
         case BaseRingPreviewKind::Processing:
             return std::pair{baseProcessingRingPreviewCenter(spellRing_, ringIndex), BaseRingPreviewScale};
         case BaseRingPreviewKind::Merchant:
-            return std::pair{merchantSellRingPreviewCenter(spellRing_, ringIndex), StorageRingPreviewScale};
+            return std::pair{merchantSellRingPreviewCenter(spellRing_, ringIndex), MerchantSellRingPreviewScale};
         }
         return std::pair{Vec2{}, 1.0f};
+    };
+    const auto rectAt = [this, ringIndex, itemCount, animationSeconds, &previewCenterAndScale](
+                            const SpellRingItem& item,
+                            int index) {
+        const auto [center, previewScale] = previewCenterAndScale();
+        return baseRingPreviewItemRect(
+            center,
+            item,
+            spellRing_,
+            balance_,
+            ringIndex,
+            index,
+            itemCount,
+            previewScale,
+            animationSeconds);
+    };
+    const auto navigationRectAt = [this, ringIndex, itemCount, &previewCenterAndScale](
+                                      const SpellRingItem& item,
+                                      int index) {
+        const auto [center, previewScale] = previewCenterAndScale();
+        return baseRingPreviewItemNavigationRect(
+            center,
+            item,
+            spellRing_,
+            balance_,
+            ringIndex,
+            index,
+            itemCount,
+            previewScale);
     };
     const auto pointerAngle = [this, ringIndex, itemCount, &previewCenterAndScale](Vec2 point) {
         const auto [center, previewScale] = previewCenterAndScale();
@@ -4962,6 +5220,9 @@ Game::BaseRingInteractionResult Game::updateBaseRingItemInteraction(
 
     if (baseRingItemInteraction_.active() &&
         baseRingItemInteraction_.item.container != ItemContainerId{ItemContainerKind::Ring, ringIndex}) {
+        (void)cancelBaseRingItemInteraction(true);
+    }
+    if (mode == BaseRingInteractionMode::ActivateOnly && baseRingItemInteraction_.active()) {
         (void)cancelBaseRingItemInteraction(true);
     }
 
@@ -5038,7 +5299,7 @@ Game::BaseRingInteractionResult Game::updateBaseRingItemInteraction(
                 ui.emitSound(UiSoundEvent::ItemMove);
             } else {
                 baseStatus_ = "その位置には移動できないよ";
-                ui.emitSound(UiSoundEvent::Cancel);
+                ui.rejectAction();
             }
         }
         result.consumed = true;
@@ -5099,35 +5360,35 @@ Game::BaseRingInteractionResult Game::updateBaseRingItemInteraction(
         if (selection < 0) {
             selection += itemCount;
         }
+        ui.setNavigationFocus(navigationRectAt(items[static_cast<std::size_t>(selection)], selection));
     };
     moveSelection(input.shortcutCursorDelta());
-    if (!ui.navigationActive() || ui.navigationFocusRole() == UiNavigationRole::Control) {
-        if (input.pressed(InputAction::MoveLeft) || input.pressed(InputAction::MoveUp)) {
-            moveSelection(-1);
-        }
-        if (input.pressed(InputAction::MoveRight) || input.pressed(InputAction::MoveDown)) {
-            moveSelection(1);
-        }
-    }
 
-    int hovered = -1;
+    int pointerPressed = -1;
     for (int index = 0; index < itemCount; ++index) {
-        const UiRect rect = rectAt(items[static_cast<std::size_t>(index)], index);
-        if (ui.selectionFocused(rect)) {
+        const SpellRingItem& item = items[static_cast<std::size_t>(index)];
+        const UiRect hitRect = rectAt(item, index);
+        const UiRect navigationRect = navigationRectAt(item, index);
+        if (ui.selectionFocused(hitRect, navigationRect)) {
             selection = index;
         }
-        if (ui.pointerInside(rect)) {
-            hovered = index;
+        if (ui.pressed(hitRect, navigationRect) && !ui.navigationActive()) {
+            pointerPressed = index;
         }
     }
 
-    if (input.mouseLeftPressed() && hovered >= 0 && !ui.pointerConsumed()) {
-        selection = hovered;
-        const std::optional<ItemKey> key = itemKeyForBaseItemTarget(targetAt(hovered));
+    if (pointerPressed >= 0) {
+        selection = pointerPressed;
+        if (mode == BaseRingInteractionMode::ActivateOnly) {
+            result.activateIndex = selection;
+            result.consumed = true;
+            return result;
+        }
+        const std::optional<ItemKey> key = itemKeyForBaseItemTarget(targetAt(pointerPressed));
         if (key) {
             baseRingItemInteraction_.item = *key;
             baseRingItemInteraction_.originalAngle =
-                items[static_cast<std::size_t>(hovered)].localAngle;
+                items[static_cast<std::size_t>(pointerPressed)].localAngle;
             baseRingItemInteraction_.pointerStart = input.mouseScreen();
             baseRingItemInteraction_.pointerPending = true;
             ui.consumePointer();
@@ -5136,11 +5397,11 @@ Game::BaseRingInteractionResult Game::updateBaseRingItemInteraction(
         }
     }
 
-    if (input.grabOrPlacePressed()) {
+    if (mode == BaseRingInteractionMode::Manage && input.grabOrPlacePressed()) {
         const std::optional<ItemKey> key = itemKeyForBaseItemTarget(targetAt(selection));
         if (!key) {
             baseStatus_ = "アイテム未選択";
-            ui.emitSound(UiSoundEvent::Cancel);
+            ui.rejectAction();
         } else {
             baseRingItemInteraction_.item = *key;
             baseRingItemInteraction_.originalAngle =
@@ -5153,7 +5414,7 @@ Game::BaseRingInteractionResult Game::updateBaseRingItemInteraction(
         return result;
     }
 
-    if (input.pressed(InputAction::ToggleProtection)) {
+    if (mode == BaseRingInteractionMode::Manage && input.pressed(InputAction::ToggleProtection)) {
         const std::optional<ItemKey> key = itemKeyForBaseItemTarget(targetAt(selection));
         const ItemProtectionToggleResult toggleResult =
             key ? toggleItemProtection(*key) : ItemProtectionToggleResult::Missing;
@@ -5165,7 +5426,7 @@ Game::BaseRingInteractionResult Game::updateBaseRingItemInteraction(
             baseStatus_ = toggleResult == ItemProtectionToggleResult::Unsupported
                 ? "このアイテムは保護できないよ"
                 : "アイテム未選択";
-            ui.emitSound(UiSoundEvent::Cancel);
+            ui.rejectAction();
         }
         result.consumed = true;
         return result;
@@ -5362,7 +5623,7 @@ void Game::clearMerchantBulkSellState()
     clearBatchItemSelectionState(baseMerchantBulkSell_);
 }
 
-void Game::sellMerchantTarget(MerchantSellTarget target, int count)
+bool Game::sellMerchantTarget(MerchantSellTarget target, int count)
 {
     const auto completeSale = [this]() {
         baseStatus_ = "売却したよ";
@@ -5371,7 +5632,7 @@ void Game::sellMerchantTarget(MerchantSellTarget target, int count)
 
     if (!target.valid) {
         baseStatus_ = "売却対象がないよ";
-        return;
+        return false;
     }
     if (!merchantSellTargetAvailable(target)) {
         baseStatus_ = "売れないよ";
@@ -5396,7 +5657,7 @@ void Game::sellMerchantTarget(MerchantSellTarget target, int count)
                 baseStatus_ = "保護中";
             }
         }
-        return;
+        return false;
     }
 
     if (target.source == BaseItemSource::Backpack) {
@@ -5407,8 +5668,10 @@ void Game::sellMerchantTarget(MerchantSellTarget target, int count)
             if (inventory_.removeObjectItemCount(objectId, soldCount)) {
                 money_ += price;
                 completeSale();
+                return true;
             }
-            return;
+            baseStatus_ = "売却できなかったよ";
+            return false;
         }
 
         if (const InventoryObjectInstance* instance = inventory_.screenObjectInstanceAt(target.slotIndex)) {
@@ -5417,19 +5680,21 @@ void Game::sellMerchantTarget(MerchantSellTarget target, int count)
             if (inventory_.removeObjectInstance(instanceId)) {
                 money_ += price;
                 completeSale();
+                return true;
             }
-            return;
+            baseStatus_ = "売却できなかったよ";
+            return false;
         }
 
         baseStatus_ = "売却対象がないよ";
-        return;
+        return false;
     }
 
     if (target.source == BaseItemSource::Warehouse) {
         if (target.storageEntry.kind == StorageEntryKind::Stack) {
             if (target.storageEntry.index < 0 || target.storageEntry.index >= static_cast<int>(warehouseObjectStacks_.size())) {
                 baseStatus_ = "売却対象がないよ";
-                return;
+                return false;
             }
             InventoryObjectStack& stack = warehouseObjectStacks_[static_cast<std::size_t>(target.storageEntry.index)];
             const int soldCount = count <= 0 ? stack.count : std::min(count, stack.count);
@@ -5441,12 +5706,12 @@ void Game::sellMerchantTarget(MerchantSellTarget target, int count)
             }
             baseSellSelection_ = std::clamp(baseSellSelection_, 0, StoragePaneSlotCount - 1);
             completeSale();
-            return;
+            return true;
         }
 
         if (target.storageEntry.index < 0 || target.storageEntry.index >= static_cast<int>(warehouseObjectInstances_.size())) {
             baseStatus_ = "売却対象がないよ";
-            return;
+            return false;
         }
         const InventoryObjectInstance& instance = warehouseObjectInstances_[static_cast<std::size_t>(target.storageEntry.index)];
         money_ += sellPrice(instance.item, &instance.instance);
@@ -5454,22 +5719,22 @@ void Game::sellMerchantTarget(MerchantSellTarget target, int count)
         warehouseObjectInstances_.erase(warehouseObjectInstances_.begin() + target.storageEntry.index);
         baseSellSelection_ = std::clamp(baseSellSelection_, 0, StoragePaneSlotCount - 1);
         completeSale();
-        return;
+        return true;
     }
 
     if (target.ringIndex < 0 || target.ringIndex >= SpellRingCount) {
         baseStatus_ = "売却対象がないよ";
-        return;
+        return false;
     }
     std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(target.ringIndex);
     if (target.ringItemIndex < 0 || target.ringItemIndex >= static_cast<int>(ringItems.size())) {
         baseStatus_ = "売却対象がないよ";
-        return;
+        return false;
     }
     const ItemData* item = objectForRingItem(objectCatalog_, ringItems[static_cast<std::size_t>(target.ringItemIndex)]);
     if (item == nullptr) {
         baseStatus_ = "売れないよ";
-        return;
+        return false;
     }
 
     money_ += sellPrice(*item, &ringItems[static_cast<std::size_t>(target.ringItemIndex)]);
@@ -5477,6 +5742,7 @@ void Game::sellMerchantTarget(MerchantSellTarget target, int count)
     refreshOrbitEffects();
     baseSellSelection_ = std::clamp(baseSellSelection_, 0, std::max(0, static_cast<int>(ringItems.size()) - 1));
     completeSale();
+    return true;
 }
 
 void Game::sellMerchantScreenSlot(int slotIndex, int count)
@@ -5484,46 +5750,64 @@ void Game::sellMerchantScreenSlot(int slotIndex, int count)
     sellMerchantTarget(merchantSellTargetForSourceSlot(0, slotIndex), count);
 }
 
-void Game::buyMerchantProduct(int index)
+bool Game::buyMerchantProduct(int index, int count)
 {
     refreshMerchantStock(false);
     if (index < 0 || index >= static_cast<int>(merchantStock_.size())) {
         baseStatus_ = "購入できる商品がないよ";
-        return;
+        return false;
     }
 
     MerchantProduct& product = merchantStock_[static_cast<std::size_t>(index)];
     const ItemData* item = objectCatalog_.registry.findById(product.objectId);
     if (item == nullptr) {
         baseStatus_ = "商品データがないよ";
-        return;
+        return false;
     }
     if (product.quantity <= 0) {
         baseStatus_ = "品切れだよ";
-        return;
+        return false;
     }
     if (money_ < product.price) {
         baseStatus_ = "所持金が足りないよ";
-        return;
+        return false;
     }
-    if (!merchantProductCanFit(item)) {
+    const int purchasableQuantity = merchantProductPurchasableQuantity(product);
+    if (purchasableQuantity <= 0) {
         baseStatus_ = "リュックがいっぱいだよ";
-        return;
+        return false;
     }
-    InventoryAddResult addResult;
-    if (!inventory_.addObjectItem(objectCatalog_, product.objectId, &addResult)) {
-        baseStatus_ = "リュックがいっぱいだよ";
-        return;
+    const int purchaseCount = std::clamp(count, 1, product.quantity);
+    if (purchaseCount > purchasableQuantity) {
+        baseStatus_ = "その個数は購入できないよ";
+        return false;
     }
-    money_ -= product.price;
-    --product.quantity;
-    recordObjectObtainedForFirstNotice(
-        product.objectId,
-        addResult.instanceId,
-        addResult.kind == InventoryAddKind::Instance && !addResult.instanceId.empty(),
-        basePlayerPosition_);
+
+    InventorySystem purchasedInventory = inventory_;
+    std::vector<InventoryAddResult> addResults;
+    addResults.reserve(static_cast<std::size_t>(purchaseCount));
+    for (int i = 0; i < purchaseCount; ++i) {
+        InventoryAddResult addResult;
+        if (!purchasedInventory.addObjectItem(objectCatalog_, product.objectId, &addResult)) {
+            baseStatus_ = "リュックがいっぱいだよ";
+            return false;
+        }
+        addResults.push_back(std::move(addResult));
+    }
+
+    inventory_ = std::move(purchasedInventory);
+    money_ -= product.price * purchaseCount;
+    product.quantity -= purchaseCount;
+    for (const InventoryAddResult& addResult : addResults) {
+        recordObjectObtainedForFirstNotice(
+            product.objectId,
+            addResult.instanceId,
+            addResult.kind == InventoryAddKind::Instance && !addResult.instanceId.empty(),
+            basePlayerPosition_);
+    }
     baseStatus_ = product.quantity <= 0 ? "購入したよ（品切れ）" : "購入したよ";
     playAudioSe(AudioSeMerchantTransaction);
+    return true;
 }
 
 std::vector<Game::StorageEntry> Game::processingEntries() const
@@ -6231,6 +6515,7 @@ void Game::drawProcessingConfirmDialog(Renderer& renderer, UiRect panel) const
         return;
     }
 
+    UiModalNavigationScope navigationScope(panel);
     UiWindowScope window(
         renderer,
         "base.processing.confirm",
@@ -6239,16 +6524,7 @@ void Game::drawProcessingConfirmDialog(Renderer& renderer, UiRect panel) const
         uiConfirmDialogHelpText(),
         UiWindowOptions{true, true});
 
-    constexpr float ContentInset = ui::PanelPadding + 12.0f;
-    constexpr float BodyTopOffset = -2.0f;
-    const float bodyTop = panel.pos.y + ui::HeaderHeight + BodyTopOffset;
-    const UiRect body{{
-        panel.pos.x + ContentInset,
-        bodyTop,
-    }, {
-        panel.size.x - ContentInset * 2.0f,
-        std::max(0.0f, uiConfirmDialogButtonRect(panel, 0).pos.y - bodyTop - 16.0f),
-    }};
+    const UiRect body = baseActionConfirmBodyRect(panel);
 
     const auto targetSnapshot = [this](ProcessingTarget snapshotTarget) {
         if (snapshotTarget.source == BaseItemSource::Backpack || snapshotTarget.source == BaseItemSource::Warehouse) {
@@ -6312,7 +6588,7 @@ void Game::drawProcessingConfirmDialog(Renderer& renderer, UiRect panel) const
         after = processingEnhancedSnapshot(after, enhanceBonuses.attack, enhanceBonuses.dig, enhanceBonuses.durability);
     }
 
-    std::vector<ProcessingPreviewRow> previewRows;
+    std::vector<ConfirmPreviewRow> previewRows;
     if (mode == ProcessingMode::Repair) {
         previewRows.push_back({
             "耐久力",
@@ -6368,8 +6644,8 @@ void Game::drawProcessingConfirmDialog(Renderer& renderer, UiRect panel) const
     drawInlineItemText(renderer, objectCatalog_, {body.pos.x, y}, question, questionStyle);
     y += measureInlineItemText(renderer, question, questionStyle).y + 22.0f;
 
-    for (const ProcessingPreviewRow& row : previewRows) {
-        drawProcessingPreviewRow(renderer, body, y, row);
+    for (const ConfirmPreviewRow& row : previewRows) {
+        drawConfirmPreviewRow(renderer, body, y, row);
     }
 
     std::vector<RequirementRow> requirements;
@@ -6385,20 +6661,10 @@ void Game::drawProcessingConfirmDialog(Renderer& renderer, UiRect panel) const
             inventory_.materialCount(MaterialType::EnhancementOre)));
     }
 
-    const float buttonTop = uiConfirmDialogButtonRect(panel, 0).pos.y;
-    constexpr float RequirementTopPadding = ui::SubPanelPadding.y;
-    constexpr float RequirementTitleToRows = 34.0f;
-    constexpr float RequirementRowHeight = 31.0f;
-    constexpr float RequirementBottomPadding = 18.0f;
-    const float materialTop = y + 7.0f;
-    const float requiredRows = static_cast<float>(std::max<std::size_t>(1, requirements.size()));
-    const float preferredMaterialHeight =
-        RequirementTopPadding + RequirementTitleToRows + RequirementRowHeight * requiredRows + RequirementBottomPadding;
-    const float materialHeight = std::max(86.0f, std::min(preferredMaterialHeight, buttonTop - materialTop - 14.0f));
     drawRequirementSubWindow(
         renderer,
         objectCatalog_,
-        {{body.pos.x, materialTop}, {body.size.x, materialHeight}},
+        baseActionConfirmRequirementRect(panel, body, y, requirements.size()),
         requirements);
 
     drawUiConfirmDialogButtons(renderer, baseProcessingConfirm_, panel);
@@ -6994,6 +7260,53 @@ void Game::removeWarehouseDisplaySlotAtEntryIndex(int entryIndex)
     warehouseItemLayout_.eraseEntry(entryIndex);
 }
 
+bool Game::canAddWarehouseObjectStack(std::string_view objectId, int count) const
+{
+    if (objectId.empty() || count <= 0) {
+        return false;
+    }
+    const auto existing = std::find_if(
+        warehouseObjectStacks_.begin(),
+        warehouseObjectStacks_.end(),
+        [objectId](const InventoryObjectStack& stack) {
+            return stack.objectId == objectId;
+        });
+    if (existing != warehouseObjectStacks_.end()) {
+        return existing->count <= std::numeric_limits<int>::max() - count;
+    }
+    return warehouseUsedSlots() < warehouseCapacity();
+}
+
+bool Game::addWarehouseObjectStack(const InventoryObjectStack& stack, int count)
+{
+    if (!canAddWarehouseObjectStack(stack.objectId, count)) {
+        return false;
+    }
+
+    const auto existing = std::find_if(
+        warehouseObjectStacks_.begin(),
+        warehouseObjectStacks_.end(),
+        [&stack](const InventoryObjectStack& stored) {
+            return stored.objectId == stack.objectId;
+        });
+    if (existing != warehouseObjectStacks_.end()) {
+        existing->count += count;
+        existing->item = stack.item;
+        existing->item.id = stack.objectId;
+        existing->objectId = stack.objectId;
+        return true;
+    }
+
+    InventoryObjectStack added = stack;
+    added.objectId = stack.objectId;
+    added.item.id = stack.objectId;
+    added.count = count;
+    syncWarehouseDisplaySlots();
+    warehouseItemLayout_.insertEntry(static_cast<int>(warehouseObjectStacks_.size()));
+    warehouseObjectStacks_.push_back(std::move(added));
+    return true;
+}
+
 std::string Game::storageEntryLabel(StorageEntry entry, bool warehouseEntry) const
 {
     char buffer[192];
@@ -7283,7 +7596,7 @@ Game::StorageBatchTransferSummary Game::storageBulkDepositSummary() const
             target.source == BaseItemSource::Warehouse) {
             continue;
         }
-        summary.itemCount += std::max(0, storageTransferTargetStackCount(target));
+        ++summary.selectedCount;
         if (storageTransferTargetIsStack(target)) {
             if (storedStackIds.insert(key.stableId).second) {
                 ++summary.requiredSlots;
@@ -7299,7 +7612,7 @@ bool Game::depositStorageBulkSelection()
 {
     pruneStorageBulkDepositSelection();
     const StorageBatchTransferSummary summary = storageBulkDepositSummary();
-    if (summary.itemCount <= 0) {
+    if (summary.selectedCount <= 0) {
         baseStatus_ = "しまうアイテムが選択されていないよ";
         return false;
     }
@@ -7341,7 +7654,9 @@ bool Game::depositStorageBulkSelection()
             baseStatus_ = "収納内容が変わりました";
             return false;
         }
-        depositStorageTarget(target, storageTransferTargetStackCount(target));
+        if (!depositStorageTarget(target, storageTransferTargetStackCount(target))) {
+            return false;
+        }
     }
 
     syncWarehouseDisplaySlots();
@@ -7362,7 +7677,7 @@ bool Game::depositStorageBulkSelection()
             std::max(0, inventory_.screenSlotCount() - 1));
     }
     clearStorageBatchSelectionState();
-    baseStatus_ = std::to_string(summary.itemCount) + "個を収納箱にしまいました";
+    baseStatus_ = std::to_string(summary.selectedCount) + "個を収納箱にしまいました";
     return true;
 }
 
@@ -7371,82 +7686,77 @@ void Game::clearStorageBatchSelectionState()
     clearBatchItemSelectionState(baseStorageBatchSelection_);
 }
 
-void Game::depositStorageTarget(StorageTransferTarget target, int count)
+bool Game::depositStorageTarget(StorageTransferTarget target, int count)
 {
     if (!target.valid) {
         baseStatus_ = "しまうアイテムがないよ";
-        return;
+        return false;
     }
 
     if (target.source == BaseItemSource::Backpack) {
         if (const InventoryObjectStack* source = inventory_.screenObjectStackAt(target.slotIndex)) {
             const int moveCount = std::clamp(count, 1, std::max(1, source->count));
-            auto it = std::find_if(warehouseObjectStacks_.begin(), warehouseObjectStacks_.end(), [source](const InventoryObjectStack& stack) {
-                return stack.objectId == source->objectId;
-            });
-            if (it == warehouseObjectStacks_.end()) {
-                if (warehouseUsedSlots() >= warehouseCapacity()) {
-                    baseStatus_ = "収納箱がいっぱいだよ";
-                    return;
-                }
-                syncWarehouseDisplaySlots();
-                const int newStackIndex = static_cast<int>(warehouseObjectStacks_.size());
-                warehouseItemLayout_.insertEntry(newStackIndex);
-                warehouseObjectStacks_.push_back(InventoryObjectStack{source->item, 0});
-                it = warehouseObjectStacks_.end() - 1;
+            InventoryObjectStack moved = *source;
+            moved.item.id = moved.objectId;
+            if (!canAddWarehouseObjectStack(moved.objectId, moveCount)) {
+                baseStatus_ = "収納箱がいっぱいだよ";
+                return false;
             }
-            const std::string objectId = source->objectId;
-            if (!inventory_.removeObjectItemCount(objectId, moveCount)) {
+            if (!inventory_.removeObjectItemCount(moved.objectId, moveCount)) {
                 baseStatus_ = "しまえなかったよ";
-                return;
+                return false;
             }
-            it->count += moveCount;
+            if (!addWarehouseObjectStack(moved, moveCount)) {
+                (void)inventory_.addObjectStack(moved.item, moveCount);
+                baseStatus_ = "しまえなかったよ";
+                return false;
+            }
             baseStorageDepositSelection_ = std::clamp(baseStorageDepositSelection_, 0, std::max(0, inventory_.screenSlotCount() - 1));
             baseStatus_ = "収納箱にしまいました";
-            return;
+            return true;
         }
 
         const InventoryObjectInstance* source = inventory_.screenObjectInstanceAt(target.slotIndex);
         if (source == nullptr) {
             baseStatus_ = "しまうアイテムがないよ";
-            return;
+            return false;
         }
         if (inventory_.isStaffEquipped(source->instance.instanceId)) {
             baseStatus_ = "装備中の杖はしまえないよ";
-            return;
+            return false;
         }
         if (warehouseUsedSlots() >= warehouseCapacity()) {
             baseStatus_ = "収納箱がいっぱいだよ";
-            return;
+            return false;
         }
         InventoryObjectInstance moved;
         if (!inventory_.takeObjectInstance(source->instance.instanceId, moved)) {
             baseStatus_ = "しまえなかったよ";
-            return;
+            return false;
         }
         warehouseObjectInstances_.push_back(std::move(moved));
         baseStorageDepositSelection_ = std::clamp(baseStorageDepositSelection_, 0, std::max(0, inventory_.screenSlotCount() - 1));
         baseStatus_ = "収納箱にしまいました";
-        return;
+        return true;
     }
 
     if (target.ringIndex < 0 || target.ringIndex >= SpellRingCount) {
         baseStatus_ = "しまうアイテムがないよ";
-        return;
+        return false;
     }
     std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(target.ringIndex);
     if (target.ringItemIndex < 0 || target.ringItemIndex >= static_cast<int>(ringItems.size())) {
         baseStatus_ = "しまうアイテムがないよ";
-        return;
+        return false;
     }
     const SpellRingItem& ringItem = ringItems[static_cast<std::size_t>(target.ringItemIndex)];
     if (ringItem.objectId.empty()) {
         baseStatus_ = "このアイテムはしまえないよ";
-        return;
+        return false;
     }
     if (warehouseUsedSlots() >= warehouseCapacity()) {
         baseStatus_ = "収納箱がいっぱいだよ";
-        return;
+        return false;
     }
 
     const ItemData* object = objectForRingItem(objectCatalog_, ringItem);
@@ -7460,32 +7770,28 @@ void Game::depositStorageTarget(StorageTransferTarget target, int count)
     refreshOrbitEffects();
     baseStorageDepositSelection_ = std::clamp(baseStorageDepositSelection_, 0, std::max(0, static_cast<int>(ringItems.size()) - 1));
     baseStatus_ = "収納箱にしまいました";
+    return true;
 }
 
-void Game::withdrawStorageTarget(StorageTransferTarget target, int count)
+bool Game::withdrawStorageTarget(StorageTransferTarget target, int count)
 {
     if (!target.valid || target.source != BaseItemSource::Warehouse) {
         baseStatus_ = "取り出すアイテムがないよ";
-        return;
+        return false;
     }
 
     if (target.storageEntry.kind == StorageEntryKind::Stack) {
         if (target.storageEntry.index < 0 || target.storageEntry.index >= static_cast<int>(warehouseObjectStacks_.size())) {
             baseStatus_ = "取り出すアイテムがないよ";
-            return;
+            return false;
         }
         InventoryObjectStack& stack = warehouseObjectStacks_[static_cast<std::size_t>(target.storageEntry.index)];
         const int moveCount = std::clamp(count, 1, std::max(1, stack.count));
-        const std::string objectId = stack.objectId;
-        if (!inventory_.canAddObjectItem(objectCatalog_, objectId)) {
+        ItemData movedItem = stack.item;
+        movedItem.id = stack.objectId;
+        if (!inventory_.addObjectStack(movedItem, moveCount)) {
             baseStatus_ = "リュックがいっぱいだよ";
-            return;
-        }
-        for (int i = 0; i < moveCount; ++i) {
-            if (!inventory_.addObjectItem(objectCatalog_, objectId)) {
-                baseStatus_ = "リュックがいっぱいだよ";
-                return;
-            }
+            return false;
         }
         stack.count -= moveCount;
         if (stack.count <= 0) {
@@ -7494,22 +7800,23 @@ void Game::withdrawStorageTarget(StorageTransferTarget target, int count)
         }
         baseStorageWithdrawSelection_ = std::clamp(baseStorageWithdrawSelection_, 0, StorageWithdrawSlotCount - 1);
         baseStatus_ = "リュックに取り出したよ";
-        return;
+        return true;
     }
 
     if (target.storageEntry.index < 0 || target.storageEntry.index >= static_cast<int>(warehouseObjectInstances_.size())) {
         baseStatus_ = "取り出すアイテムがないよ";
-        return;
+        return false;
     }
     InventoryObjectInstance moved = warehouseObjectInstances_[static_cast<std::size_t>(target.storageEntry.index)];
     if (!inventory_.addObjectInstance(objectCatalog_, moved.instance)) {
         baseStatus_ = "リュックがいっぱいだよ";
-        return;
+        return false;
     }
     removeWarehouseDisplaySlotAtEntryIndex(static_cast<int>(warehouseObjectStacks_.size()) + target.storageEntry.index);
     warehouseObjectInstances_.erase(warehouseObjectInstances_.begin() + target.storageEntry.index);
     baseStorageWithdrawSelection_ = std::clamp(baseStorageWithdrawSelection_, 0, StorageWithdrawSlotCount - 1);
     baseStatus_ = "リュックに取り出したよ";
+    return true;
 }
 
 std::vector<Game::StorageTransferTarget> Game::storageWithdrawTargets() const
@@ -7583,7 +7890,7 @@ Game::StorageBatchTransferSummary Game::storageBulkWithdrawSummary() const
             !storageTransferTargetAvailable(target)) {
             continue;
         }
-        summary.itemCount += std::max(0, storageTransferTargetStackCount(target));
+        ++summary.selectedCount;
         if (storageTransferTargetIsStack(target)) {
             if (backpackStackIds.insert(key.stableId).second) {
                 ++summary.requiredSlots;
@@ -7599,7 +7906,7 @@ bool Game::withdrawStorageBulkSelection()
 {
     pruneStorageBulkWithdrawSelection();
     const StorageBatchTransferSummary summary = storageBulkWithdrawSummary();
-    if (summary.itemCount <= 0) {
+    if (summary.selectedCount <= 0) {
         baseStatus_ = "取り出すアイテムが選択されていないよ";
         return false;
     }
@@ -7628,8 +7935,13 @@ bool Game::withdrawStorageBulkSelection()
         bool transferable = true;
         if (storageTransferTargetIsStack(target)) {
             const int itemCount = storageTransferTargetStackCount(target);
-            for (int itemIndex = 0; itemIndex < itemCount && transferable; ++itemIndex) {
-                transferable = previewInventory.addObjectItem(objectCatalog_, key.stableId);
+            const ItemData* item = storageEntryItem(target.storageEntry, true);
+            if (item != nullptr) {
+                ItemData movedItem = *item;
+                movedItem.id = key.stableId;
+                transferable = previewInventory.addObjectStack(movedItem, itemCount);
+            } else {
+                transferable = false;
             }
         } else {
             const ItemInstance* instance = storageEntryInstance(target.storageEntry, true);
@@ -7648,7 +7960,9 @@ bool Game::withdrawStorageBulkSelection()
             baseStatus_ = "取り出す内容が変わりました";
             return false;
         }
-        withdrawStorageTarget(target, storageTransferTargetStackCount(target));
+        if (!withdrawStorageTarget(target, storageTransferTargetStackCount(target))) {
+            return false;
+        }
     }
 
     syncWarehouseDisplaySlots();
@@ -7658,8 +7972,45 @@ bool Game::withdrawStorageBulkSelection()
         0,
         StorageWithdrawSlotCount - 1);
     clearStorageBatchSelectionState();
-    baseStatus_ = std::to_string(summary.itemCount) + "個をリュックに取り出したよ";
+    baseStatus_ = std::to_string(summary.selectedCount) + "個をリュックに取り出したよ";
     return true;
+}
+
+int Game::storageBulkActionCount() const
+{
+    return 1 + std::clamp(unlockedRingPresetSlotCount(), 0, RingPresetSlotCount);
+}
+
+UiButtonState Game::storageBulkActionState(int actionIndex) const
+{
+    if (actionIndex == 0) {
+        return uiButtonState(canDepositAnyBackpackItem());
+    }
+
+    const int presetIndex = actionIndex - 1;
+    const bool available = presetIndex >= 0 &&
+        presetIndex < unlockedRingPresetSlotCount() &&
+        ringPresets_.registered(presetIndex);
+    return uiButtonState(available);
+}
+
+bool Game::canDepositAnyBackpackItem() const
+{
+    for (const InventoryObjectStack& stack : inventory_.objectStacks()) {
+        if (canAddWarehouseObjectStack(stack.objectId, stack.count)) {
+            return true;
+        }
+    }
+
+    if (warehouseUsedSlots() >= warehouseCapacity()) {
+        return false;
+    }
+    return std::any_of(
+        inventory_.objectInstances().begin(),
+        inventory_.objectInstances().end(),
+        [this](const InventoryObjectInstance& instance) {
+            return !inventory_.isStaffEquipped(instance.instance.instanceId);
+        });
 }
 
 void Game::depositAllBackpackItems()
@@ -7668,38 +8019,26 @@ void Game::depositAllBackpackItems()
     int skippedFullCount = 0;
     int skippedStaffCount = 0;
 
-    const auto findWarehouseStack = [this](std::string_view objectId) {
-        return std::find_if(warehouseObjectStacks_.begin(), warehouseObjectStacks_.end(), [objectId](const InventoryObjectStack& stack) {
-            return stack.objectId == objectId;
-        });
-    };
-
     const std::vector<InventoryObjectStack> backpackStacks = inventory_.objectStacks();
     for (const InventoryObjectStack& stack : backpackStacks) {
         if (stack.objectId.empty() || stack.count <= 0) {
             continue;
         }
 
-        const bool existingStack = findWarehouseStack(stack.objectId) != warehouseObjectStacks_.end();
-        if (!existingStack && warehouseUsedSlots() >= warehouseCapacity()) {
+        const int moveCount = stack.count;
+        if (!canAddWarehouseObjectStack(stack.objectId, moveCount)) {
             skippedFullCount += stack.count;
             continue;
         }
 
-        const int moveCount = stack.count;
         if (!inventory_.removeObjectItemCount(stack.objectId, moveCount)) {
             continue;
         }
-
-        auto it = findWarehouseStack(stack.objectId);
-        if (it == warehouseObjectStacks_.end()) {
-            syncWarehouseDisplaySlots();
-            warehouseItemLayout_.insertEntry(
-                static_cast<int>(warehouseObjectStacks_.size()));
-            warehouseObjectStacks_.push_back(InventoryObjectStack{stack.item, moveCount});
-        } else {
-            it->item = stack.item;
-            it->count += moveCount;
+        if (!addWarehouseObjectStack(stack, moveCount)) {
+            ItemData restoredItem = stack.item;
+            restoredItem.id = stack.objectId;
+            (void)inventory_.addObjectStack(restoredItem, moveCount);
+            continue;
         }
         storedCount += moveCount;
     }
@@ -7735,13 +8074,19 @@ void Game::depositAllBackpackItems()
         return;
     }
 
-    baseStatus_ = std::to_string(storedCount) + "個しまいました";
+    std::vector<std::string> resultLines{
+        std::to_string(storedCount) + "個のアイテムをしまったよ",
+    };
+    baseStatus_ = resultLines.front();
     if (skippedFullCount > 0) {
         baseStatus_ += " / 満杯で" + std::to_string(skippedFullCount) + "個残りました";
+        resultLines.push_back("収納箱がいっぱいで" + std::to_string(skippedFullCount) + "個残ったよ");
     }
     if (skippedStaffCount > 0) {
         baseStatus_ += " / 装備中の杖は残したよ";
+        resultLines.push_back("装備中の杖はリュックに残したよ");
     }
+    openUiResultDialog(baseResultDialog_, "収納完了", std::move(resultLines));
 }
 
 void Game::prepareRingPresetFromWarehouse(int presetIndex)
@@ -7766,6 +8111,7 @@ void Game::prepareRingPresetFromWarehouse(int presetIndex)
         unlockedRingCount());
     if (missingItems.empty()) {
         baseStatus_ = "プリセット" + std::to_string(presetIndex + 1) + "の必要アイテムは手元にあります";
+        openUiResultDialog(baseResultDialog_, "準備結果", {baseStatus_});
         return;
     }
 
@@ -7867,7 +8213,9 @@ void Game::prepareRingPresetFromWarehouse(int presetIndex)
             ++vanishedCount;
             continue;
         }
-        if (!inventory_.addObjectItem(objectCatalog_, pick.objectId)) {
+        ItemData movedItem = it->item;
+        movedItem.id = pick.objectId;
+        if (!inventory_.addObjectStack(movedItem, 1)) {
             ++fullCount;
             continue;
         }
@@ -7883,6 +8231,7 @@ void Game::prepareRingPresetFromWarehouse(int presetIndex)
     syncWarehouseDisplaySlots();
     syncEncyclopediaFromInventoryAndRing();
 
+    std::vector<std::string> resultLines;
     if (withdrawnCount <= 0) {
         if (fullCount > 0) {
             baseStatus_ = "リュックがいっぱいで取り出せないよ";
@@ -7892,15 +8241,20 @@ void Game::prepareRingPresetFromWarehouse(int presetIndex)
     } else {
         baseStatus_ = "プリセット" + std::to_string(presetIndex + 1) + "ぶんを" + std::to_string(withdrawnCount) + "個取り出したよ";
     }
+    resultLines.push_back(baseStatus_);
     if (notFoundCount > 0) {
         baseStatus_ += " / 収納箱になし " + std::to_string(notFoundCount);
+        resultLines.push_back("収納箱になし：" + std::to_string(notFoundCount) + "個");
     }
     if (fullCount > 0) {
         baseStatus_ += " / リュック満杯 " + std::to_string(fullCount);
+        resultLines.push_back("リュック満杯：" + std::to_string(fullCount) + "個");
     }
     if (vanishedCount > 0) {
         baseStatus_ += " / 取り出せず " + std::to_string(vanishedCount);
+        resultLines.push_back("取り出せず：" + std::to_string(vanishedCount) + "個");
     }
+    openUiResultDialog(baseResultDialog_, "準備結果", std::move(resultLines));
 }
 
 int Game::upgradeCost(int index) const
@@ -8091,8 +8445,8 @@ void Game::closeBaseFacilityScreens()
     baseBrokenRingDepartureConfirm_ = {};
     baseStorageActive_ = false;
     baseStorageMode_ = StorageUiMode::Closed;
-    baseStorageQuantityDialog_ = {};
-    baseStorageQuantityPending_ = {};
+    baseQuantityDialog_ = {};
+    baseQuantityPending_ = {};
     clearStorageBatchSelectionState();
     closeUiCommandMenu(baseStorageCommandMenu_);
     baseSellActive_ = false;
@@ -9083,6 +9437,8 @@ void Game::openRingWorkshop()
     baseRingWorkshopUpgradeTabs_ = {};
     baseRingWorkshopUpgradeScrollOffset_ = 0.0f;
     baseRingWorkshopUpgradeScroll_ = {};
+    ringWorkshopRadiusSliderState().dismissValue();
+    ringWorkshopRespecConfirmState() = {};
     resetRingWorkshopDraft();
     baseStatus_.clear();
 }
@@ -9155,7 +9511,33 @@ bool Game::adjustRingWorkshopRespec(RingLevelUpgradeSelection from, RingLevelUpg
     return true;
 }
 
-void Game::confirmRingWorkshopRespec()
+bool Game::openRingWorkshopRespecConfirm()
+{
+    if (!ringWorkshopRespecChanged()) {
+        baseStatus_ = "配分は変更されていないよ";
+        return false;
+    }
+
+    const int moneyCost = ringWorkshopRespecMoneyCost();
+    const int moonCost = ringWorkshopRespecMoonCost();
+    const bool executable =
+        money_ >= moneyCost &&
+        inventory_.materialCount(MaterialType::MoonFragment) >= moonCost;
+    UiConfirmDialogState& confirm = ringWorkshopRespecConfirmState();
+    openUiConfirmDialog(
+        confirm,
+        "再調整の確認",
+        "",
+        "再調整する",
+        "戻る",
+        executable ? 0 : 1);
+    confirm.confirmState = uiButtonState(executable);
+    ringWorkshopRespecSource_.reset();
+    baseStatus_.clear();
+    return true;
+}
+
+void Game::applyRingWorkshopRespec()
 {
     if (!ringWorkshopRespecChanged()) {
         baseStatus_ = "配分は変更されていないよ";
@@ -9180,7 +9562,80 @@ void Game::confirmRingWorkshopRespec()
     levelRingUpgradePoints_ = ringWorkshopDraftUpgradePoints_;
     ringWorkshopRespecSource_.reset();
     applyPermanentUpgrades();
+    playAudioSe(AudioSeRingWorkshopRespec);
     baseStatus_ = "リング強化の配分を再調整したよ";
+}
+
+void Game::drawRingWorkshopRespecConfirmDialog(Renderer& renderer, UiRect panel) const
+{
+    const UiConfirmDialogState& confirm = ringWorkshopRespecConfirmState();
+    if (!confirm.open) {
+        return;
+    }
+
+    UiModalNavigationScope navigationScope(panel);
+    UiWindowScope window(
+        renderer,
+        "base.ring_workshop.respec.confirm",
+        panel,
+        confirm.title,
+        uiConfirmDialogHelpText(),
+        UiWindowOptions{true, true});
+
+    const UiRect body = baseActionConfirmBodyRect(panel);
+    float y = body.pos.y;
+    renderer.drawText({body.pos.x, y}, "この内容で再調整を実行する？", ui::Text, 2);
+    y += renderer.measureText("この内容で再調整を実行する？", 2).y + 22.0f;
+
+    constexpr std::size_t VisibleChangeRows = 2;
+    std::vector<ConfirmPreviewRow> previewRows;
+    int changedItemCount = 0;
+    const int ringCount = unlockedRingCount();
+    for (int ringIndex = 0; ringIndex < ringCount; ++ringIndex) {
+        const RingLevelUpgradePoints& current = levelRingUpgradePoints_[static_cast<std::size_t>(ringIndex)];
+        const RingLevelUpgradePoints& draft = ringWorkshopDraftUpgradePoints_[static_cast<std::size_t>(ringIndex)];
+        for (int kindIndex = 0; kindIndex < RingLevelUpgradeKindCount; ++kindIndex) {
+            const RingLevelUpgradeKind kind = ringWorkshopKindForIndex(kindIndex);
+            const int currentPoints = ringLevelUpgradePoint(current, kind);
+            const int draftPoints = ringLevelUpgradePoint(draft, kind);
+            if (currentPoints == draftPoints) {
+                continue;
+            }
+            ++changedItemCount;
+            if (previewRows.size() < VisibleChangeRows) {
+                previewRows.push_back({
+                    ringDisplayNameWithSpaceSuffix(ringIndex, ringCount, ringLevelUpgradeKindName(kind)),
+                    std::to_string(currentPoints) + "点",
+                    std::to_string(draftPoints) + "点",
+                });
+            }
+        }
+    }
+    for (const ConfirmPreviewRow& row : previewRows) {
+        drawConfirmPreviewRow(renderer, body, y, row);
+    }
+    if (changedItemCount > static_cast<int>(previewRows.size())) {
+        renderer.drawText(
+            {body.pos.x, y},
+            "ほか" + std::to_string(changedItemCount - static_cast<int>(previewRows.size())) + "項目を変更",
+            ui::TextMuted,
+            2);
+        y += 31.0f;
+    }
+
+    const std::vector<RequirementRow> requirements{
+        moneyRequirementRow(ringWorkshopRespecMoneyCost(), money_),
+        materialRequirementRow(
+            MaterialType::MoonFragment,
+            ringWorkshopRespecMoonCost(),
+            inventory_.materialCount(MaterialType::MoonFragment)),
+    };
+    drawRequirementSubWindow(
+        renderer,
+        objectCatalog_,
+        baseActionConfirmRequirementRect(panel, body, y, requirements.size()),
+        requirements);
+    drawUiConfirmDialogButtons(renderer, confirm, panel);
 }
 
 const char* Game::ringWorkshopUpgradeName(RingWorkshopUpgrade upgrade) const
@@ -9611,6 +10066,7 @@ void Game::buyRingWorkshopUpgrade(RingWorkshopUpgrade upgrade)
     }
     applyPermanentUpgrades();
     resetRingWorkshopDraft();
+    playAudioSe(AudioSeRingWorkshopUpgrade);
     const float afterValue = ringWorkshopUpgradeCurrentValue(upgrade);
     baseStatus_.clear();
     openUiResultDialog(
@@ -9808,9 +10264,7 @@ void Game::applyEffectDiscoveries(const std::vector<EffectDiscoveryEvent>& disco
         return;
     }
 
-    if (encyclopedia_.noteEffectEvents(discoveries, objectCatalog_) > 0) {
-        playAudioSe(AudioSeEffectDiscovery);
-    }
+    encyclopedia_.noteEffectEvents(discoveries, objectCatalog_);
 }
 
 void Game::recordMainObjectObtained(std::string_view objectId)
@@ -11059,10 +11513,10 @@ void Game::updateBaseDiaryScreen(const Input& input, UiContext& ui)
     } else if (ui.hovered(uiConfirmDialogButtonRect(panel, 1))) {
         baseDiarySelection_ = 1;
     }
-    if (input.pressed(InputAction::MoveLeft) || input.pressed(InputAction::MoveUp) || input.activeRingDelta() < 0) {
+    if (input.pressed(InputAction::MoveLeft) || input.pressed(InputAction::MoveUp)) {
         baseDiarySelection_ = 1;
     }
-    if (input.pressed(InputAction::MoveRight) || input.pressed(InputAction::MoveDown) || input.activeRingDelta() > 0) {
+    if (input.pressed(InputAction::MoveRight) || input.pressed(InputAction::MoveDown)) {
         baseDiarySelection_ = 0;
     }
 
@@ -11075,7 +11529,7 @@ void Game::updateBaseDiaryScreen(const Input& input, UiContext& ui)
             baseDiaryMessage_ = "保存したよ";
             baseDiarySummary_ = currentDiarySaveSummary();
         } else {
-            ui.emitSound(UiSoundEvent::Cancel);
+            ui.rejectAction();
             baseDiaryMode_ = BaseDiaryMode::Error;
             baseDiarySelection_ = 0;
             baseDiaryMessage_ = message.empty() ? "セーブに失敗したよ" : message;
@@ -11173,17 +11627,22 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             ? storageBulkWithdrawSummary()
             : storageBulkDepositSummary();
         baseStorageBatchSelection_.confirm.confirmState = uiButtonState(
-            summary.itemCount > 0 && summary.fits());
+            summary.selectedCount > 0 && summary.fits());
         const UiConfirmDialogResult result = updateUiConfirmDialog(
             baseStorageBatchSelection_.confirm,
             ui,
             input,
             confirmPanel);
         if (result == UiConfirmDialogResult::Confirmed) {
-            if (withdrawing) {
-                withdrawStorageBulkSelection();
-            } else {
-                depositStorageBulkSelection();
+            const bool succeeded = withdrawing
+                ? withdrawStorageBulkSelection()
+                : depositStorageBulkSelection();
+            ui.emitActionResult(succeeded);
+            if (!succeeded) {
+                openStorageBatchTransferFailureDialog(
+                    baseResultDialog_,
+                    withdrawing,
+                    baseStatus_);
             }
         }
         ui.block(confirmPanel);
@@ -11199,7 +11658,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             input,
             confirmPanel);
         if (result == UiConfirmDialogResult::Confirmed) {
-            sellMerchantBulkSelection();
+            ui.emitActionResult(sellMerchantBulkSelection());
         }
         ui.block(confirmPanel);
         return;
@@ -11212,20 +11671,29 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         return;
     }
 
-    if (baseStorageQuantityDialog_.open) {
-        const UiRect quantityPanel = storageQuantityDialogRect();
-        const UiQuantityDialogResult quantityResult = updateUiQuantityDialog(baseStorageQuantityDialog_, ui, input, quantityPanel);
+    if (baseQuantityDialog_.open) {
+        const UiRect quantityPanel = baseQuantityDialogRect({
+            static_cast<float>(camera_.width()),
+            static_cast<float>(camera_.height()),
+        });
+        const UiQuantityDialogResult quantityResult = updateUiQuantityDialog(baseQuantityDialog_, ui, input, quantityPanel);
         if (quantityResult == UiQuantityDialogResult::Confirmed) {
-            const int quantity = baseStorageQuantityDialog_.value;
-            const StorageQuantityPending pending = baseStorageQuantityPending_;
-            baseStorageQuantityPending_ = {};
-            if (pending.operation == StorageQuantityOperation::Deposit) {
-                depositStorageTarget(pending.target, quantity);
-            } else if (pending.operation == StorageQuantityOperation::Withdraw) {
-                withdrawStorageTarget(pending.target, quantity);
+            const int quantity = baseQuantityDialog_.value;
+            const BaseQuantityPending pending = baseQuantityPending_;
+            baseQuantityPending_ = {};
+            bool succeeded = false;
+            if (pending.operation == BaseQuantityOperation::StorageDeposit) {
+                succeeded = depositStorageTarget(pending.target, quantity);
+            } else if (pending.operation == BaseQuantityOperation::StorageWithdraw) {
+                succeeded = withdrawStorageTarget(pending.target, quantity);
+            } else if (pending.operation == BaseQuantityOperation::MerchantBuy) {
+                succeeded = buyMerchantProduct(pending.merchantProductIndex, quantity);
+            } else if (pending.operation == BaseQuantityOperation::MerchantSell) {
+                succeeded = sellMerchantTarget(pending.target, quantity);
             }
+            ui.emitActionResult(succeeded);
         } else if (quantityResult == UiQuantityDialogResult::Cancelled) {
-            baseStorageQuantityPending_ = {};
+            baseQuantityPending_ = {};
         }
         ui.block(quantityPanel);
         return;
@@ -11253,7 +11721,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                     ui.emitSound(UiSoundEvent::ItemMove);
                 } else {
                     baseStatus_ = "配置できないよ";
-                    ui.emitSound(UiSoundEvent::Cancel);
+                    ui.rejectAction();
                 }
                 break;
             case ItemGridInteractionEvent::ProtectionRequested:
@@ -11267,22 +11735,26 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                     ui.emitSound(UiSoundEvent::Confirm);
                 } else if (result == ItemProtectionToggleResult::Unsupported) {
                     baseStatus_ = "個体アイテムのみ保護できます";
-                    ui.emitSound(UiSoundEvent::Cancel);
+                    ui.rejectAction();
                 } else {
                     baseStatus_ = "アイテム未選択";
-                    ui.emitSound(UiSoundEvent::Cancel);
+                    ui.rejectAction();
                 }
                 break;
             }
             case ItemGridInteractionEvent::ProtectionBlocked:
                 baseStatus_ = "つかみ中は保護変更できないよ";
-                ui.emitSound(UiSoundEvent::Cancel);
+                ui.rejectAction();
                 break;
             case ItemGridInteractionEvent::GrabCancelled:
                 baseStatus_ = interaction.item.valid()
                     ? "配置をキャンセルしたよ"
                     : "アイテム未選択";
-                ui.emitSound(UiSoundEvent::Cancel);
+                if (interaction.item.valid()) {
+                    ui.emitSound(UiSoundEvent::Cancel);
+                } else {
+                    ui.rejectAction();
+                }
                 break;
             }
             return interaction.consumed;
@@ -11299,6 +11771,30 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseProcessingConfirmTarget_ = {};
         } else if (result == UiConfirmDialogResult::Cancelled) {
             baseProcessingConfirmTarget_ = {};
+            baseStatus_.clear();
+        }
+        ui.block(confirmPanel);
+        return;
+    }
+
+    UiConfirmDialogState& ringWorkshopRespecConfirm = ringWorkshopRespecConfirmState();
+    if (ringWorkshopRespecConfirm.open) {
+        const UiRect confirmPanel = baseProcessingConfirmRect();
+        const bool executable =
+            baseRingWorkshopActive_ &&
+            baseRingWorkshopMode_ == RingWorkshopMode::Respec &&
+            ringWorkshopRespecChanged() &&
+            money_ >= ringWorkshopRespecMoneyCost() &&
+            inventory_.materialCount(MaterialType::MoonFragment) >= ringWorkshopRespecMoonCost();
+        ringWorkshopRespecConfirm.confirmState = uiButtonState(executable);
+        const UiConfirmDialogResult result = updateUiConfirmDialog(
+            ringWorkshopRespecConfirm,
+            ui,
+            input,
+            confirmPanel);
+        if (result == UiConfirmDialogResult::Confirmed) {
+            applyRingWorkshopRespec();
+        } else if (result == UiConfirmDialogResult::Cancelled) {
             baseStatus_.clear();
         }
         ui.block(confirmPanel);
@@ -11342,6 +11838,8 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseRingWorkshopUpgradeTabs_ = {};
             baseRingWorkshopUpgradeScrollOffset_ = 0.0f;
             baseRingWorkshopUpgradeScroll_ = {};
+            ringWorkshopRadiusSliderState().dismissValue();
+            ringWorkshopRespecConfirmState() = {};
             resetRingWorkshopDraft();
             baseStatus_.clear();
         };
@@ -11354,6 +11852,8 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseRingWorkshopUpgradeTabs_ = {};
             baseRingWorkshopUpgradeScrollOffset_ = 0.0f;
             baseRingWorkshopUpgradeScroll_ = {};
+            ringWorkshopRadiusSliderState().dismissValue();
+            ringWorkshopRespecConfirmState() = {};
             baseStatus_.clear();
         };
         if (uiCancelRequested(baseCancelState_, input, ui, workshopBounds)) {
@@ -11394,14 +11894,19 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                     return;
                 }
             };
-            if (input.pressed(InputAction::MoveUp)) {
-                baseRingWorkshopSelection_ = (baseRingWorkshopSelection_ + RingWorkshopActionCount - 1) % RingWorkshopActionCount;
-            }
-            if (input.pressed(InputAction::MoveDown)) {
-                baseRingWorkshopSelection_ = (baseRingWorkshopSelection_ + 1) % RingWorkshopActionCount;
+            if (!ui.navigationActive()) {
+                if (input.pressed(InputAction::MoveUp)) {
+                    baseRingWorkshopSelection_ = (baseRingWorkshopSelection_ + RingWorkshopActionCount - 1) % RingWorkshopActionCount;
+                }
+                if (input.pressed(InputAction::MoveDown)) {
+                    baseRingWorkshopSelection_ = (baseRingWorkshopSelection_ + 1) % RingWorkshopActionCount;
+                }
             }
             for (int i = 0; i < RingWorkshopActionCount; ++i) {
                 const UiRect rect = ringWorkshopActionChoiceRect(i);
+                if (ui.navigationFocused(rect)) {
+                    baseRingWorkshopSelection_ = i;
+                }
                 if (updateClickSelection(ui, rect, i, baseRingWorkshopSelection_)) {
                     chooseAction(i);
                     ui.block(workshopBounds);
@@ -11435,13 +11940,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 };
                 ringTabRects[static_cast<std::size_t>(i)] = ringWorkshopRingTabRect(i, ringCount);
             }
-            UiTabsInput ringTabsInput{};
-            ringTabsInput.focusDelta = input.activeRingDelta();
-            const int directRingFocus = input.shortcutSlotPressed();
-            if (directRingFocus >= 0 && directRingFocus < ringCount) {
-                ringTabsInput.directFocusIndex = directRingFocus;
-            }
-            ringTabsInput.commit = ringTabsInput.focusDelta != 0 || ringTabsInput.directFocusIndex >= 0;
+            const UiTabsInput ringTabsInput = ringWorkshopRingTabsInput(input, ringCount);
             const int ringSelection = updateUiTabs(
                 baseRingWorkshopRingTabs_,
                 ui,
@@ -11457,11 +11956,13 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             }
 
             int move = 0;
-            if (input.pressed(InputAction::MoveUp) || input.pressed(InputAction::MoveLeft)) {
-                --move;
-            }
-            if (input.pressed(InputAction::MoveDown) || input.pressed(InputAction::MoveRight)) {
-                ++move;
+            if (!ui.navigationActive()) {
+                if (input.pressed(InputAction::MoveUp)) {
+                    --move;
+                }
+                if (input.pressed(InputAction::MoveDown)) {
+                    ++move;
+                }
             }
             if (move != 0) {
                 baseRingWorkshopSelection_ = (baseRingWorkshopSelection_ + move + RespecSelectionCount) % RespecSelectionCount;
@@ -11475,7 +11976,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 if (!ringWorkshopRespecSource_) {
                     const RingLevelUpgradePoints& points = ringWorkshopDraftUpgradePoints_[static_cast<std::size_t>(selection.ringIndex)];
                     if (ringLevelUpgradePoint(points, selection.kind) <= 0) {
-                        ui.emitSound(UiSoundEvent::Cancel);
+                        ui.rejectAction();
                         baseStatus_ = "移動元にできるポイントがないよ";
                         return;
                     }
@@ -11500,6 +12001,9 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 std::clamp(baseRingWorkshopSelection_, 0, RingLevelUpgradeKindCount - 1),
                 respecTabs,
                 respecTabRects);
+            if (baseRingWorkshopUpgradeTabs_.navigationFocused) {
+                baseRingWorkshopSelection_ = baseRingWorkshopUpgradeTabs_.focusedIndex;
+            }
             if (selectedTab >= 0) {
                 baseRingWorkshopSelection_ = selectedTab;
                 chooseRespecKind(selectedTab);
@@ -11507,16 +12011,17 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 return;
             }
             const UiRect confirmRect = ringWorkshopRespecConfirmRect();
+            if (ui.navigationFocused(confirmRect)) {
+                baseRingWorkshopSelection_ = RingLevelUpgradeKindCount;
+            }
             if (updateClickSelection(ui, confirmRect, RingLevelUpgradeKindCount, baseRingWorkshopSelection_)) {
-                ui.emitSound(UiSoundEvent::Confirm);
-                confirmRingWorkshopRespec();
+                ui.emitActionResult(openRingWorkshopRespecConfirm());
                 ui.block(workshopBounds);
                 return;
             }
             if (input.confirmPressed() || input.useItemPressed()) {
                 if (baseRingWorkshopSelection_ == RingLevelUpgradeKindCount) {
-                    ui.emitSound(UiSoundEvent::Confirm);
-                    confirmRingWorkshopRespec();
+                    ui.emitActionResult(openRingWorkshopRespecConfirm());
                 } else {
                     chooseRespecKind(baseRingWorkshopSelection_);
                 }
@@ -11544,13 +12049,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 };
                 ringTabRects[static_cast<std::size_t>(i)] = ringWorkshopRingTabRect(i, ringCount);
             }
-            UiTabsInput ringTabsInput{};
-            ringTabsInput.focusDelta = input.activeRingDelta();
-            const int directRingFocus = input.shortcutSlotPressed();
-            if (directRingFocus >= 0 && directRingFocus < ringCount) {
-                ringTabsInput.directFocusIndex = directRingFocus;
-            }
-            ringTabsInput.commit = ringTabsInput.focusDelta != 0 || ringTabsInput.directFocusIndex >= 0;
+            const UiTabsInput ringTabsInput = ringWorkshopRingTabsInput(input, ringCount);
             const int ringSelection = updateUiTabs(
                 baseRingWorkshopRingTabs_,
                 ui,
@@ -11566,11 +12065,13 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             }
 
             int move = 0;
-            if (input.pressed(InputAction::MoveUp)) {
-                --move;
-            }
-            if (input.pressed(InputAction::MoveDown)) {
-                ++move;
+            if (!ui.navigationActive()) {
+                if (input.pressed(InputAction::MoveUp)) {
+                    --move;
+                }
+                if (input.pressed(InputAction::MoveDown)) {
+                    ++move;
+                }
             }
             if (move != 0) {
                 baseRingWorkshopSelection_ = (baseRingWorkshopSelection_ + move + RingWorkshopUpgradeDisplayCount) % RingWorkshopUpgradeDisplayCount;
@@ -11605,14 +12106,32 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             const float minMeters = ringWorkshopRadiusMinForRing(ringIndex);
             const float maxMeters = ringWorkshopRadiusMaxForRing(ringIndex);
             if (maxMeters > minMeters + 0.001f) {
-                const UiRect gaugeRect = ringWorkshopRadiusGaugeRect(scrollLayout);
-                if (input.mouseLeftHeld() && scrollViewport.contains(ui.mouse()) && gaugeRect.contains(ui.mouse()) && !ui.pointerConsumed()) {
-                    const float ratio = clamp((ui.mouse().x - gaugeRect.pos.x) / std::max(1.0f, gaugeRect.size.x), 0.0f, 1.0f);
-                    setRingWorkshopRadiusSettingForRing(ringIndex, minMeters + (maxMeters - minMeters) * ratio);
-                    ui.block(gaugeRect);
+                UiSliderState& radiusSliderState = ringWorkshopRadiusSliderState();
+                UiSliderResult radiusResult{
+                    ringWorkshopRadiusSettingForRing(ringIndex),
+                    false,
+                    false,
+                };
+                if (radiusSliderState.dragging() || scrollViewport.contains(ui.mouse())) {
+                    radiusResult = updateUiSlider(
+                        ui,
+                        input,
+                        ringWorkshopRadiusSliderRect(scrollLayout),
+                        radiusResult.value,
+                        ringWorkshopRadiusSliderSpec(minMeters, maxMeters),
+                        radiusSliderState);
+                } else if (input.mouseLeftPressed()) {
+                    radiusSliderState.dismissValue();
+                }
+                if (radiusResult.changed) {
+                    setRingWorkshopRadiusSettingForRing(ringIndex, radiusResult.value);
+                }
+                if (radiusResult.interacting) {
                     ui.block(workshopBounds);
                     return;
                 }
+            } else {
+                ringWorkshopRadiusSliderState().dismissValue();
             }
 
             const auto chooseUpgradeItem = [this, &ui](int item) {
@@ -11644,10 +12163,27 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 baseRingWorkshopSelection_,
                 upgradeTabs,
                 upgradeTabRects);
+            if (baseRingWorkshopUpgradeTabs_.navigationFocused) {
+                baseRingWorkshopSelection_ = baseRingWorkshopUpgradeTabs_.focusedIndex;
+                keepUiScrollAreaRectVisible(
+                    scrollViewport,
+                    ringWorkshopUpgradeItemRect(scrollLayout, baseRingWorkshopSelection_),
+                    scrollContentHeight,
+                    baseRingWorkshopUpgradeScrollOffset_,
+                    scrollStyle);
+                scrollLayout = makeUiScrollAreaLayout(
+                    scrollViewport,
+                    scrollContentHeight,
+                    baseRingWorkshopUpgradeScrollOffset_,
+                    scrollStyle);
+                ui.setNavigationFocus(ringWorkshopUpgradeItemRect(scrollLayout, baseRingWorkshopSelection_));
+            }
             if (selectedTab >= 0) {
                 baseRingWorkshopSelection_ = selectedTab;
-                ui.block(workshopBounds);
-                return;
+                if (!ui.navigationActive()) {
+                    ui.block(workshopBounds);
+                    return;
+                }
             }
             if (ui.pressed(ringWorkshopUpgradeConfirmRect())) {
                 chooseUpgradeItem(baseRingWorkshopSelection_);
@@ -11672,7 +12208,9 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseStorageMode_ == StorageUiMode::ChooseAction ||
             baseStorageMode_ == StorageUiMode::Bulk;
         const UiRect storageBounds = storageSmallDialog
-            ? (baseStorageMode_ == StorageUiMode::Bulk ? storageBulkDialogRect() : storageActionDialogRect())
+            ? (baseStorageMode_ == StorageUiMode::Bulk
+                ? storageBulkDialogRect(storageBulkActionCount())
+                : storageActionDialogRect())
             : merchantPanelRect();
         const auto resetStoragePointerPress = [this]() {
             baseItemInteraction_.cancelPointer();
@@ -11692,8 +12230,8 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             clearBaseItemInteractions();
             baseStorageActive_ = false;
             baseStorageMode_ = StorageUiMode::Closed;
-            baseStorageQuantityDialog_ = {};
-            baseStorageQuantityPending_ = {};
+            baseQuantityDialog_ = {};
+            baseQuantityPending_ = {};
             clearStorageBatchSelectionState();
             baseStatus_.clear();
         };
@@ -11704,36 +12242,34 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseStorageMode_ = StorageUiMode::ChooseAction;
             baseStorageActionSelection_ = 0;
             baseStorageBulkSelection_ = 0;
-            baseStorageQuantityDialog_ = {};
-            baseStorageQuantityPending_ = {};
+            baseQuantityDialog_ = {};
+            baseQuantityPending_ = {};
             clearStorageBatchSelectionState();
             baseStatus_.clear();
         };
         const auto openQuantityDialog = [this](StorageQuantityOperation operation, StorageTransferTarget target, int maxCount) {
-            InventoryUiEntryView view = storageTransferTargetView(target);
-            const std::optional<InventoryUiItemStats> stats = inventoryUiEntryStats(view);
-            const bool broken = stats ? stats->broken : (view.item != nullptr && view.item->durability == 0);
-            const std::string itemName = view.item != nullptr && !view.item->name.empty()
-                ? itemDisplayName(view.item->name, broken)
-                : std::string("アイテム");
-            baseStorageQuantityPending_ = StorageQuantityPending{operation, target};
+            baseQuantityPending_.operation = operation == StorageQuantityOperation::Deposit
+                ? BaseQuantityOperation::StorageDeposit
+                : BaseQuantityOperation::StorageWithdraw;
+            baseQuantityPending_.target = target;
+            baseQuantityPending_.merchantProductIndex = -1;
             openUiQuantityDialog(
-                baseStorageQuantityDialog_,
+                baseQuantityDialog_,
                 operation == StorageQuantityOperation::Deposit ? "しまう個数" : "取り出す個数",
-                itemName,
                 1,
                 std::max(1, maxCount),
                 std::max(1, maxCount),
                 "個");
             baseStatus_.clear();
         };
-        const auto applyStorageTarget = [this, &openQuantityDialog](StorageQuantityOperation operation, StorageTransferTarget target) {
+        const auto applyStorageTarget = [this, &openQuantityDialog, &ui](StorageQuantityOperation operation, StorageTransferTarget target) {
             if (!storageTransferTargetAvailable(target)) {
                 if (operation == StorageQuantityOperation::Deposit &&
                     target.source == BaseItemSource::Backpack) {
                     if (const InventoryObjectInstance* instance = inventory_.screenObjectInstanceAt(target.slotIndex)) {
                         if (inventory_.isStaffEquipped(instance->instance.instanceId)) {
                             baseStatus_ = "装備中の杖はしまえないよ";
+                            ui.rejectAction();
                             return;
                         }
                     }
@@ -11748,6 +12284,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                         ? "しまうアイテムがないよ"
                         : "取り出すアイテムがないよ";
                 }
+                ui.rejectAction();
                 return;
             }
             if (storageTransferTargetIsStack(target)) {
@@ -11758,9 +12295,9 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 }
             }
             if (operation == StorageQuantityOperation::Deposit) {
-                depositStorageTarget(target, 1);
+                ui.emitActionResult(depositStorageTarget(target, 1));
             } else {
-                withdrawStorageTarget(target, 1);
+                ui.emitActionResult(withdrawStorageTarget(target, 1));
             }
         };
         const auto storageCommandItems = [this]() {
@@ -11772,7 +12309,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         };
         const auto openStorageCommand = [&](StorageQuantityOperation operation, StorageTransferTarget target, Vec2 anchor) {
             if (!storageTransferTargetAvailable(target)) {
-                ui.emitSound(UiSoundEvent::Cancel);
+                ui.rejectAction();
                 if (operation == StorageQuantityOperation::Deposit &&
                     target.source == BaseItemSource::Backpack) {
                     if (const InventoryObjectInstance* instance = inventory_.screenObjectInstanceAt(target.slotIndex)) {
@@ -11896,7 +12433,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             const bool registered = storagePresetShortcut < unlockedRingPresetSlotCount() &&
                 ringPresets_.registered(storagePresetShortcut);
             prepareRingPresetFromWarehouse(storagePresetShortcut);
-            ui.emitSound(registered ? UiSoundEvent::Confirm : UiSoundEvent::Cancel);
+            ui.emitActionResult(registered);
             ui.block(storageBounds);
             return;
         }
@@ -11938,40 +12475,34 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         }
 
         if (baseStorageMode_ == StorageUiMode::Bulk) {
-            constexpr int ChoiceCount = 4;
-            baseStorageBulkSelection_ = std::clamp(baseStorageBulkSelection_, 0, ChoiceCount - 1);
+            const int actionCount = storageBulkActionCount();
+            baseStorageBulkSelection_ = std::clamp(baseStorageBulkSelection_, 0, actionCount - 1);
             if (input.pressed(InputAction::MoveUp)) {
-                baseStorageBulkSelection_ = (baseStorageBulkSelection_ + ChoiceCount - 1) % ChoiceCount;
+                baseStorageBulkSelection_ = (baseStorageBulkSelection_ + actionCount - 1) % actionCount;
             }
             if (input.pressed(InputAction::MoveDown)) {
-                baseStorageBulkSelection_ = (baseStorageBulkSelection_ + 1) % ChoiceCount;
+                baseStorageBulkSelection_ = (baseStorageBulkSelection_ + 1) % actionCount;
             }
 
             const auto executeBulkAction = [&](int selection) {
+                if (!tryActivateUiButton(ui, storageBulkActionState(selection))) {
+                    baseStatus_ = selection == 0
+                        ? "しまえるアイテムがないよ"
+                        : "プリセット" + std::to_string(selection) + "は未登録だよ";
+                    return;
+                }
                 if (selection == 0) {
                     depositAllBackpackItems();
                     ui.emitSound(UiSoundEvent::Confirm);
                     return;
                 }
                 const int presetIndex = selection - 1;
-                if (presetIndex >= unlockedRingPresetSlotCount()) {
-                    baseStatus_ = unlockedRingPresetSlotCount() <= 0
-                        ? "リングプリセットは未解禁だよ"
-                        : "プリセット" + std::to_string(presetIndex + 1) + "は未解禁だよ";
-                    ui.emitSound(UiSoundEvent::Cancel);
-                    return;
-                }
-                if (!ringPresets_.registered(presetIndex)) {
-                    baseStatus_ = "プリセット" + std::to_string(presetIndex + 1) + "は未登録だよ";
-                    ui.emitSound(UiSoundEvent::Cancel);
-                    return;
-                }
                 prepareRingPresetFromWarehouse(presetIndex);
                 ui.emitSound(UiSoundEvent::Confirm);
             };
 
-            for (int i = 0; i < ChoiceCount; ++i) {
-                const UiRect rect = storageBulkChoiceRect(i);
+            for (int i = 0; i < actionCount; ++i) {
+                const UiRect rect = storageBulkChoiceRect(storageBounds, i);
                 if (ui.selectionFocused(rect)) {
                     baseStorageBulkSelection_ = i;
                 }
@@ -12000,12 +12531,10 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             for (int i = 0; i < sourceCount; ++i) {
                 const int source = storageDepositSourceValue(i);
                 sourceTabs[static_cast<std::size_t>(i)] = baseItemSourceTabItem(source, unlockedRingCount(), true);
-                sourceTabRects[static_cast<std::size_t>(i)] = storageDepositSourceRect(i);
+                sourceTabRects[static_cast<std::size_t>(i)] = storageDepositSourceRect(i, sourceCount);
             }
-            UiTabsInput sourceTabsInput{};
-            sourceTabsInput.focusDelta = input.activeRingDelta();
-            sourceTabsInput.commit =
-                sourceTabsInput.focusDelta != 0 ||
+            UiTabsInput sourceTabsInput = makeUiCycleTabsInput(input, sourceCount);
+            sourceTabsInput.commit = sourceTabsInput.commit ||
                 (!ui.navigationActive() && (input.confirmPressed() || input.useItemPressed()));
             const int sourceSelection = updateUiTabs(
                 baseStorageDepositSourceTabs_,
@@ -12052,18 +12581,26 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                     ui.emitSound(UiSoundEvent::Confirm);
                 } else {
                     const StorageBatchTransferSummary summary = storageBulkDepositSummary();
-                    if (summary.itemCount <= 0) {
+                    if (summary.selectedCount <= 0) {
                         baseStatus_ = "しまうアイテムが選択されていないよ";
-                        ui.emitSound(UiSoundEvent::Cancel);
+                        openStorageBatchTransferFailureDialog(
+                            baseResultDialog_,
+                            false,
+                            baseStatus_);
+                        ui.rejectAction();
                     } else if (!summary.fits()) {
                         baseStatus_ = "収納箱の空きがあと" +
                             std::to_string(summary.requiredSlots - summary.freeSlots) + "枠必要だよ";
-                        ui.emitSound(UiSoundEvent::Cancel);
+                        openStorageBatchTransferFailureDialog(
+                            baseResultDialog_,
+                            false,
+                            baseStatus_);
+                        ui.rejectAction();
                     } else {
                         openUiConfirmDialog(
                             baseStorageBatchSelection_.confirm,
                             "まとめてしまう",
-                            std::to_string(summary.itemCount) + "個のアイテムをまとめてしまいますか？\n" +
+                            std::to_string(summary.selectedCount) + "個のアイテムをまとめてしまいますか？\n" +
                                 "収納箱 " + std::to_string(warehouseUsedSlots()) + "/" +
                                 std::to_string(warehouseCapacity()) + " → " +
                                 std::to_string(warehouseUsedSlots() + summary.requiredSlots) + "/" +
@@ -12088,7 +12625,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 }
                 if (ui.pressed(batchItemActionButtonRect(1))) {
                     if (baseStorageBatchSelection_.selectedKeys.empty()) {
-                        ui.emitSound(UiSoundEvent::Cancel);
+                        ui.rejectAction();
                     } else {
                         baseStorageBatchSelection_.selectedKeys.clear();
                         baseStatus_ = "まとめ収納の選択を解除したよ";
@@ -12105,7 +12642,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 resetStoragePointerPress();
                 clearBaseItemInteractions();
                 const bool sorted = sortBaseItemSource(baseStorageDepositSource_);
-                ui.emitSound(sorted ? UiSoundEvent::ItemMove : UiSoundEvent::Cancel);
+                ui.emitActionResult(sorted, UiSoundEvent::ItemMove);
                 baseStorageDepositSelection_ = 0;
                 ui.block(storageBounds);
                 return;
@@ -12115,52 +12652,6 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 const int ringIndex = std::clamp(ringIndexFromBaseItemSource(baseStorageDepositSource_), 0, SpellRingCount - 1);
                 const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(ringIndex);
                 const int itemCount = static_cast<int>(ringItems.size());
-                if (baseStorageBatchSelection_.active) {
-                    if (itemCount <= 0) {
-                        baseStorageDepositSelection_ = 0;
-                    } else {
-                        baseStorageDepositSelection_ = std::clamp(
-                            baseStorageDepositSelection_,
-                            0,
-                            itemCount - 1);
-                    }
-                    for (int i = 0; i < itemCount; ++i) {
-                        const UiRect rect = storageRingItemRect(
-                            ringItems[static_cast<std::size_t>(i)],
-                            spellRing_,
-                            balance_,
-                            ringIndex,
-                            i,
-                            itemCount,
-                            ringPreviewSeconds);
-                        if (ui.selectionFocused(rect)) {
-                            baseStorageDepositSelection_ = i;
-                        }
-                        if (ui.pressed(rect)) {
-                            baseStorageDepositSelection_ = i;
-                            if (toggleStorageBulkDepositTarget(storageDepositTargetForScreenSlot(i))) {
-                                baseStatus_.clear();
-                                ui.emitSound(UiSoundEvent::Confirm);
-                            } else {
-                                ui.emitSound(UiSoundEvent::Cancel);
-                            }
-                            ui.block(storageBounds);
-                            return;
-                        }
-                    }
-                    if (input.confirmPressed() || input.useItemPressed()) {
-                        if (toggleStorageBulkDepositTarget(
-                                storageDepositTargetForScreenSlot(baseStorageDepositSelection_))) {
-                            baseStatus_.clear();
-                            ui.emitSound(UiSoundEvent::Confirm);
-                        } else {
-                            ui.emitSound(UiSoundEvent::Cancel);
-                        }
-                    }
-                    ui.block(storageBounds);
-                    return;
-                }
-
                 const BaseRingInteractionResult interaction =
                     updateBaseRingItemInteraction(
                         input,
@@ -12168,20 +12659,33 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                         baseStorageDepositSource_,
                         baseStorageDepositSelection_,
                         BaseRingPreviewKind::Storage,
-                        ringPreviewSeconds);
+                        ringPreviewSeconds,
+                        baseStorageBatchSelection_.active
+                            ? BaseRingInteractionMode::ActivateOnly
+                            : BaseRingInteractionMode::Manage);
                 if (interaction.activateIndex >= 0) {
-                    const UiRect rect = storageRingItemRect(
-                        ringItems[static_cast<std::size_t>(interaction.activateIndex)],
-                        spellRing_,
-                        balance_,
-                        ringIndex,
-                        interaction.activateIndex,
-                        itemCount,
-                        ringPreviewSeconds);
-                    openStorageCommand(
-                        StorageQuantityOperation::Deposit,
-                        storageDepositTargetForScreenSlot(interaction.activateIndex),
-                        rect.pos + Vec2{rect.size.x - 20.0f, 0.0f});
+                    if (baseStorageBatchSelection_.active) {
+                        if (toggleStorageBulkDepositTarget(
+                                storageDepositTargetForScreenSlot(interaction.activateIndex))) {
+                            baseStatus_.clear();
+                            ui.emitSound(UiSoundEvent::Confirm);
+                        } else {
+                            ui.rejectAction();
+                        }
+                    } else {
+                        const UiRect rect = storageRingItemRect(
+                            ringItems[static_cast<std::size_t>(interaction.activateIndex)],
+                            spellRing_,
+                            balance_,
+                            ringIndex,
+                            interaction.activateIndex,
+                            itemCount,
+                            ringPreviewSeconds);
+                        openStorageCommand(
+                            StorageQuantityOperation::Deposit,
+                            storageDepositTargetForScreenSlot(interaction.activateIndex),
+                            rect.pos + Vec2{rect.size.x - 20.0f, 0.0f});
+                    }
                 }
                 ui.block(storageBounds);
                 return;
@@ -12201,7 +12705,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                         baseStatus_.clear();
                         ui.emitSound(UiSoundEvent::Confirm);
                     } else {
-                        ui.emitSound(UiSoundEvent::Cancel);
+                        ui.rejectAction();
                     }
                     ui.block(storageBounds);
                     return;
@@ -12220,7 +12724,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                         baseStatus_.clear();
                         ui.emitSound(UiSoundEvent::Confirm);
                     } else {
-                        ui.emitSound(UiSoundEvent::Cancel);
+                        ui.rejectAction();
                     }
                 }
                 ui.block(storageBounds);
@@ -12282,18 +12786,26 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                     ui.emitSound(UiSoundEvent::Confirm);
                 } else {
                     const StorageBatchTransferSummary summary = storageBulkWithdrawSummary();
-                    if (summary.itemCount <= 0) {
+                    if (summary.selectedCount <= 0) {
                         baseStatus_ = "取り出すアイテムが選択されていないよ";
-                        ui.emitSound(UiSoundEvent::Cancel);
+                        openStorageBatchTransferFailureDialog(
+                            baseResultDialog_,
+                            true,
+                            baseStatus_);
+                        ui.rejectAction();
                     } else if (!summary.fits()) {
                         baseStatus_ = "リュックの空きがあと" +
                             std::to_string(summary.requiredSlots - summary.freeSlots) + "枠必要だよ";
-                        ui.emitSound(UiSoundEvent::Cancel);
+                        openStorageBatchTransferFailureDialog(
+                            baseResultDialog_,
+                            true,
+                            baseStatus_);
+                        ui.rejectAction();
                     } else {
                         openUiConfirmDialog(
                             baseStorageBatchSelection_.confirm,
                             "まとめて取り出す",
-                            std::to_string(summary.itemCount) + "個のアイテムをまとめて取り出す？\n" +
+                            std::to_string(summary.selectedCount) + "個のアイテムをまとめて取り出す？\n" +
                                 "リュック " + std::to_string(backpackUsedSlots()) + "/" +
                                 std::to_string(inventory_.screenSlotCount()) + " → " +
                                 std::to_string(backpackUsedSlots() + summary.requiredSlots) + "/" +
@@ -12318,7 +12830,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 }
                 if (ui.pressed(storageWithdrawBatchActionButtonRect(1))) {
                     if (baseStorageBatchSelection_.selectedKeys.empty()) {
-                        ui.emitSound(UiSoundEvent::Cancel);
+                        ui.rejectAction();
                     } else {
                         baseStorageBatchSelection_.selectedKeys.clear();
                         baseStatus_ = "まとめ取り出しの選択を解除したよ";
@@ -12333,7 +12845,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 (input.arrangeItemsPressed() || ui.pressed(storageWithdrawSortButtonRect()))) {
                 clearBaseItemInteractions();
                 const bool hasItems = warehouseUsedSlots() > 0;
-                ui.emitSound(hasItems ? UiSoundEvent::ItemMove : UiSoundEvent::Cancel);
+                ui.emitActionResult(hasItems, UiSoundEvent::ItemMove);
                 sortWarehouseByItemOrder();
                 ui.block(storageBounds);
                 return;
@@ -12343,7 +12855,8 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                     input,
                     pageRects,
                     baseStorageWarehousePage_,
-                    warehousePageCount)) {
+                    warehousePageCount,
+                    StoragePageSelectorInputMode::CycleShortcutAndArrows)) {
                 closeStorageCommand();
                 resetStoragePointerPress();
                 clearBaseItemInteractions();
@@ -12365,7 +12878,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                         baseStatus_.clear();
                         ui.emitSound(UiSoundEvent::Confirm);
                     } else {
-                        ui.emitSound(UiSoundEvent::Cancel);
+                        ui.rejectAction();
                     }
                     ui.block(storageBounds);
                     return;
@@ -12384,7 +12897,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                         baseStatus_.clear();
                         ui.emitSound(UiSoundEvent::Confirm);
                     } else {
-                        ui.emitSound(UiSoundEvent::Cancel);
+                        ui.rejectAction();
                     }
                 }
                 ui.block(storageBounds);
@@ -12512,12 +13025,12 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         const auto openProcessingCommand = [&](int slotIndex) {
             const ProcessingTarget target = processingTargetForScreenSlot(slotIndex);
             if (!target.valid) {
-                ui.emitSound(UiSoundEvent::Cancel);
+                ui.rejectAction();
                 baseStatus_ = "加工対象がないよ";
                 return false;
             }
             if (!processingTargetHasAvailableCommand(target)) {
-                ui.emitSound(UiSoundEvent::Cancel);
+                ui.rejectAction();
                 baseStatus_ = "このアイテムにできる作業がないよ";
                 return false;
             }
@@ -12594,8 +13107,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             sourceTabs[static_cast<std::size_t>(i)] = baseItemSourceTabItem(i, unlockedRingCount(), enabled);
             sourceTabRects[static_cast<std::size_t>(i)] = baseProcessingSourceRect(i, sourceCount);
         }
-        UiTabsInput sourceTabsInput{};
-        sourceTabsInput.focusDelta = baseItemSourceIsWarehouse(baseProcessingSource_) ? 0 : input.activeRingDelta();
+        UiTabsInput sourceTabsInput = makeUiCycleTabsInput(input, sourceCount);
         const int directSourceFocus = input.shortcutSlotPressed();
         if (directSourceFocus >= 0 && directSourceFocus < sourceCount) {
             sourceTabsInput.directFocusIndex = directSourceFocus;
@@ -12633,7 +13145,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             clearBaseItemInteractions();
             baseProcessingSelection_ = 0;
             const bool sorted = sortBaseItemSource(baseProcessingSource_);
-            ui.emitSound(sorted ? UiSoundEvent::ItemMove : UiSoundEvent::Cancel);
+            ui.emitActionResult(sorted, UiSoundEvent::ItemMove);
             ui.block(merchantPanelRect());
             return;
         }
@@ -12649,7 +13161,8 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                     input,
                     pageRects,
                     baseStorageWarehousePage_,
-                    warehousePageCount)) {
+                    warehousePageCount,
+                    StoragePageSelectorInputMode::ArrowsOnly)) {
                 closeProcessingCommand();
                 clearBaseItemInteractions();
                 ui.block(merchantPanelRect());
@@ -12741,6 +13254,8 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         };
         const auto closeMerchant = [&]() {
             closeMerchantCommands();
+            baseQuantityDialog_ = {};
+            baseQuantityPending_ = {};
             clearMerchantBulkSellState();
             clearBaseItemInteractions();
             baseSellActive_ = false;
@@ -12749,6 +13264,8 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         };
         const auto returnToMerchantMenu = [&]() {
             closeMerchantCommands();
+            baseQuantityDialog_ = {};
+            baseQuantityPending_ = {};
             clearMerchantBulkSellState();
             clearBaseItemInteractions();
             baseMerchantMode_ = MerchantUiMode::ChooseAction;
@@ -12787,23 +13304,20 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             clearBaseItemInteractions();
             baseSellSelection_ = 0;
             const bool sorted = sortBaseItemSource(baseMerchantSellSource_);
-            ui.emitSound(sorted ? UiSoundEvent::ItemMove : UiSoundEvent::Cancel);
+            ui.emitActionResult(sorted, UiSoundEvent::ItemMove);
         };
         const auto openSellCommand = [&](int slotIndex) {
             const MerchantSellTarget target = merchantSellTargetForScreenSlot(slotIndex);
             if (!target.valid) {
-                ui.emitSound(UiSoundEvent::Cancel);
+                ui.rejectAction();
                 baseStatus_ = "売却対象がないよ";
                 return;
             }
             if (!merchantSellTargetAvailable(target)) {
-                ui.emitSound(UiSoundEvent::Confirm);
+                ui.rejectAction();
                 sellMerchantTarget(target, 1);
                 return;
             }
-            const bool stackItem =
-                (target.source == BaseItemSource::Backpack && inventory_.screenObjectStackAt(slotIndex) != nullptr) ||
-                (target.source == BaseItemSource::Warehouse && target.storageEntry.kind == StorageEntryKind::Stack);
             baseMerchantSellCommandIndex_ = slotIndex;
             baseMerchantSellCommandSource_ = baseMerchantSellSource_;
             Vec2 commandAnchor = uiCommandMenuAnchorForSlot(
@@ -12824,14 +13338,14 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                         ringPreviewSeconds).pos;
                 }
             }
-            const std::array<UiCommandMenuItem, 2> items{{{stackItem ? "1個売る" : "売る", true}, {"すべて売る", stackItem}}};
+            const std::array<UiCommandMenuItem, 1> items{{{"売る", true}}};
             openUiCommandMenu(
                 baseMerchantSellCommandMenu_,
                 commandAnchor,
                 merchantPanelRect(),
-                stackItem ? 2 : 1,
+                static_cast<int>(items.size()),
                 items.data(),
-                168.0f,
+                120.0f,
                 2);
         };
         const auto activateSellSlot = [&](int slotIndex) {
@@ -12845,12 +13359,12 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 ui.emitSound(UiSoundEvent::Confirm);
             } else {
                 sellMerchantTarget(target, 1);
-                ui.emitSound(UiSoundEvent::Cancel);
+                ui.rejectAction();
             }
         };
         const auto openBuyCommand = [&](int index) {
             if (index < 0 || index >= static_cast<int>(merchantStock_.size())) {
-                ui.emitSound(UiSoundEvent::Cancel);
+                ui.rejectAction();
                 baseStatus_ = "購入できる商品がないよ";
                 return;
             }
@@ -12941,24 +13455,31 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 const MerchantSellTarget commandTarget = merchantSellTargetForSourceSlot(
                     baseMerchantSellCommandSource_,
                     baseMerchantSellCommandIndex_);
-                const bool stackCommand =
-                    (commandTarget.source == BaseItemSource::Backpack &&
-                        baseMerchantSellCommandIndex_ >= 0 &&
-                        inventory_.screenObjectStackAt(baseMerchantSellCommandIndex_) != nullptr) ||
-                    (commandTarget.source == BaseItemSource::Warehouse &&
-                        commandTarget.storageEntry.kind == StorageEntryKind::Stack);
-                const std::array<UiCommandMenuItem, 2> commandItems{{{stackCommand ? "1個売る" : "売る", true}, {"すべて売る", stackCommand}}};
-                const int commandItemCount = stackCommand ? 2 : 1;
+                const std::array<UiCommandMenuItem, 1> commandItems{{{"売る", true}}};
                 const bool commandOpenBeforeUpdate = baseMerchantSellCommandMenu_.open;
                 const int commandSelection = updateUiCommandMenu(
                     baseMerchantSellCommandMenu_,
                     ui,
                     input,
                     commandItems.data(),
-                    commandItemCount);
+                    static_cast<int>(commandItems.size()));
                 if (commandSelection >= 0 && baseMerchantSellCommandIndex_ >= 0) {
-                    sellMerchantTarget(commandTarget, commandSelection == 1 && stackCommand ? 0 : 1);
+                    const int quantity = merchantSellTargetQuantity(commandTarget);
                     closeMerchantCommands();
+                    if (quantity > 1) {
+                        baseQuantityPending_.operation = BaseQuantityOperation::MerchantSell;
+                        baseQuantityPending_.target = commandTarget;
+                        baseQuantityPending_.merchantProductIndex = -1;
+                        openUiQuantityDialog(
+                            baseQuantityDialog_,
+                            "売る個数",
+                            1,
+                            quantity,
+                            1,
+                            "個");
+                    } else {
+                        ui.emitActionResult(sellMerchantTarget(commandTarget, 1));
+                    }
                     ui.block(merchantBounds);
                     return;
                 } else if (!baseMerchantSellCommandMenu_.open && commandOpenBeforeUpdate) {
@@ -12985,8 +13506,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 sourceTabs[static_cast<std::size_t>(i)] = baseItemSourceTabItem(i, unlockedRingCount(), enabled);
                 sourceTabRects[static_cast<std::size_t>(i)] = merchantSellSourceRect(i, sourceCount);
             }
-            UiTabsInput sourceTabsInput{};
-            sourceTabsInput.focusDelta = baseItemSourceIsWarehouse(baseMerchantSellSource_) ? 0 : input.activeRingDelta();
+            UiTabsInput sourceTabsInput = makeUiCycleTabsInput(input, sourceCount);
             const int directSourceFocus = input.shortcutSlotPressed();
             if (directSourceFocus >= 0 && directSourceFocus < sourceCount) {
                 sourceTabsInput.directFocusIndex = directSourceFocus;
@@ -13029,7 +13549,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                     const MerchantBulkSellSummary summary = merchantBulkSellSummary();
                     if (summary.itemCount <= 0) {
                         baseStatus_ = "売却するアイテムが選択されていないよ";
-                        ui.emitSound(UiSoundEvent::Cancel);
+                        ui.rejectAction();
                     } else {
                         openUiConfirmDialog(
                             baseMerchantBulkSell_.confirm,
@@ -13056,7 +13576,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 }
                 if (ui.pressed(batchItemActionButtonRect(1))) {
                     if (baseMerchantBulkSell_.selectedKeys.empty()) {
-                        ui.emitSound(UiSoundEvent::Cancel);
+                        ui.rejectAction();
                     } else {
                         baseMerchantBulkSell_.selectedKeys.clear();
                         baseStatus_ = "まとめ売りの選択を解除したよ";
@@ -13082,7 +13602,8 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                         input,
                         pageRects,
                         baseStorageWarehousePage_,
-                        warehousePageCount)) {
+                        warehousePageCount,
+                        StoragePageSelectorInputMode::ArrowsOnly)) {
                     closeMerchantCommands();
                     clearBaseItemInteractions();
                     ui.block(merchantBounds);
@@ -13143,40 +13664,6 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             }
 
             if (baseItemSourceIsRing(baseMerchantSellSource_)) {
-                const int ringIndex = std::clamp(ringIndexFromBaseItemSource(baseMerchantSellSource_), 0, SpellRingCount - 1);
-                const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(ringIndex);
-                const int itemCount = static_cast<int>(ringItems.size());
-                if (baseMerchantBulkSell_.active) {
-                    if (itemCount <= 0) {
-                        baseSellSelection_ = 0;
-                    } else {
-                        baseSellSelection_ = std::clamp(baseSellSelection_, 0, itemCount - 1);
-                    }
-                    for (int i = 0; i < itemCount; ++i) {
-                        const UiRect rect = merchantSellRingItemRect(
-                            ringItems[static_cast<std::size_t>(i)],
-                            spellRing_,
-                            balance_,
-                            ringIndex,
-                            i,
-                            itemCount,
-                            ringPreviewSeconds);
-                        if (ui.selectionFocused(rect)) {
-                            baseSellSelection_ = i;
-                        }
-                        if (ui.pressed(rect)) {
-                            baseSellSelection_ = i;
-                            activateSellSlot(i);
-                            ui.block(merchantBounds);
-                            return;
-                        }
-                    }
-                    if (input.confirmPressed() || input.useItemPressed()) {
-                        activateSellSlot(baseSellSelection_);
-                    }
-                    ui.block(merchantBounds);
-                    return;
-                }
                 const BaseRingInteractionResult interaction =
                     updateBaseRingItemInteraction(
                         input,
@@ -13184,7 +13671,10 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                         baseMerchantSellSource_,
                         baseSellSelection_,
                         BaseRingPreviewKind::Merchant,
-                        ringPreviewSeconds);
+                        ringPreviewSeconds,
+                        baseMerchantBulkSell_.active
+                            ? BaseRingInteractionMode::ActivateOnly
+                            : BaseRingInteractionMode::Manage);
                 if (interaction.activateIndex >= 0) {
                     activateSellSlot(interaction.activateIndex);
                 }
@@ -13262,8 +13752,24 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 commandItems.data(),
                 static_cast<int>(commandItems.size()));
             if (commandSelection >= 0 && baseMerchantBuyCommandIndex_ >= 0) {
-                buyMerchantProduct(baseMerchantBuyCommandIndex_);
+                const int productIndex = baseMerchantBuyCommandIndex_;
+                const int quantity = merchantProductPurchasableQuantity(
+                    merchantStock_[static_cast<std::size_t>(productIndex)]);
                 closeMerchantCommands();
+                if (quantity > 1) {
+                    baseQuantityPending_.operation = BaseQuantityOperation::MerchantBuy;
+                    baseQuantityPending_.target = {};
+                    baseQuantityPending_.merchantProductIndex = productIndex;
+                    openUiQuantityDialog(
+                        baseQuantityDialog_,
+                        "買う個数",
+                        1,
+                        quantity,
+                        1,
+                        "個");
+                } else {
+                    ui.emitActionResult(buyMerchantProduct(productIndex, 1));
+                }
                 ui.block(merchantBounds);
                 return;
             } else if (!baseMerchantBuyCommandMenu_.open && commandOpenBeforeUpdate) {
@@ -13313,15 +13819,17 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseStatus_.clear();
             return;
         }
-        if (input.pressed(InputAction::MoveUp)) {
-            displaySelection = (displaySelection + upgradeDisplayCount - 1) % upgradeDisplayCount;
-            baseUpgradeSelection_ = baseUpgradeIndexForDisplay(roguelikeTrainer, displaySelection);
-            baseUpgradeTabs_.focusedIndex = displaySelection;
-        }
-        if (input.pressed(InputAction::MoveDown)) {
-            displaySelection = (displaySelection + 1) % upgradeDisplayCount;
-            baseUpgradeSelection_ = baseUpgradeIndexForDisplay(roguelikeTrainer, displaySelection);
-            baseUpgradeTabs_.focusedIndex = displaySelection;
+        if (!ui.navigationActive()) {
+            if (input.pressed(InputAction::MoveUp)) {
+                displaySelection = (displaySelection + upgradeDisplayCount - 1) % upgradeDisplayCount;
+                baseUpgradeSelection_ = baseUpgradeIndexForDisplay(roguelikeTrainer, displaySelection);
+                baseUpgradeTabs_.focusedIndex = displaySelection;
+            }
+            if (input.pressed(InputAction::MoveDown)) {
+                displaySelection = (displaySelection + 1) % upgradeDisplayCount;
+                baseUpgradeSelection_ = baseUpgradeIndexForDisplay(roguelikeTrainer, displaySelection);
+                baseUpgradeTabs_.focusedIndex = displaySelection;
+            }
         }
         std::array<UiVerticalTabItem, BaseUpgradeItemCount> upgradeTabs{};
         std::array<UiRect, BaseUpgradeItemCount> upgradeTabRects{};
@@ -13337,10 +13845,16 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             upgradeTabs,
             upgradeTabRects,
             upgradeDisplayCount);
+        if (baseUpgradeTabs_.navigationFocused) {
+            displaySelection = baseUpgradeTabs_.focusedIndex;
+            baseUpgradeSelection_ = baseUpgradeIndexForDisplay(roguelikeTrainer, displaySelection);
+        }
         if (selectedTab >= 0) {
             baseUpgradeSelection_ = baseUpgradeIndexForDisplay(roguelikeTrainer, selectedTab);
-            ui.block(upgradePanel);
-            return;
+            if (!ui.navigationActive()) {
+                ui.block(upgradePanel);
+                return;
+            }
         }
         if (ui.pressed(baseUpgradeConfirmRect()) || input.confirmPressed() || input.useItemPressed()) {
             if (tryActivateUiButton(ui, uiButtonState(upgradeExecutable(baseUpgradeSelection_)))) {
@@ -13495,11 +14009,6 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
 
             const int warpPointCount = static_cast<int>(selectableWarpPoints.size());
             baseWarpPointSelection_ = std::clamp(baseWarpPointSelection_, 0, warpPointCount - 1);
-            const int warpDelta = input.activeRingDelta();
-            if (warpDelta != 0) {
-                baseWarpPointSelection_ = wrapStoragePageIndex(baseWarpPointSelection_, warpDelta, warpPointCount);
-                ui.setNavigationFocus(baseMiningWarpPointSelectChoiceRect(baseWarpPointSelection_));
-            }
             for (int i = 0; i < warpPointCount; ++i) {
                 const UiRect rect = baseMiningWarpPointSelectChoiceRect(i);
                 if (ui.selectionFocused(rect)) {
@@ -13507,15 +14016,17 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 }
                 if (ui.pressed(rect)) {
                     baseWarpPointSelection_ = i;
-                    ui.emitSound(UiSoundEvent::Confirm);
-                    if (startFromSelectedWarpPoint()) {
+                    const bool started = startFromSelectedWarpPoint();
+                    ui.emitActionResult(started);
+                    if (started) {
                         return;
                     }
                 }
             }
             if (input.confirmPressed() || input.useItemPressed()) {
-                ui.emitSound(UiSoundEvent::Confirm);
-                if (startFromSelectedWarpPoint()) {
+                const bool started = startFromSelectedWarpPoint();
+                ui.emitActionResult(started);
+                if (started) {
                     return;
                 }
             }
@@ -13524,42 +14035,27 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         }
 
         const UiPageSelectorRects stageSelector = baseMiningStageSelectorRects();
-        const int pageDelta = input.activeRingDelta();
-        if (pageDelta < 0 && changeSelectedStage(pageDelta)) {
-            ui.emitSound(UiSoundEvent::TabSwitch);
-            ui.block(miningStartPanel);
-            return;
-        }
-        if (pageDelta > 0 && changeSelectedStage(pageDelta)) {
-            ui.emitSound(UiSoundEvent::TabSwitch);
-            ui.block(miningStartPanel);
-            return;
-        }
-        if ((!ui.navigationActive() && input.pressed(InputAction::MoveLeft)) ||
-            updateUiArrowButton(
+        int stageDelta = uiCycleInputDelta(input, selectableStageCount);
+        if (stageDelta == 0 && updateUiArrowButton(
                 ui,
                 stageSelector.prev,
                 UiArrowDirection::Left,
                 UiArrowButtonVariant::Standard,
                 selectableStageCount > 1)) {
-            if (changeSelectedStage(-1)) {
-                ui.emitSound(UiSoundEvent::TabSwitch);
-                ui.block(miningStartPanel);
-                return;
-            }
+            stageDelta = -1;
         }
-        if ((!ui.navigationActive() && input.pressed(InputAction::MoveRight)) ||
-            updateUiArrowButton(
+        if (stageDelta == 0 && updateUiArrowButton(
                 ui,
                 stageSelector.next,
                 UiArrowDirection::Right,
                 UiArrowButtonVariant::Standard,
                 selectableStageCount > 1)) {
-            if (changeSelectedStage(1)) {
-                ui.emitSound(UiSoundEvent::TabSwitch);
-                ui.block(miningStartPanel);
-                return;
-            }
+            stageDelta = 1;
+        }
+        if (stageDelta != 0 && changeSelectedStage(stageDelta)) {
+            ui.emitSound(UiSoundEvent::TabSwitch);
+            ui.block(miningStartPanel);
+            return;
         }
         if (selectedStageRoguelike) {
             const UiRect startRect = baseMiningStartChoiceRect(0);
@@ -13733,8 +14229,8 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 baseStorageDepositSelection_ = 0;
                 baseStorageWithdrawSelection_ = 0;
                 baseStorageWarehousePage_ = 0;
-                baseStorageQuantityDialog_ = {};
-                baseStorageQuantityPending_ = {};
+                baseQuantityDialog_ = {};
+                baseQuantityPending_ = {};
                 closeUiCommandMenu(baseStorageCommandMenu_);
                 baseStorageCommandOperation_ = StorageQuantityOperation::None;
                 baseStorageCommandTarget_ = {};
@@ -13993,7 +14489,6 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 ui.emitSound(facility.onInteract == BaseFacilityAction::Bookshelf ? UiSoundEvent::BookOpen : UiSoundEvent::Confirm);
                 interact(facility);
             } else if (facility.enabled) {
-                ui.emitSound(UiSoundEvent::Cancel);
                 baseStatus_ = "近くまで移動してください";
             }
             return;
@@ -14303,7 +14798,7 @@ void Game::renderBaseDiaryScreen(Renderer& renderer, UiRect panel) const
         drawUiButton(renderer, uiConfirmDialogButtonRect(panel, 0), "再試行", baseDiarySelection_ == 0, uiActionButtonStyle());
     } else {
         renderer.drawText(messagePos, "保存したよ", Color{202, 255, 216, 255}, 2);
-        drawUiButton(renderer, uiResultDialogOkButtonRect(panel), "閉じる", true, uiActionButtonStyle());
+        drawUiButton(renderer, uiResultDialogOkButtonRect(panel), "閉じる", false, uiActionButtonStyle());
     }
 }
 
@@ -14536,6 +15031,49 @@ void drawBaseActors(
 
 } // namespace
 
+bool Game::basePanelUiActive() const
+{
+    return baseRingWorkshopActive_ ||
+        baseDiaryActive_ ||
+        baseBookshelfActive_ ||
+        baseStorageActive_ ||
+        baseProcessingUiMode_ != ProcessingUiMode::Closed ||
+        baseSellActive_ ||
+        baseUpgradeActive_ ||
+        baseMiningStartChoiceActive_;
+}
+
+bool Game::baseInteractionHintsVisible() const
+{
+    const bool dialogActive =
+        baseStorageBatchSelection_.confirm.open ||
+        baseMerchantBulkSell_.confirm.open ||
+        baseResultDialog_.open ||
+        baseQuantityDialog_.open ||
+        baseProcessingConfirm_.open ||
+        baseBrokenRingDepartureConfirm_.open ||
+        baseRegenerateConfirm_.open ||
+        baseRoguelikeDepartureConfirm_.open;
+    const bool globalUiActive =
+        dialogue_.active() ||
+        pendingStoryTriggerDelayActive() ||
+        !pendingStoryTrigger_.empty() ||
+        !pendingStoryTriggers_.empty() ||
+        firstItemAcquisitionNoticeActive() ||
+        debugNamedSaveDialogMode_ != DebugNamedSaveDialogMode::Closed ||
+        debugItemPickerActive_ ||
+        debugStoryTestActive_ ||
+        portraitExpressionPicker_.active;
+
+    return mode_ == ScreenMode::Base &&
+        !baseEditEnabled_ &&
+        !basePanelUiActive() &&
+        !dialogActive &&
+        !globalUiActive &&
+        !baseMiningRescueDrop_.active &&
+        !screenTransition_.active();
+}
+
 void Game::renderBaseBackdrop(Renderer& renderer) const
 {
     renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}, {24, 28, 32, 255});
@@ -14571,7 +15109,7 @@ void Game::renderBaseBackdrop(Renderer& renderer) const
     }
     applyBaseStoryFacilityOffsets(facilities, baseStoryFacilityOffsets_);
     const Vec2 mouse = currentRenderMousePosition(renderer);
-    const bool showInteractionHints = !dialogue_.active();
+    const bool showInteractionHints = baseInteractionHintsVisible();
     drawBaseFacilities(renderer, facilities, baseArea_, ringWorkshopUnlocked_, basePlayerPosition_, mouse, showInteractionHints);
     renderBaseEditOverlay(renderer);
     drawBaseActors(
@@ -14669,7 +15207,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
     }
     applyBaseStoryFacilityOffsets(facilities, baseStoryFacilityOffsets_);
     const Vec2 mouse = currentRenderMousePosition(renderer);
-    const bool showInteractionHints = !dialogue_.active();
+    const bool showInteractionHints = baseInteractionHintsVisible();
     if (showInteractionHints) {
     if (const BaseFacility* selectedFacility = selectBaseInteractionFacility(basePlayerPosition_, basePlayerFacing_, baseArea_, facilities)) {
         interactionFacility = *selectedFacility;
@@ -14707,14 +15245,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
     }
 
     char buffer[256];
-    const bool panelUiActive = baseRingWorkshopActive_ ||
-        baseDiaryActive_ ||
-        baseBookshelfActive_ ||
-        baseStorageActive_ ||
-        baseProcessingUiMode_ != ProcessingUiMode::Closed ||
-        baseSellActive_ ||
-        baseUpgradeActive_ ||
-        baseMiningStartChoiceActive_;
+    const bool panelUiActive = basePanelUiActive();
     const bool bottomControlHelpBlocked =
         dialogue_.active() ||
         pendingStoryTriggerDelayActive() ||
@@ -14730,12 +15261,15 @@ void Game::renderBaseScreen(Renderer& renderer) const
     const bool bookshelfWideActive = baseBookshelfActive_ && bookshelfPage_ != BookshelfPage::Menu;
     const bool ringWorkshopActionDialogActive = baseRingWorkshopActive_ && baseRingWorkshopMode_ == RingWorkshopMode::ChooseAction;
     const bool ringWorkshopWideActive = baseRingWorkshopActive_ && baseRingWorkshopMode_ != RingWorkshopMode::ChooseAction;
+    const int bulkStorageActionCount = storageBulkActionCount();
     const UiRect panel = baseDiaryActive_
         ? baseDiaryPanelRect()
         : (baseMiningStartChoiceActive_
         ? baseMiningStartPanelRect()
         : (storageActionDialogActive
-        ? (baseStorageMode_ == StorageUiMode::Bulk ? storageBulkDialogRect() : storageActionDialogRect())
+        ? (baseStorageMode_ == StorageUiMode::Bulk
+            ? storageBulkDialogRect(bulkStorageActionCount)
+            : storageActionDialogRect())
         : (merchantActionDialogActive
         ? merchantActionDialogRect()
         : (processingActionDialogActive
@@ -14808,29 +15342,54 @@ void Game::renderBaseScreen(Renderer& renderer) const
             panelTitle = "ダンジョン入口";
         }
         if (baseSellActive_ && baseMerchantMode_ == MerchantUiMode::Sell) {
-            panelHelpText = batchItemWindowHelpText(
-                baseMerchantBulkSell_.active,
-                "売却",
-                "まとめて売る",
-                true);
+            panelHelpText = withUiCycleHelp(
+                batchItemWindowHelpText(
+                    baseMerchantBulkSell_.active,
+                    "売却",
+                    "まとめて売る",
+                    true),
+                baseItemSourceCountForUnlockedRings(unlockedRingCount()),
+                "対象切替");
         } else if (baseStorageActive_ && baseStorageMode_ == StorageUiMode::Deposit) {
-            panelHelpText = batchItemWindowHelpText(
-                baseStorageBatchSelection_.active,
-                "しまう",
-                "まとめてしまう",
-                true);
+            panelHelpText = withUiCycleHelp(
+                batchItemWindowHelpText(
+                    baseStorageBatchSelection_.active,
+                    "しまう",
+                    "まとめてしまう",
+                    true),
+                storageDepositSourceCountForUnlockedRings(unlockedRingCount()),
+                "対象切替");
         } else if (baseStorageActive_ && baseStorageMode_ == StorageUiMode::Withdraw) {
-            panelHelpText = batchItemWindowHelpText(
-                baseStorageBatchSelection_.active,
-                "取り出す",
-                "まとめて取り出す",
-                true);
+            const int warehousePageCount = std::max(
+                1,
+                (warehouseCapacity() + StorageWithdrawSlotCount - 1) / StorageWithdrawSlotCount);
+            panelHelpText = withUiCycleHelp(
+                batchItemWindowHelpText(
+                    baseStorageBatchSelection_.active,
+                    "取り出す",
+                    "まとめて取り出す",
+                    true),
+                warehousePageCount,
+                "ページ切替");
         } else if (baseProcessingUiMode_ == ProcessingUiMode::Enhance) {
-            panelHelpText = "F/Enter 決定  " +
-                inlineInputActionTag(InputAction::ArrangeItems) +
-                " 並び替え  " +
-                inlineInputActionTag(InputAction::GrabOrPlaceItem) +
-                " つかむ/置く  P 保護  Esc 戻る";
+            panelHelpText = withUiCycleHelp(
+                "F/Enter 決定  " +
+                    inlineInputActionTag(InputAction::ArrangeItems) +
+                    " 並び替え  " +
+                    inlineInputActionTag(InputAction::GrabOrPlaceItem) +
+                    " つかむ/置く  P 保護  Esc 戻る",
+                baseItemSourceCountForUnlockedRings(unlockedRingCount()),
+                "対象切替");
+        } else if (baseRingWorkshopActive_ && baseRingWorkshopMode_ != RingWorkshopMode::ChooseAction) {
+            panelHelpText = withUiCycleHelp(
+                "↑/↓ 項目選択  F/Enter 決定  Esc 戻る",
+                unlockedRingCount(),
+                "リング切替");
+        } else if (baseMiningStartChoiceActive_) {
+            panelHelpText = withUiCycleHelp(
+                std::string(BaseFacilityWindowHelpText),
+                static_cast<int>(selectableStageDefinitionsForCurrentUnlockState().size()),
+                "行き先切替");
         }
         if (baseRingItemInteraction_.keyboardMoveActive) {
             panelHelpText = "WASD/矢印 位置変更  F/Enter/" +
@@ -14863,25 +15422,14 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 "プリセット2を準備",
                 "プリセット3を準備",
             };
-            for (int i = 0; i < static_cast<int>(Choices.size()); ++i) {
-                UiButtonStyle style = uiActionButtonStyle();
-                const bool enabled = i == 0 ||
-                    (i - 1 < unlockedRingPresetSlotCount() && ringPresets_.registered(i - 1));
-                if (!enabled) {
-                    style.fill = {18, 24, 42, 150};
-                    style.fillHot = {18, 24, 42, 150};
-                    style.outline = {120, 122, 138, 120};
-                    style.outlineHot = style.outline;
-                    style.text = ui::TextDisabled;
-                    style.imageTint = {180, 180, 190, 130};
-                    style.imageTintHot = {190, 190, 200, 150};
-                }
+            for (int i = 0; i < bulkStorageActionCount; ++i) {
                 drawUiButton(
                     renderer,
-                    storageBulkChoiceRect(i),
+                    storageBulkChoiceRect(panel, i),
                     Choices[static_cast<std::size_t>(i)],
-                    enabled && i == baseStorageBulkSelection_,
-                    style);
+                    i == baseStorageBulkSelection_,
+                    storageBulkActionState(i),
+                    uiActionButtonStyle());
             }
         } else {
             const UiRect detailPanel = merchantDetailPanelRect();
@@ -14894,7 +15442,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 for (int i = 0; i < sourceCount; ++i) {
                     const int source = storageDepositSourceValue(i);
                     sourceTabs[static_cast<std::size_t>(i)] = baseItemSourceTabItem(source, unlockedRingCount(), true);
-                    sourceTabRects[static_cast<std::size_t>(i)] = storageDepositSourceRect(i);
+                    sourceTabRects[static_cast<std::size_t>(i)] = storageDepositSourceRect(i, sourceCount);
                 }
                 const int currentTab = storageDepositSourceTabIndex(baseStorageDepositSource_);
                 drawUiTabs(
@@ -14921,23 +15469,18 @@ void Game::renderBaseScreen(Renderer& renderer) const
                         batchItemActionButtonRect(1),
                         "全解除",
                         false,
-                        batchItemActionButtonStyle(summary.itemCount > 0));
+                        batchItemActionButtonStyle(summary.selectedCount > 0));
                     drawUiButton(
                         renderer,
                         batchItemActionButtonRect(2),
                         "しまう",
                         false,
-                        batchItemActionButtonStyle(summary.itemCount > 0 && summary.fits()));
-                    std::string summaryText = std::to_string(summary.itemCount) + "個選択中";
-                    if (summary.itemCount > 0) {
-                        if (summary.fits()) {
-                            summaryText += "（収納枠 +" + std::to_string(summary.requiredSlots) + "）";
-                        } else {
-                            summaryText += "（あと" +
-                                std::to_string(summary.requiredSlots - summary.freeSlots) + "枠必要）";
-                        }
-                    }
-                    renderer.drawText(batchItemSelectionSummaryPos(), summaryText, ui::Text, 2);
+                        batchItemActionButtonStyle(summary.selectedCount > 0 && summary.fits()));
+                    renderer.drawText(
+                        batchItemSelectionSummaryPos(),
+                        batchItemSelectionCountText(summary.selectedCount),
+                        ui::Text,
+                        2);
                 } else {
                     drawUiButton(
                         renderer,
@@ -14963,6 +15506,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                         renderer,
                         spellRing_,
                         objectCatalog_,
+                        encyclopedia_,
                         balance_,
                         ringIndex,
                         selectedRingIndex,
@@ -14977,15 +15521,8 @@ void Game::renderBaseScreen(Renderer& renderer) const
                             i,
                             static_cast<int>(ringItems.size()),
                             ringPreviewSeconds);
-                        registerUiNavigationTarget(
-                            itemRect,
-                            UiNavigationRole::Control,
-                            i == selectedRingIndex);
-                        if (item.objectId.empty()) {
-                            UiRect labelRect = itemRect;
-                            labelRect.size.y += RingItemBottomLabelExtraHeight;
-                            drawInventoryUiSlotBottomLabel(renderer, labelRect, "収納不可", ui::TextDisabled);
-                        } else if (baseStorageBatchSelection_.active &&
+                        if (!item.objectId.empty() &&
+                            baseStorageBatchSelection_.active &&
                             storageBulkDepositTargetSelected(
                                 storageDepositTargetForSourceSlot(baseStorageDepositSource_, i))) {
                             drawBatchItemSelectionBadge(renderer, itemRect);
@@ -14999,21 +15536,17 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     for (int i = 0; i < inventory_.screenSlotCount(); ++i) {
                         const StorageTransferTarget target = storageDepositTargetForSourceSlot(baseStorageDepositSource_, i);
                         const InventoryUiEntryView view = storageTransferTargetView(target);
-                        const bool disabled =
-                            baseStorageBatchSelection_.active &&
-                            view.item != nullptr &&
+                        const bool disabled = view.item != nullptr &&
                             !storageTransferTargetAvailable(target);
                         InventoryUiSlotStyle style{
                             i == baseStorageDepositSelection_,
                             disabled,
                             48.0f};
+                        applyInventoryUiPowerBadgeDiscovery(style, encyclopedia_);
                         style.contentAlpha = itemGridInteractionContentAlpha(
                             baseItemInteraction_,
                             itemKeyForBaseItemTarget(target).value_or(ItemKey{}));
-                        if (view.item != nullptr && view.instance == nullptr && view.stackCount > 1) {
-                            style.showTopRightCount = true;
-                            style.topRightCount = view.stackCount;
-                        }
+                        applyInventoryUiStackCount(style, view);
                         const UiRect rect = storageTransferGridSlotRect(i);
                         drawInventoryUiSlot(renderer, rect, view, style);
                         if (baseStorageBatchSelection_.active &&
@@ -15046,25 +15579,16 @@ void Game::renderBaseScreen(Renderer& renderer) const
                         storageWithdrawBatchActionButtonRect(1),
                         "全解除",
                         false,
-                        batchItemActionButtonStyle(summary.itemCount > 0));
+                        batchItemActionButtonStyle(summary.selectedCount > 0));
                     drawUiButton(
                         renderer,
                         storageWithdrawBatchActionButtonRect(2),
                         "取り出す",
                         false,
-                        batchItemActionButtonStyle(summary.itemCount > 0 && summary.fits()));
-                    std::string summaryText = std::to_string(summary.itemCount) + "個選択中";
-                    if (summary.itemCount > 0) {
-                        if (summary.fits()) {
-                            summaryText += "（リュック枠 +" + std::to_string(summary.requiredSlots) + "）";
-                        } else {
-                            summaryText += "（あと" +
-                                std::to_string(summary.requiredSlots - summary.freeSlots) + "枠必要）";
-                        }
-                    }
+                        batchItemActionButtonStyle(summary.selectedCount > 0 && summary.fits()));
                     renderer.drawText(
                         storageWithdrawBatchSelectionSummaryPos(),
-                        summaryText,
+                        batchItemSelectionCountText(summary.selectedCount),
                         ui::Text,
                         2);
                 } else {
@@ -15085,13 +15609,11 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     const StorageTransferTarget target = storageWithdrawTargetForSlot(i);
                     const InventoryUiEntryView view = storageTransferTargetView(target);
                     InventoryUiSlotStyle style{i == baseStorageWithdrawSelection_, false, 48.0f};
+                    applyInventoryUiPowerBadgeDiscovery(style, encyclopedia_);
                     style.contentAlpha = itemGridInteractionContentAlpha(
                         baseItemInteraction_,
                         itemKeyForBaseItemTarget(target).value_or(ItemKey{}));
-                    if (view.item != nullptr && view.instance == nullptr && view.stackCount > 1) {
-                        style.showTopRightCount = true;
-                        style.topRightCount = view.stackCount;
-                    }
+                    applyInventoryUiStackCount(style, view);
                     const UiRect rect = storageWithdrawSlotRect(i);
                     drawInventoryUiSlot(renderer, rect, view, style);
                     if (baseStorageBatchSelection_.active &&
@@ -15193,7 +15715,10 @@ void Game::renderBaseScreen(Renderer& renderer) const
             respecTabStyle.labelScale = 3;
             respecTabStyle.valueScale = 2;
             UiTabsState respecTabsState = baseRingWorkshopUpgradeTabs_;
-            const int selectedRespecTab = baseRingWorkshopSelection_ < RingLevelUpgradeKindCount
+            const bool respecListFocused =
+                !navigationUiCursorEnabled_ || respecTabsState.navigationFocused;
+            const int selectedRespecTab =
+                respecListFocused && baseRingWorkshopSelection_ < RingLevelUpgradeKindCount
                 ? baseRingWorkshopSelection_
                 : -1;
             if (selectedRespecTab < 0) {
@@ -15231,7 +15756,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
             float detailY = drawUiDetailHeader(
                 renderer,
                 detailPanel,
-                baseRingWorkshopSelection_ == RingLevelUpgradeKindCount ? "再調整確定" : ringLevelUpgradeKindName(selectedKind));
+                baseRingWorkshopSelection_ == RingLevelUpgradeKindCount ? "この内容で再調整" : ringLevelUpgradeKindName(selectedKind));
             drawUiDetailLine(renderer, detailPanel, detailY, "対象", ringDisplayName(ringIndex, ringCount));
             const int selectedCurrentPoints = ringLevelUpgradePoint(currentRingPoints, selectedKind);
             const int selectedDraftPoints = ringLevelUpgradePoint(draftRingPoints, selectedKind);
@@ -15285,7 +15810,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
             drawUiButton(
                 renderer,
                 ringWorkshopRespecConfirmRect(),
-                ringWorkshopRespecChanged() ? "再調整確定" : "変更なし",
+                ringWorkshopRespecChanged() ? "この内容で再調整" : "変更なし",
                 baseRingWorkshopSelection_ == RingLevelUpgradeKindCount,
                 confirmStyle);
         } else if (baseRingWorkshopMode_ == RingWorkshopMode::Upgrade) {
@@ -15358,15 +15883,16 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 "半径調整",
                 {198, 198, 206, 255},
                 2);
-            UiGaugeStyle radiusGaugeStyle;
-            radiusGaugeStyle.tickCount = 6;
-            radiusGaugeStyle.fill.start = maxMeters > minMeters + 0.001f ? Color{132, 230, 250, 230} : ui::TextDisabled;
-            radiusGaugeStyle.fill.end = maxMeters > minMeters + 0.001f ? Color{190, 246, 220, 230} : ui::TextDisabled;
-            const float radiusRatio = maxMeters > minMeters + 0.001f
-                ? (currentMeters - minMeters) / std::max(0.001f, maxMeters - minMeters)
-                : 0.0f;
-            const UiRect radiusGaugeRect = ringWorkshopRadiusGaugeRect(scrollLayout);
-            drawUiGauge(renderer, radiusGaugeRect, radiusRatio, radiusGaugeStyle);
+            const bool radiusAdjustable = maxMeters > minMeters + 0.001f;
+            const UiSliderSpec radiusSliderSpec = ringWorkshopRadiusSliderSpec(minMeters, maxMeters);
+            const UiRect radiusSliderRect = ringWorkshopRadiusSliderRect(scrollLayout);
+            drawUiSlider(
+                renderer,
+                radiusSliderRect,
+                radiusAdjustable ? currentMeters : radiusSliderSpec.minValue,
+                radiusSliderSpec,
+                ringWorkshopRadiusSliderState(),
+                ringWorkshopRadiusSliderStyle(radiusAdjustable));
             char currentRadiusBuffer[32];
             char radiusRangeBuffer[48];
             std::snprintf(currentRadiusBuffer, sizeof(currentRadiusBuffer), "%.2fm", currentMeters);
@@ -15375,7 +15901,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
             const Vec2 currentRadiusSize = renderer.measureText(currentRadiusBuffer, radiusInfoScale);
             const Vec2 radiusRangeSize = renderer.measureText(radiusRangeBuffer, radiusInfoScale);
             Vec2 radiusInfoPos{
-                radiusGaugeRect.pos.x + (radiusGaugeRect.size.x - currentRadiusSize.x - radiusRangeSize.x) * 0.5f,
+                radiusSliderRect.pos.x + (radiusSliderRect.size.x - currentRadiusSize.x - radiusRangeSize.x) * 0.5f,
                 contentTop + RingWorkshopScrollRadiusInfoTop,
             };
             renderer.drawText(radiusInfoPos, currentRadiusBuffer, ui::Text, radiusInfoScale);
@@ -15389,7 +15915,9 @@ void Game::renderBaseScreen(Renderer& renderer) const
             drawUiVerticalTabs(
                 renderer,
                 baseRingWorkshopUpgradeTabs_,
-                baseRingWorkshopSelection_,
+                !navigationUiCursorEnabled_ || baseRingWorkshopUpgradeTabs_.navigationFocused
+                    ? baseRingWorkshopSelection_
+                    : -1,
                 upgradeTabs.data(),
                 static_cast<int>(upgradeTabs.size()),
                 upgradeTabRects.data(),
@@ -15570,23 +16098,11 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 renderer,
                 spellRing_,
                 objectCatalog_,
+                encyclopedia_,
                 balance_,
                 ringIndex,
                 selectedRingItem,
                 ringPreviewSeconds);
-            for (int i = 0; i < static_cast<int>(ringItems.size()); ++i) {
-                registerUiNavigationTarget(
-                    baseProcessingRingItemRect(
-                        ringItems[static_cast<std::size_t>(i)],
-                        spellRing_,
-                        balance_,
-                        ringIndex,
-                        i,
-                        static_cast<int>(ringItems.size()),
-                        ringPreviewSeconds),
-                    UiNavigationRole::Control,
-                    i == selectedRingItem);
-            }
         } else if (warehouseSource) {
             const int warehousePageCount = std::max(1, (warehouseCapacity() + StoragePaneSlotCount - 1) / StoragePaneSlotCount);
             const int warehousePage = std::clamp(baseStorageWarehousePage_, 0, warehousePageCount - 1);
@@ -15599,13 +16115,11 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 const InventoryUiEntryView view = entryViewForScreenSlot(i);
                 const bool unavailable = view.item != nullptr && !processingTargetHasAvailableCommand(processingTargetForScreenSlot(i));
                 InventoryUiSlotStyle style{i == baseProcessingSelection_, unavailable, 48.0f};
+                applyInventoryUiPowerBadgeDiscovery(style, encyclopedia_);
                 style.contentAlpha = itemGridInteractionContentAlpha(
                     baseItemInteraction_,
                     itemKeyForProcessingTarget(processingTargetForScreenSlot(i)).value_or(ItemKey{}));
-                if (view.item != nullptr && view.instance == nullptr && view.stackCount > 1) {
-                    style.showTopRightCount = true;
-                    style.topRightCount = view.stackCount;
-                }
+                applyInventoryUiStackCount(style, view);
                 drawInventoryUiSlot(renderer, baseItemSourceSlotRect(baseProcessingGridSlotRect, i), view, style);
             }
         } else {
@@ -15613,13 +16127,11 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 const InventoryUiEntryView view = entryViewForScreenSlot(i);
                 const bool unavailable = view.item != nullptr && !processingTargetHasAvailableCommand(processingTargetForScreenSlot(i));
                 InventoryUiSlotStyle style{i == baseProcessingSelection_, unavailable, 48.0f};
+                applyInventoryUiPowerBadgeDiscovery(style, encyclopedia_);
                 style.contentAlpha = itemGridInteractionContentAlpha(
                     baseItemInteraction_,
                     itemKeyForProcessingTarget(processingTargetForScreenSlot(i)).value_or(ItemKey{}));
-                if (view.item != nullptr && view.instance == nullptr && view.stackCount > 1) {
-                    style.showTopRightCount = true;
-                    style.topRightCount = view.stackCount;
-                }
+                applyInventoryUiStackCount(style, view);
                 drawInventoryUiSlot(renderer, baseItemSourceSlotRect(baseProcessingGridSlotRect, i), view, style);
             }
         }
@@ -15784,13 +16296,19 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 const ItemData* item = objectForRingItem(objectCatalog_, ringItem);
                 return item != nullptr && isSellableObject(*item) ? std::string_view{} : std::string_view{"売却不可"};
             };
+            const auto sellTargetHasPrice = [this, &entryViewForSellTarget](MerchantSellTarget target) {
+                if (!target.valid) {
+                    return false;
+                }
+                const InventoryUiEntryView view = entryViewForSellTarget(target);
+                return view.item != nullptr && isSellableObject(*view.item);
+            };
 
             const UiRect detailPanel = merchantDetailPanelRect();
             drawMoneySummaryText(renderer, {detailPanel.pos.x, detailPanel.pos.y + 12.0f}, money_);
 
             InventoryUiEntryView detailEntry{};
             std::vector<InventoryUiDetailExtraLine> extraLines;
-            bool detailProtectionStatusShown = false;
             const SpellRingItem* selectedRingItem = nullptr;
             if (buyMode) {
                 if (merchantStock_.empty()) {
@@ -15805,6 +16323,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     const bool disabled = !canBuyMerchantProduct(product);
                     std::snprintf(buffer, sizeof(buffer), "%dG", product.price);
                     InventoryUiSlotStyle style{i == baseMerchantBuySelection_, disabled, 48.0f};
+                    applyInventoryUiPowerBadgeDiscovery(style, encyclopedia_);
                     style.bottomLabel = buffer;
                     style.bottomLabelColor = disabled ? Color{238, 82, 82, 255} : ui::Text;
                     style.showTopRightCount = true;
@@ -15861,7 +16380,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                         batchItemActionButtonStyle(bulkSummary.itemCount > 0));
                     renderer.drawText(
                         batchItemSelectionSummaryPos(),
-                        std::to_string(bulkSummary.itemCount) + "個選択中",
+                        batchItemSelectionCountText(bulkSummary.itemCount),
                         ui::Text,
                         2);
                 } else {
@@ -15871,25 +16390,19 @@ void Game::renderBaseScreen(Renderer& renderer) const
 
                 const bool warehouseSource = baseItemSourceIsWarehouse(baseMerchantSellSource_);
                 const bool ringSource = baseItemSourceIsRing(baseMerchantSellSource_);
-                const auto sellTargetBottomLabel = [this, &blockedSellLabel](
+                const auto sellTargetBottomLabel = [this, &sellTargetHasPrice](
                     MerchantSellTarget target,
                     std::string& outLabel,
                     Color& outColor) {
                     outLabel.clear();
-                    if (!target.valid) {
+                    if (!sellTargetHasPrice(target)) {
                         return false;
-                    }
-                    const std::string_view blockedLabel = blockedSellLabel(target);
-                    if (!blockedLabel.empty()) {
-                        outLabel = std::string(blockedLabel);
-                        outColor = ui::TextDisabled;
-                        return true;
                     }
 
                     char priceBuffer[32];
                     std::snprintf(priceBuffer, sizeof(priceBuffer), "%dG", merchantSellTargetPrice(target));
                     outLabel = priceBuffer;
-                    outColor = ui::Text;
+                    outColor = merchantSellTargetAvailable(target) ? ui::Text : ui::TextDisabled;
                     return true;
                 };
                 const auto applySellTargetBottomLabel = [&sellTargetBottomLabel](
@@ -15925,6 +16438,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                         renderer,
                         spellRing_,
                         objectCatalog_,
+                        encyclopedia_,
                         balance_,
                         ringIndex,
                         selectedRingIndex,
@@ -15932,17 +16446,6 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     for (int i = 0; i < static_cast<int>(ringItems.size()); ++i) {
                         const MerchantSellTarget target = merchantSellTargetForSourceSlot(baseMerchantSellSource_, i);
                         const SpellRingItem& ringItem = ringItems[static_cast<std::size_t>(i)];
-                        registerUiNavigationTarget(
-                            merchantSellRingItemRect(
-                                ringItem,
-                                spellRing_,
-                                balance_,
-                                ringIndex,
-                                i,
-                                static_cast<int>(ringItems.size()),
-                                ringPreviewSeconds),
-                            UiNavigationRole::Control,
-                            i == selectedRingIndex);
                         UiRect labelRect = merchantSellRingItemRect(
                             ringItem,
                             spellRing_,
@@ -15981,16 +16484,14 @@ void Game::renderBaseScreen(Renderer& renderer) const
                         const std::string_view blockedLabel = blockedSellLabel(target);
                         const bool disabled = view.item != nullptr && !blockedLabel.empty();
                         InventoryUiSlotStyle style{i == baseSellSelection_, disabled, 48.0f};
+                        applyInventoryUiPowerBadgeDiscovery(style, encyclopedia_);
                         style.contentAlpha = itemGridInteractionContentAlpha(
                             baseItemInteraction_,
                             itemKeyForBaseItemTarget(target).value_or(ItemKey{}));
                         if (view.item != nullptr) {
                             applySellTargetBottomLabel(style, target);
                         }
-                        if (view.item != nullptr && view.instance == nullptr && view.stackCount > 1) {
-                            style.showTopRightCount = true;
-                            style.topRightCount = view.stackCount;
-                        }
+                        applyInventoryUiStackCount(style, view);
                         drawInventoryUiSlot(renderer, baseItemSourceSlotRect(merchantSellGridSlotRect, i), view, style);
                         if (targetHighValue(target)) {
                             drawHighValueLabel(baseItemSourceSlotRect(merchantSellGridSlotRect, i));
@@ -16006,19 +16507,17 @@ void Game::renderBaseScreen(Renderer& renderer) const
                         const MerchantSellTarget target = merchantSellTargetForSourceSlot(baseMerchantSellSource_, i);
                         const InventoryUiEntryView view = entryViewForSellTarget(target);
                         const std::string_view blockedLabel = blockedSellLabel(target);
-                        const bool disabled = view.item != nullptr && !blockedLabel.empty();
-                        const UiRect rect = baseItemSourceSlotRect(merchantSellGridSlotRect, i);
-                        InventoryUiSlotStyle style{i == baseSellSelection_, disabled, 48.0f};
-                        style.contentAlpha = itemGridInteractionContentAlpha(
+                    const bool disabled = view.item != nullptr && !blockedLabel.empty();
+                    const UiRect rect = baseItemSourceSlotRect(merchantSellGridSlotRect, i);
+                    InventoryUiSlotStyle style{i == baseSellSelection_, disabled, 48.0f};
+                    applyInventoryUiPowerBadgeDiscovery(style, encyclopedia_);
+                    style.contentAlpha = itemGridInteractionContentAlpha(
                             baseItemInteraction_,
                             itemKeyForBaseItemTarget(target).value_or(ItemKey{}));
                         if (view.item != nullptr) {
                             applySellTargetBottomLabel(style, target);
                         }
-                        if (view.item != nullptr && view.instance == nullptr && view.stackCount > 1) {
-                            style.showTopRightCount = true;
-                            style.topRightCount = view.stackCount;
-                        }
+                        applyInventoryUiStackCount(style, view);
                         drawInventoryUiSlot(renderer, rect, view, style);
                         if (targetHighValue(target)) {
                             drawHighValueLabel(rect);
@@ -16045,26 +16544,11 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 }
                 const MerchantSellTarget selectedTarget = merchantSellTargetForScreenSlot(selected);
                 detailEntry = entryViewForSellTarget(selectedTarget);
-                if (selectedTarget.valid) {
-                    const std::string_view blockedLabel = blockedSellLabel(selectedTarget);
-                    if (!blockedLabel.empty()) {
-                        detailProtectionStatusShown = blockedLabel == InventoryUiProtectionStatusText;
-                        extraLines.push_back({"売値", std::string(blockedLabel), ui::TextDisabled});
-                    } else {
-                        if (detailEntry.item != nullptr && isHighValueBuyObject(*detailEntry.item)) {
-                            extraLines.push_back({"", "高価買取中!", Color{255, 64, 64, 255}});
-                        }
-                        std::snprintf(buffer, sizeof(buffer), "%dG", merchantSellTargetPrice(selectedTarget));
-                        extraLines.push_back({"売値", buffer, ui::Text});
-                    }
-                }
             }
 
             if (!buyMode && detailEntry.item == nullptr && selectedRingItem != nullptr) {
                 drawUiSubPanel(renderer, detailPanel);
-                float detailLineY = drawUiDetailHeader(renderer, detailPanel, ringItemDisplayName(objectCatalog_, *selectedRingItem));
-                drawUiDetailText(renderer, detailPanel, detailLineY, "売却できないよ");
-                drawUiDetailLine(renderer, detailPanel, detailLineY, "売値", "売却不可");
+                drawUiDetailHeader(renderer, detailPanel, ringItemDisplayName(objectCatalog_, *selectedRingItem));
             } else {
                 drawInventoryUiDetailPanel(
                     renderer,
@@ -16073,7 +16557,6 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     objectCatalog_,
                     encyclopedia_,
                     InventoryUiDetailOptions{
-                        .showProtectionLabel = !detailProtectionStatusShown,
                         .animationSeconds = ringPreviewSeconds,
                     },
                     extraLines);
@@ -16085,17 +16568,12 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 const std::array<UiCommandMenuItem, 1> buyItems{{{"買う", buyCommandEnabled}}};
                 drawUiCommandMenu(renderer, baseMerchantBuyCommandMenu_, buyItems.data(), static_cast<int>(buyItems.size()));
             } else if (!baseMerchantBulkSell_.active) {
-                const MerchantSellTarget commandTarget = merchantSellTargetForSourceSlot(
-                    baseMerchantSellCommandSource_,
-                    baseMerchantSellCommandIndex_);
-                const bool stackCommand =
-                    (commandTarget.source == BaseItemSource::Backpack &&
-                        baseMerchantSellCommandIndex_ >= 0 &&
-                        inventory_.screenObjectStackAt(baseMerchantSellCommandIndex_) != nullptr) ||
-                    (commandTarget.source == BaseItemSource::Warehouse &&
-                        commandTarget.storageEntry.kind == StorageEntryKind::Stack);
-                const std::array<UiCommandMenuItem, 2> sellItems{{{stackCommand ? "1個売る" : "売る", true}, {"すべて売る", stackCommand}}};
-                drawUiCommandMenu(renderer, baseMerchantSellCommandMenu_, sellItems.data(), stackCommand ? 2 : 1);
+                const std::array<UiCommandMenuItem, 1> sellItems{{{"売る", true}}};
+                drawUiCommandMenu(
+                    renderer,
+                    baseMerchantSellCommandMenu_,
+                    sellItems.data(),
+                    static_cast<int>(sellItems.size()));
             }
         }
     } else if (baseUpgradeActive_) {
@@ -16188,7 +16666,9 @@ void Game::renderBaseScreen(Renderer& renderer) const
         drawUiVerticalTabs(
             renderer,
             baseUpgradeTabs_,
-            displaySelection,
+            !navigationUiCursorEnabled_ || baseUpgradeTabs_.navigationFocused
+                ? displaySelection
+                : -1,
             upgradeTabs.data(),
             upgradeDisplayCount,
             upgradeTabRects.data(),
@@ -16566,7 +17046,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 "base.warp_select",
                 warpPanel,
                 "ワープポイント選択",
-                "F/Enter 出発  Z/X・方向キー 選択  Esc 戻る",
+                "↑/↓ 選択  F/Enter 出発  Esc 戻る",
                 UiWindowOptions{true, true});
 
             renderer.drawText(warpPanel.pos + Vec2{48.0f, 82.0f}, "どのワープポイントにする？", {198, 198, 206, 255}, 2);
@@ -16752,6 +17232,17 @@ void Game::renderBaseScreen(Renderer& renderer) const
 
         drawProcessingConfirmDialog(renderer, baseProcessingConfirmRect());
     }
+    if (ringWorkshopRespecConfirmState().open) {
+        panelCancelScope.reset();
+        panelWindow.reset();
+
+        drawUiModalBackdrop(
+            renderer,
+            {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
+            {0, 0, 0, 96});
+
+        drawRingWorkshopRespecConfirmDialog(renderer, baseProcessingConfirmRect());
+    }
     if (baseResultDialog_.open) {
         panelCancelScope.reset();
         panelWindow.reset();
@@ -16761,14 +17252,21 @@ void Game::renderBaseScreen(Renderer& renderer) const
             {0, 0, 0, 96});
         drawUiResultDialog(renderer, baseResultDialog_, baseResultDialogRect(), "base.result");
     }
-    if (baseStorageQuantityDialog_.open) {
+    if (baseQuantityDialog_.open) {
         panelCancelScope.reset();
         panelWindow.reset();
         drawUiModalBackdrop(
             renderer,
             {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
             {0, 0, 0, 96});
-        drawUiQuantityDialog(renderer, baseStorageQuantityDialog_, storageQuantityDialogRect(), "base.storage.quantity");
+        drawUiQuantityDialog(
+            renderer,
+            baseQuantityDialog_,
+            baseQuantityDialogRect({
+                static_cast<float>(camera_.width()),
+                static_cast<float>(camera_.height()),
+            }),
+            "base.quantity");
     }
 
 }

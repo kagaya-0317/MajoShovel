@@ -14,14 +14,14 @@ namespace majo {
 
 namespace {
 
-constexpr std::size_t MaxActiveCoins = 96;
-constexpr int MaxCoinsPerGrant = 20;
-constexpr float Pi = 3.14159265358979323846f;
+constexpr std::size_t MaxActiveCoins = 48;
+constexpr std::size_t MaxActiveSparkles = 24;
+constexpr int MaxCoinsPerGrant = 12;
 constexpr float MoneyCoinShadowSize = 20.0f;
 constexpr float MoneyCoinThicknessPx = 3.0f;
 constexpr float MoneyCoinLandingDepthRotationDegrees = -20.0f;
 constexpr float MoneyCoinLandingDepthAxisDegrees = 90.0f;
-constexpr float ArrivalPulseDurationSeconds = 0.24f;
+constexpr float ArrivalPulseDurationSeconds = 0.20f;
 constexpr float HudPulseDurationSeconds = 0.22f;
 constexpr Vec2 MoneyCoinTargetOffset{0.0f, -16.0f};
 constexpr Color MoneyCoinSideColor{137, 25, 0, 255};
@@ -41,7 +41,10 @@ float easeOutCubic(float value)
 
 int desiredCoinCount(int amount)
 {
-    return std::clamp(amount, 1, MaxCoinsPerGrant);
+    return std::clamp(
+        static_cast<int>(std::ceil(std::sqrt(static_cast<float>(std::max(1, amount))))),
+        1,
+        MaxCoinsPerGrant);
 }
 
 std::uint32_t mixSeed(std::uint32_t seed, std::uint32_t value)
@@ -61,6 +64,21 @@ std::uint32_t spawnSeed(std::uint32_t serial, int amount, Vec2 origin)
 float randomRange(std::mt19937& rng, float minValue, float maxValue)
 {
     return std::uniform_real_distribution<float>(minValue, maxValue)(rng);
+}
+
+std::uint32_t nextRandom(std::uint32_t& state)
+{
+    state ^= state << 13U;
+    state ^= state >> 17U;
+    state ^= state << 5U;
+    return state;
+}
+
+float randomRange(std::uint32_t& state, float minValue, float maxValue)
+{
+    const float unit = static_cast<float>(nextRandom(state) & 0x00ffffffU) /
+        static_cast<float>(0x01000000U);
+    return lerp(minValue, maxValue, unit);
 }
 
 float positiveDegrees(float degrees)
@@ -112,6 +130,41 @@ Color withScaledAlpha(Color color, float alphaScale)
         0L,
         255L));
     return color;
+}
+
+void drawMoneySparkle(
+    Renderer& renderer,
+    Vec2 position,
+    float size,
+    float rotationRadians,
+    Color color,
+    float alpha)
+{
+    const Vec2 axis{std::cos(rotationRadians), std::sin(rotationRadians)};
+    const Vec2 cross{-axis.y, axis.x};
+    const float radius = std::max(0.5f, size);
+    const Color glow = withScaledAlpha(color, alpha * 0.30f);
+    const Color core = withScaledAlpha({255, 255, 238, color.a}, alpha * 0.92f);
+    renderer.drawSoftLine(
+        position - axis * radius,
+        position + axis * radius,
+        std::max(1.0f, radius * 0.32f),
+        glow);
+    renderer.drawSoftLine(
+        position - cross * (radius * 0.62f),
+        position + cross * (radius * 0.62f),
+        std::max(0.8f, radius * 0.25f),
+        glow);
+    renderer.drawSoftLine(
+        position - axis * (radius * 0.72f),
+        position + axis * (radius * 0.72f),
+        std::max(0.55f, radius * 0.11f),
+        core);
+    renderer.drawSoftLine(
+        position - cross * (radius * 0.42f),
+        position + cross * (radius * 0.42f),
+        std::max(0.5f, radius * 0.09f),
+        core);
 }
 
 struct CoinVisualPose {
@@ -250,6 +303,14 @@ void MoneyGainFxSystem::spawn(int amount, Vec2 origin)
         coin.absorbDepthRotationDegrees = randomRange(rng, 150.0f, 280.0f) *
             (std::bernoulli_distribution(0.5)(rng) ? 1.0f : -1.0f);
         coin.absorbDepthAxisDegrees = randomRange(rng, 10.0f, 170.0f);
+        coin.sparkleTimerSeconds = randomRange(rng, 0.03f, 0.22f);
+        coin.trailIntensity = randomRange(rng, 0.72f, 1.0f);
+        coin.sparkleRandomState = mixSeed(
+            spawnSeed(spawnSerial_, amount, origin),
+            static_cast<std::uint32_t>(index + 1));
+        if (coin.sparkleRandomState == 0) {
+            coin.sparkleRandomState = 1;
+        }
         coin.displayAmount = displayAmount;
         coin.sequenceIndex = index;
         coin.sequenceCount = coinCount;
@@ -316,6 +377,31 @@ void MoneyGainFxSystem::update(float dt, Vec2 targetPosition)
             side * coin.curveSideOffset +
             Vec2{0.0f, -coin.curveLift};
         coin.position = bezierPoint(coin.groundPosition, control, target, smooth01(progress));
+
+        coin.sparkleTimerSeconds -= safeDt;
+        if (progress >= 0.06f && progress <= 0.94f &&
+            coin.sparkleTimerSeconds <= 0.0f && sparkles_.size() < MaxActiveSparkles) {
+            const Vec2 movement = coin.position - coin.previousPosition;
+            const Vec2 normal = lengthSquared(movement) > 0.01f
+                ? normalize(Vec2{-movement.y, movement.x})
+                : Vec2{1.0f, 0.0f};
+            const Vec2 sparklePosition =
+                lerp(
+                    coin.previousPosition,
+                    coin.position,
+                    randomRange(coin.sparkleRandomState, 0.18f, 0.86f)) +
+                normal * randomRange(coin.sparkleRandomState, -5.5f, 5.5f);
+            const bool paleGold = randomRange(coin.sparkleRandomState, 0.0f, 1.0f) < 0.58f;
+            sparkles_.push_back({
+                .position = sparklePosition,
+                .color = paleGold ? Color{255, 238, 154, 205} : Color{255, 255, 226, 220},
+                .ageSeconds = 0.0f,
+                .durationSeconds = randomRange(coin.sparkleRandomState, 0.12f, 0.22f),
+                .size = randomRange(coin.sparkleRandomState, 2.8f, 5.8f),
+                .rotationRadians = randomRange(coin.sparkleRandomState, 0.0f, Pi),
+            });
+            coin.sparkleTimerSeconds = randomRange(coin.sparkleRandomState, 0.20f, 0.48f);
+        }
     }
 
     auto removeBegin = std::remove_if(coins_.begin(), coins_.end(), [&](const Coin& coin) {
@@ -324,11 +410,16 @@ void MoneyGainFxSystem::update(float dt, Vec2 targetPosition)
             return false;
         }
 
-        arrivalPulses_.push_back(ArrivalPulse{
-            .position = target,
-            .ageSeconds = 0.0f,
-            .durationSeconds = ArrivalPulseDurationSeconds,
-        });
+        const bool showArrivalPulse = coin.sequenceCount <= 3 ||
+            coin.sequenceIndex == coin.sequenceCount - 1 ||
+            coin.sequenceIndex % 4 == 0;
+        if (showArrivalPulse) {
+            arrivalPulses_.push_back(ArrivalPulse{
+                .position = target,
+                .ageSeconds = 0.0f,
+                .durationSeconds = ArrivalPulseDurationSeconds,
+            });
+        }
         arrivalEvents_.push_back(MoneyGainArrivalEvent{
             .position = target,
             .amount = coin.displayAmount,
@@ -342,6 +433,15 @@ void MoneyGainFxSystem::update(float dt, Vec2 targetPosition)
         return true;
     });
     coins_.erase(removeBegin, coins_.end());
+
+    for (Sparkle& sparkle : sparkles_) {
+        sparkle.ageSeconds += safeDt;
+    }
+    sparkles_.erase(
+        std::remove_if(sparkles_.begin(), sparkles_.end(), [](const Sparkle& sparkle) {
+            return sparkle.ageSeconds >= sparkle.durationSeconds;
+        }),
+        sparkles_.end());
 
     for (ArrivalPulse& pulse : arrivalPulses_) {
         pulse.ageSeconds += safeDt;
@@ -363,13 +463,28 @@ void MoneyGainFxSystem::renderForeground(Renderer& renderer) const
         const float alpha = 1.0f - smooth01(progress);
         renderer.fillSoftCircle(
             pulse.position,
-            lerp(14.0f, 32.0f, easeOutCubic(progress)),
-            withScaledAlpha({255, 210, 70, 110}, alpha));
+            lerp(10.0f, 24.0f, easeOutCubic(progress)),
+            withScaledAlpha({255, 218, 98, 46}, alpha));
         renderer.drawSoftRing(
             pulse.position,
-            lerp(8.0f, 25.0f, easeOutCubic(progress)),
-            lerp(4.5f, 1.5f, progress),
-            withScaledAlpha({255, 242, 166, 210}, alpha));
+            lerp(7.0f, 20.0f, easeOutCubic(progress)),
+            lerp(2.8f, 1.0f, progress),
+            withScaledAlpha({255, 246, 184, 126}, alpha));
+    }
+
+    for (const Sparkle& sparkle : sparkles_) {
+        const float progress = clamp(
+            sparkle.ageSeconds / std::max(0.01f, sparkle.durationSeconds),
+            0.0f,
+            1.0f);
+        const float twinkle = std::pow(std::sin(progress * Pi), 1.35f);
+        drawMoneySparkle(
+            renderer,
+            sparkle.position,
+            sparkle.size * lerp(0.72f, 1.0f, twinkle),
+            sparkle.rotationRadians + progress * 0.32f,
+            sparkle.color,
+            twinkle);
     }
 
     for (const Coin& coin : coins_) {
@@ -399,13 +514,18 @@ void MoneyGainFxSystem::renderForeground(Renderer& renderer) const
             },
             withScaledAlpha({14, 10, 20, 78}, shadowAlpha));
 
-        const float trailAlpha = smooth01(flightProgress) * (1.0f - flightProgress);
-        if (trailAlpha > 0.001f) {
+        const float trailAlpha = std::sin(flightProgress * Pi) * coin.trailIntensity;
+        if (flightProgress > 0.0f && flightProgress < 1.0f && trailAlpha > 0.001f) {
             renderer.drawSoftLine(
                 coin.previousPosition,
                 coin.position,
-                lerp(3.2f, 1.2f, flightProgress),
-                withScaledAlpha({255, 206, 72, 170}, trailAlpha * 2.2f));
+                lerp(2.4f, 0.9f, flightProgress),
+                withScaledAlpha({255, 202, 76, 42}, trailAlpha));
+            renderer.drawSoftLine(
+                coin.previousPosition,
+                coin.position,
+                lerp(0.85f, 0.45f, flightProgress),
+                withScaledAlpha({255, 248, 196, 104}, trailAlpha));
         }
 
         const float popProgress = clamp(
@@ -431,7 +551,7 @@ void MoneyGainFxSystem::renderForeground(Renderer& renderer) const
             1.0f + landingImpact * 0.10f,
             1.0f - landingImpact * 0.12f,
         };
-        options.tint = withScaledAlpha({255, 255, 255, 255}, 1.0f - smooth01((flightProgress - 0.90f) / 0.10f));
+        options.tint = withScaledAlpha({255, 255, 255, 255}, 1.0f - smooth01((flightProgress - 0.86f) / 0.14f));
         options.outlineColor.a = options.tint.a;
 
         ExtrudedWorldIconDrawOptions extrusion;
@@ -452,6 +572,7 @@ void MoneyGainFxSystem::renderForeground(Renderer& renderer) const
 void MoneyGainFxSystem::clear()
 {
     coins_.clear();
+    sparkles_.clear();
     arrivalPulses_.clear();
     spawnEvents_.clear();
     arrivalEvents_.clear();

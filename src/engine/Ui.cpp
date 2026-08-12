@@ -1,6 +1,7 @@
 ﻿#include "engine/Ui.hpp"
 
 #include "engine/InputHelpGlyph.hpp"
+#include "engine/Utf8.hpp"
 
 #include <SDL3/SDL.h>
 #include <algorithm>
@@ -28,7 +29,6 @@ struct UiWindowState {
     UiWindowFrame frame = UiWindowFrame::Default;
 };
 
-UiCancelControlState* activeCancelState = nullptr;
 bool backInputConsumedUntilRelease = false;
 const std::unordered_map<std::string, float>* menuIconScaleOverrides = nullptr;
 
@@ -51,6 +51,11 @@ constexpr Vec2 UiSelectionCursorTargetOffset{8.0f, -5.0f};
 constexpr float UiSelectionCursorMoveResponsiveness = 18.0f;
 constexpr float UiSelectionCursorBobAmplitude = 3.0f;
 constexpr float UiSelectionCursorBobSpeed = 3.2f;
+constexpr float UiControlSelectedSizeIncrease = 4.0f;
+constexpr float UiControlPressedSizeDecrease = 2.0f;
+constexpr int UiControlPressDurationFrames = 6;
+constexpr float UiHorizontalTabFocusBrightness = 1.16f;
+constexpr float UiHorizontalTabPressedBrightness = 0.82f;
 constexpr float UiTextIconGap = 8.0f;
 constexpr float UiButtonIconSize = 34.0f;
 constexpr float UiTabIconSize = 30.0f;
@@ -79,33 +84,27 @@ struct UiNavigationTarget {
 
 struct UiControlVisualSelection {
     UiRect rect{};
-    int layer = 0;
     bool pressed = false;
 };
 
-struct UiArrowButtonPressAnimation {
+struct UiControlPressAnimation {
     UiRect rect{};
     int remainingFrames = 0;
     bool seen = false;
 };
 
-struct UiArrowButtonVisualState {
-    UiRect rect{};
-    bool selected = false;
-    bool pressed = false;
-};
-
 std::vector<UiNavigationTarget> previousNavigationTargets;
 std::vector<UiNavigationTarget> currentNavigationTargets;
 std::vector<UiControlVisualSelection> controlVisualSelections;
-std::vector<UiArrowButtonPressAnimation> arrowButtonPressAnimations;
-std::vector<UiArrowButtonVisualState> arrowButtonVisualStates;
+std::vector<UiControlPressAnimation> controlPressAnimations;
 UiRect navigationFocusRect{};
 UiNavigationRole activeNavigationFocusRole = UiNavigationRole::Control;
 bool navigationHasFocus = false;
 bool uiNavigationActive = false;
 bool navigationWasActive = false;
 int navigationLayer = 0;
+int nextNavigationLayer = 0;
+bool navigationTargetRegistrationEnabled = true;
 
 constexpr float NavigationRectEpsilon = 0.5f;
 constexpr float NavigationDirectionEpsilon = 0.5f;
@@ -124,13 +123,13 @@ void rememberUiControlVisualSelection(UiRect rect, bool pressed = false)
         controlVisualSelections.begin(),
         controlVisualSelections.end(),
         [&](const UiControlVisualSelection& selection) {
-            return selection.layer == navigationLayer && navigationRectsMatch(selection.rect, rect);
+            return navigationRectsMatch(selection.rect, rect);
         });
     if (existing != controlVisualSelections.end()) {
         existing->pressed = existing->pressed || pressed;
         return;
     }
-    controlVisualSelections.push_back({rect, navigationLayer, pressed});
+    controlVisualSelections.push_back({rect, pressed});
 }
 
 bool hasUiControlVisualSelection(UiRect rect)
@@ -139,7 +138,7 @@ bool hasUiControlVisualSelection(UiRect rect)
         controlVisualSelections.begin(),
         controlVisualSelections.end(),
         [&](const UiControlVisualSelection& selection) {
-            return selection.layer == navigationLayer && navigationRectsMatch(selection.rect, rect);
+            return navigationRectsMatch(selection.rect, rect);
         });
 }
 
@@ -149,9 +148,50 @@ bool isUiControlVisuallyPressed(UiRect rect)
         controlVisualSelections.begin(),
         controlVisualSelections.end(),
         [&](const UiControlVisualSelection& candidate) {
-            return candidate.layer == navigationLayer && navigationRectsMatch(candidate.rect, rect);
+            return navigationRectsMatch(candidate.rect, rect);
         });
     return selection != controlVisualSelections.end() && selection->pressed;
+}
+
+UiControlPressAnimation* findUiControlPressAnimation(UiRect rect)
+{
+    const auto animation = std::find_if(
+        controlPressAnimations.begin(),
+        controlPressAnimations.end(),
+        [&](const UiControlPressAnimation& candidate) {
+            return navigationRectsMatch(candidate.rect, rect);
+        });
+    return animation != controlPressAnimations.end() ? &*animation : nullptr;
+}
+
+void startUiControlPressAnimation(UiRect rect)
+{
+    UiControlPressAnimation* animation = findUiControlPressAnimation(rect);
+    if (animation == nullptr) {
+        controlPressAnimations.push_back({rect, UiControlPressDurationFrames, false});
+        return;
+    }
+    animation->remainingFrames = UiControlPressDurationFrames;
+}
+
+bool uiControlPressAnimating(UiRect rect)
+{
+    UiControlPressAnimation* animation = findUiControlPressAnimation(rect);
+    if (animation == nullptr || animation->remainingFrames <= 0) {
+        return false;
+    }
+    animation->seen = true;
+    return true;
+}
+
+float uiControlScaleForSizeDelta(UiRect rect, float sizeDelta)
+{
+    const float maxDimension = std::max(rect.size.x, rect.size.y);
+    if (maxDimension <= 0.0f) {
+        return 1.0f;
+    }
+    const float targetDimension = std::max(1.0f, maxDimension + sizeDelta);
+    return targetDimension / maxDimension;
 }
 
 Vec2 navigationRectCenter(UiRect rect)
@@ -487,6 +527,24 @@ void drawCapsuleOutline(Renderer& renderer, UiRect rect, float radius, Color col
     }
 }
 
+void drawGaugeCapsuleOutlines(
+    Renderer& renderer,
+    UiRect rect,
+    float radius,
+    const UiGaugeStyle& style)
+{
+    const int outerLayers = std::max(0, static_cast<int>(std::ceil(style.outerOutlineWidth)));
+    for (int layer = outerLayers; layer >= 1; --layer) {
+        const float expansion = std::min(style.outerOutlineWidth, static_cast<float>(layer));
+        const UiRect expanded{
+            rect.pos - Vec2{expansion, expansion},
+            rect.size + Vec2{expansion * 2.0f, expansion * 2.0f},
+        };
+        drawCapsuleOutline(renderer, expanded, radius + expansion, style.outerOutline);
+    }
+    drawCapsuleOutline(renderer, rect, radius, style.outline);
+}
+
 void setUiSelectionCursorTarget(UiRect rect)
 {
     if (!selectionCursor.enabled ||
@@ -607,13 +665,7 @@ constexpr float DropdownScrollbarMinThumbHeight = 22.0f;
 
 int utf8CodepointCount(std::string_view text)
 {
-    int count = 0;
-    for (unsigned char c : text) {
-        if ((c & 0xC0u) != 0x80u) {
-            ++count;
-        }
-    }
-    return count;
+    return static_cast<int>(utf8::codepointCount(text));
 }
 
 UiRect commandMenuItemRect(const UiCommandMenuState& state, int index)
@@ -783,32 +835,12 @@ void moveTabFocus(UiTabsState& state, int delta, const UiTabItem* items, int ite
 
 void removeUtf8LastCodepoint(std::string& text)
 {
-    if (text.empty()) {
-        return;
-    }
-    text.pop_back();
-    while (!text.empty() && (static_cast<unsigned char>(text.back()) & 0xC0u) == 0x80u) {
-        text.pop_back();
-    }
+    utf8::eraseLastCodepoint(text);
 }
 
 std::size_t utf8CodepointByteLength(std::string_view text, std::size_t index)
 {
-    if (index >= text.size()) {
-        return 0;
-    }
-    const unsigned char lead = static_cast<unsigned char>(text[index]);
-    std::size_t length = 1;
-    if ((lead & 0x80u) == 0) {
-        length = 1;
-    } else if ((lead & 0xe0u) == 0xc0u) {
-        length = 2;
-    } else if ((lead & 0xf0u) == 0xe0u) {
-        length = 3;
-    } else if ((lead & 0xf8u) == 0xf0u) {
-        length = 4;
-    }
-    return std::min(length, text.size() - index);
+    return utf8::decodeCodepoint(text, index).byteLength;
 }
 
 struct WrappedUiColoredTextRun {
@@ -819,6 +851,7 @@ struct WrappedUiColoredTextRun {
 struct WrappedUiColoredTextLine {
     std::string text;
     std::vector<WrappedUiColoredTextRun> runs;
+    float indent = 0.0f;
 };
 
 bool uiColorsEqual(Color lhs, Color rhs)
@@ -858,6 +891,23 @@ float uiColoredTextAdvance(Renderer& renderer, std::string_view text, int scale)
     return std::max(0.0f, renderer.measureText(text, scale).x - NativeTextTexturePaddingX);
 }
 
+float uiHangingIndentAdvance(Renderer& renderer, std::string_view prefix, int scale)
+{
+    if (prefix.empty()) {
+        return 0.0f;
+    }
+
+    // MeasureString includes padding around the whole texture. Comparing the
+    // same following glyph removes that padding and leaves the prefix advance
+    // used when the prefix and body are rendered as one string.
+    constexpr std::string_view ProbeText = "あ";
+    std::string prefixedProbe{prefix};
+    prefixedProbe.append(ProbeText);
+    return std::max(
+        0.0f,
+        renderer.measureText(prefixedProbe, scale).x - renderer.measureText(ProbeText, scale).x);
+}
+
 float uiWrappedTextLineAdvance(Renderer& renderer, int scale)
 {
     const float singleLineHeight = renderer.measureText("あ", scale).y;
@@ -867,30 +917,26 @@ float uiWrappedTextLineAdvance(Renderer& renderer, int scale)
 
 bool appendUiTextInput(std::string& target, std::string_view text, int maxCodepoints)
 {
-    if (text.empty()) {
-        return false;
-    }
-
+    bool changed = utf8::sanitizeInPlace(target);
     const int limit = std::max(0, maxCodepoints);
     int count = utf8CodepointCount(target);
-    bool changed = false;
     for (std::size_t i = 0; i < text.size();) {
-        const unsigned char lead = static_cast<unsigned char>(text[i]);
-        const std::size_t length = utf8CodepointByteLength(text, i);
-        if (length == 0) {
-            break;
+        const utf8::DecodedCodepoint decoded = utf8::decodeCodepoint(text, i);
+        if (!decoded.valid) {
+            i += decoded.byteLength;
+            continue;
         }
-        if (lead < 0x20u || lead == 0x7fu) {
-            i += length;
+        if (decoded.value < 0x20u || (decoded.value >= 0x7fu && decoded.value <= 0x9fu)) {
+            i += decoded.byteLength;
             continue;
         }
         if (limit > 0 && count >= limit) {
             break;
         }
-        target.append(text.substr(i, length));
+        target.append(text.substr(i, decoded.byteLength));
         ++count;
         changed = true;
-        i += length;
+        i += decoded.byteLength;
     }
     return changed;
 }
@@ -1087,7 +1133,7 @@ void fillRoundedRect(Renderer& renderer, UiRect rect, float radius, Color color)
 UiNavigationLayerScope::UiNavigationLayerScope()
     : previousLayer_(navigationLayer)
 {
-    ++navigationLayer;
+    navigationLayer = ++nextNavigationLayer;
 }
 
 UiNavigationLayerScope::~UiNavigationLayerScope()
@@ -1095,8 +1141,43 @@ UiNavigationLayerScope::~UiNavigationLayerScope()
     navigationLayer = previousLayer_;
 }
 
+UiModalNavigationScope::UiModalNavigationScope(UiRect modalRect)
+    : previousLayer_(navigationLayer)
+{
+    navigationLayer = ++nextNavigationLayer;
+    const bool previousRegistrationEnabled = navigationTargetRegistrationEnabled;
+    navigationTargetRegistrationEnabled = true;
+    registerUiNavigationTarget(modalRect, UiNavigationRole::Control, false, false);
+    navigationTargetRegistrationEnabled = previousRegistrationEnabled;
+}
+
+UiModalNavigationScope::~UiModalNavigationScope()
+{
+    navigationLayer = previousLayer_;
+}
+
+UiExclusiveNavigationScope::UiExclusiveNavigationScope(UiRect modalRect)
+    : previousLayer_(navigationLayer)
+    , previousRegistrationEnabled_(navigationTargetRegistrationEnabled)
+{
+    navigationLayer = ++nextNavigationLayer;
+    navigationTargetRegistrationEnabled = true;
+    registerUiNavigationTarget(modalRect, UiNavigationRole::Control, false, false);
+    navigationTargetRegistrationEnabled = false;
+    suppressUiSelectionCursor();
+}
+
+UiExclusiveNavigationScope::~UiExclusiveNavigationScope()
+{
+    navigationTargetRegistrationEnabled = previousRegistrationEnabled_;
+    navigationLayer = previousLayer_;
+}
+
 void registerUiNavigationTarget(UiRect rect, UiNavigationRole role, bool preferred, bool enabled)
 {
+    if (!navigationTargetRegistrationEnabled) {
+        return;
+    }
     if (rect.size.x <= 0.0f || rect.size.y <= 0.0f) {
         return;
     }
@@ -1120,6 +1201,14 @@ void registerUiNavigationTarget(UiRect rect, UiNavigationRole role, bool preferr
 
 void requestUiSelectionCursor(UiRect rect)
 {
+    if (!navigationTargetRegistrationEnabled) {
+        return;
+    }
+    if (uiNavigationActive &&
+        navigationHasFocus &&
+        !navigationRectsMatch(navigationFocusRect, rect)) {
+        return;
+    }
     setUiSelectionCursorTarget(rect);
 }
 
@@ -1217,8 +1306,7 @@ UiContext::UiContext(const Input& input, Renderer& renderer)
           input.held(InputAction::Confirm) || input.held(InputAction::UseSelectedItem))
 {
     controlVisualSelections.clear();
-    arrowButtonVisualStates.clear();
-    for (UiArrowButtonPressAnimation& animation : arrowButtonPressAnimations) {
+    for (UiControlPressAnimation& animation : controlPressAnimations) {
         animation.remainingFrames = std::max(0, animation.remainingFrames - 1);
         animation.seen = false;
     }
@@ -1246,7 +1334,31 @@ void UiContext::emitSound(UiSoundEvent event)
     if (index < 0 || index >= static_cast<int>(UiSoundEvent::Count)) {
         return;
     }
+
+    const int errorIndex = static_cast<int>(UiSoundEvent::Error);
+    if (event == UiSoundEvent::Error) {
+        // 実行不能のフィードバックは、その操作に先行して予約された決定音なども含めて
+        // ブザー音だけに統一する。
+        for (int& count : soundEventCounts_) {
+            count = 0;
+        }
+        soundEventCounts_[errorIndex] = 1;
+        return;
+    }
+    if (soundEventCounts_[errorIndex] > 0) {
+        return;
+    }
     ++soundEventCounts_[index];
+}
+
+void UiContext::emitActionResult(bool succeeded, UiSoundEvent successEvent)
+{
+    emitSound(succeeded ? successEvent : UiSoundEvent::Error);
+}
+
+void UiContext::rejectAction()
+{
+    emitSound(UiSoundEvent::Error);
 }
 
 void UiContext::emitCursorMoveIfChanged(int previousIndex, int currentIndex)
@@ -1289,6 +1401,8 @@ void beginUiFrame(float dt, bool navigationCursorEnabled)
     }
     currentNavigationTargets.clear();
     navigationLayer = 0;
+    nextNavigationLayer = 0;
+    navigationTargetRegistrationEnabled = true;
 }
 
 void finishUiFrame(Renderer& renderer)
@@ -1341,17 +1455,17 @@ void finishUiFrame(Renderer& renderer)
     previousNavigationTargets = std::move(activeTargets);
     if (selectionCursor.enabled &&
         !selectionCursor.suppressedThisFrame &&
-        focusedIndex >= 0) {
+        focusedIndex >= 0 &&
+        !selectionCursor.targetThisFrame) {
         setUiSelectionCursorTarget(previousNavigationTargets[static_cast<std::size_t>(focusedIndex)].rect);
     }
     drawUiSelectionCursor(renderer);
     controlVisualSelections.clear();
     std::erase_if(
-        arrowButtonPressAnimations,
-        [](const UiArrowButtonPressAnimation& animation) {
+        controlPressAnimations,
+        [](const UiControlPressAnimation& animation) {
             return !animation.seen || animation.remainingFrames <= 0;
         });
-    arrowButtonVisualStates.clear();
 }
 
 UiWindowScope::UiWindowScope(
@@ -1430,14 +1544,48 @@ UiWindowScope& UiWindowScope::operator=(UiWindowScope&& other) noexcept
 }
 
 UiCancelControlScope::UiCancelControlScope(UiCancelControlState& state)
-    : previous_(activeCancelState)
 {
-    activeCancelState = &state;
+    (void)state;
 }
 
-UiCancelControlScope::~UiCancelControlScope()
+UiCancelControlScope::~UiCancelControlScope() = default;
+
+UiControlMotionScope::UiControlMotionScope(
+    Renderer& renderer,
+    UiRect rect,
+    UiControlMotion motion,
+    bool enabled)
+    : renderer_(&renderer)
 {
-    activeCancelState = previous_;
+    if (!enabled) {
+        return;
+    }
+    const UiControlVisualState visual = uiControlVisualState(rect);
+    const float scale = visual.pressed
+        ? uiControlScaleForSizeDelta(rect, -UiControlPressedSizeDecrease)
+        : (motion == UiControlMotion::HoverAndPress && visual.selected
+            ? uiControlScaleForSizeDelta(rect, UiControlSelectedSizeIncrease)
+            : 1.0f);
+    if (std::abs(scale - 1.0f) <= 0.0001f) {
+        return;
+    }
+    renderer_->pushScreenTransform(rect.pos + rect.size * 0.5f, scale, 1.0f);
+    transformed_ = true;
+}
+
+UiControlVisualState uiControlVisualState(UiRect rect)
+{
+    return {
+        .selected = hasUiControlVisualSelection(rect),
+        .pressed = isUiControlVisuallyPressed(rect) || uiControlPressAnimating(rect),
+    };
+}
+
+UiControlMotionScope::~UiControlMotionScope()
+{
+    if (renderer_ != nullptr && transformed_) {
+        renderer_->popScreenTransform();
+    }
 }
 
 bool UiContext::pointerInside(UiRect rect) const
@@ -1452,14 +1600,19 @@ bool UiContext::hovered(UiRect rect) const
 
 bool UiContext::pressed(UiRect rect)
 {
-    const bool pointerHit = hovered(rect);
-    const bool navigationHit = navigationFocused(rect);
+    return pressed(rect, rect);
+}
+
+bool UiContext::pressed(UiRect hitRect, UiRect controlRect)
+{
+    const bool pointerHit = hovered(hitRect);
+    const bool navigationHit = navigationFocused(controlRect);
     if (pointerHit || navigationHit) {
         rememberUiControlVisualSelection(
-            rect,
+            controlRect,
             (pointerHit && mouseLeftHeld_) || (navigationHit && navigationConfirmHeld_));
     }
-    return pressedWithPointerHit(rect, pointerHit);
+    return pressedWithPointerHit(controlRect, pointerHit);
 }
 
 bool UiContext::pressedImage(
@@ -1492,6 +1645,7 @@ bool UiContext::pressedImage(
 bool UiContext::pressedWithPointerHit(UiRect rect, bool pointerHit)
 {
     if (pointerHit && mouseLeftPressed_) {
+        startUiControlPressAnimation(rect);
         pointerConsumed_ = true;
         navigationFocusRect = rect;
         const int targetIndex = enabledNavigationTargetIndexForRect(previousNavigationTargets, rect);
@@ -1505,6 +1659,7 @@ bool UiContext::pressedWithPointerHit(UiRect rect, bool pointerHit)
         navigationConfirmPressed_ &&
         !navigationConfirmConsumed_ &&
         navigationFocused(rect)) {
+        startUiControlPressAnimation(rect);
         navigationConfirmConsumed_ = true;
         return true;
     }
@@ -1533,7 +1688,19 @@ void UiContext::setNavigationFocus(UiRect rect)
 
 bool UiContext::selectionFocused(UiRect rect) const
 {
-    return navigationFocused(rect) || hovered(rect);
+    return selectionFocused(rect, rect);
+}
+
+bool UiContext::selectionFocused(UiRect hitRect, UiRect controlRect) const
+{
+    const bool navigationHit = navigationFocused(controlRect);
+    const bool pointerHit = hovered(hitRect);
+    if (navigationHit || pointerHit) {
+        rememberUiControlVisualSelection(
+            controlRect,
+            (pointerHit && mouseLeftHeld_) || (navigationHit && navigationConfirmHeld_));
+    }
+    return navigationHit || pointerHit;
 }
 
 UiNavigationRole UiContext::navigationFocusRole() const
@@ -1716,43 +1883,24 @@ UiRect uiCancelButtonRect(UiRect panel)
     }, ui::CancelButtonSize};
 }
 
-bool uiCancelRequested(UiCancelControlState& state, const Input& input, UiContext& ui, UiRect panel)
+bool uiCancelControlRequested(const Input& input, UiContext& ui, UiRect panel)
 {
-    if (ui.backInputConsumed()) {
-        state.backArmed = false;
-    } else if (input.backPressed()) {
-        state.backArmed = true;
-    }
-
-    if (!input.backHeld() && !input.backReleased()) {
-        state.backArmed = false;
-    }
-
-    if (ui.pressed(uiCancelButtonRect(panel))) {
-        state.pointerArmed = true;
-    }
-
-    if (!input.mouseLeftHeld() && !input.mouseLeftReleased()) {
-        state.pointerArmed = false;
-    }
-
-    if (input.backReleased() && state.backArmed) {
-        state.backArmed = false;
+    const bool pointerRequested = ui.pressed(uiCancelButtonRect(panel));
+    const bool backRequested = input.backPressed() && !ui.backInputConsumed();
+    if (backRequested) {
         ui.consumeBackInput();
+    }
+    if (pointerRequested || backRequested) {
         ui.emitSound(UiSoundEvent::Cancel);
         return true;
     }
-
-    if (input.mouseLeftReleased()) {
-        const bool requested = state.pointerArmed && uiCancelButtonRect(panel).contains(ui.mouse());
-        state.pointerArmed = false;
-        if (requested) {
-            ui.emitSound(UiSoundEvent::Cancel);
-        }
-        return requested;
-    }
-
     return false;
+}
+
+bool uiCancelRequested(UiCancelControlState& state, const Input& input, UiContext& ui, UiRect panel)
+{
+    state = {};
+    return uiCancelControlRequested(input, ui, panel);
 }
 
 void drawUiPanel(Renderer& renderer, UiRect panel, UiWindowFrame frame)
@@ -1831,30 +1979,17 @@ void drawUiModalBackdrop(Renderer& renderer, UiRect bounds, Color color)
 void drawUiCancelButton(Renderer& renderer, UiRect panel)
 {
     const UiRect rect = uiCancelButtonRect(panel);
-    float mouseX = 0.0f;
-    float mouseY = 0.0f;
-    const SDL_MouseButtonFlags buttons = SDL_GetMouseState(&mouseX, &mouseY);
-    const bool pointerActive = activeCancelState != nullptr &&
-        activeCancelState->pointerArmed &&
-        (buttons & SDL_BUTTON_LMASK) != 0 &&
-        rect.contains({mouseX, mouseY});
-    const bool backActive = activeCancelState != nullptr && activeCancelState->backArmed;
-    const bool active = pointerActive || backActive;
-    const Vec2 drawSize = active ? rect.size * 0.92f : rect.size;
+    UiControlMotionScope motion(renderer, rect, UiControlMotion::HoverAndPress);
     ImageDrawOptions options;
     options.anchor = {0.5f, 0.5f};
-    if (active) {
-        options.tint = {210, 210, 210, 235};
-    }
-    if (renderer.drawImage("assets/system/UI_cancelButton.png", rect.pos + rect.size * 0.5f, drawSize, options)) {
+    if (renderer.drawImage("assets/system/UI_cancelButton.png", rect.pos + rect.size * 0.5f, rect.size, options)) {
         return;
     }
 
-    const Vec2 drawPos = rect.pos + (rect.size - drawSize) * 0.5f;
-    renderer.fillRect(drawPos, drawSize, active ? Color{22, 18, 34, 220} : Color{30, 24, 42, 230});
-    renderer.drawRect(drawPos, drawSize, ui::WindowBorder);
-    renderer.drawLine(drawPos + Vec2{15.0f, 16.0f}, drawPos + drawSize - Vec2{15.0f, 16.0f}, ui::Text);
-    renderer.drawLine({drawPos.x + drawSize.x - 15.0f, drawPos.y + 16.0f}, {drawPos.x + 15.0f, drawPos.y + drawSize.y - 16.0f}, ui::Text);
+    renderer.fillRect(rect.pos, rect.size, {30, 24, 42, 230});
+    renderer.drawRect(rect.pos, rect.size, ui::WindowBorder);
+    renderer.drawLine(rect.pos + Vec2{15.0f, 16.0f}, rect.pos + rect.size - Vec2{15.0f, 16.0f}, ui::Text);
+    renderer.drawLine({rect.pos.x + rect.size.x - 15.0f, rect.pos.y + 16.0f}, {rect.pos.x + 15.0f, rect.pos.y + rect.size.y - 16.0f}, ui::Text);
 }
 
 void drawUiSeparator(Renderer& renderer, UiRect rect, Color tint)
@@ -1905,7 +2040,7 @@ void drawUiGauge(Renderer& renderer, UiRect rect, float progress, const UiGaugeS
         if (progress > 0.0f) {
             renderer.fillCircle(center, radius, lerpColor(style.fill.start, style.fill.end, 0.5f));
         }
-        drawCapsuleOutline(renderer, rect, radius, style.outline);
+        drawGaugeCapsuleOutlines(renderer, rect, radius, style);
         return;
     }
 
@@ -1929,17 +2064,9 @@ void drawUiGauge(Renderer& renderer, UiRect rect, float progress, const UiGaugeS
         }
     }
 
-    if (style.tickCount > 1 && colorVisible(style.tick)) {
-        const float tickHalf = std::max(1.0f, rect.size.y * 0.28f);
-        for (int i = 1; i < style.tickCount; ++i) {
-            const float x = rect.pos.x + rect.size.x * static_cast<float>(i) / static_cast<float>(style.tickCount);
-            renderer.drawLine({x, centerY - tickHalf}, {x, centerY + tickHalf}, style.tick);
-        }
-    }
-
     const float filledW = rect.size.x * progress;
     if (filledW <= 0.0f) {
-        drawCapsuleOutline(renderer, rect, radius, style.outline);
+        drawGaugeCapsuleOutlines(renderer, rect, radius, style);
         return;
     }
 
@@ -1989,14 +2116,7 @@ void drawUiGauge(Renderer& renderer, UiRect rect, float progress, const UiGaugeS
         }
     }
 
-    const Vec2 capCenter{std::clamp(fillRight, lineStart.x, lineEnd.x), centerY};
-    if (colorVisible(style.capGlow)) {
-        renderer.fillSoftCircle(capCenter, rect.size.y * 0.72f, style.capGlow);
-    }
-    if (colorVisible(style.capCore)) {
-        renderer.fillCircle(capCenter, std::max(1.0f, rect.size.y * 0.14f), style.capCore);
-    }
-    drawCapsuleOutline(renderer, rect, radius, style.outline);
+    drawGaugeCapsuleOutlines(renderer, rect, radius, style);
 }
 
 UiSliderResult updateUiSlider(
@@ -2007,10 +2127,10 @@ UiSliderResult updateUiSlider(
     const UiSliderSpec& spec,
     UiSliderState& state)
 {
-    UiSliderResult result{value, false};
+    UiSliderResult result{value, false, false};
     const float range = spec.maxValue - spec.minValue;
     if (range <= 0.0f || rect.size.x <= 0.0f || rect.size.y <= 0.0f) {
-        state.dragging = false;
+        state.dismissValue();
         return result;
     }
 
@@ -2025,24 +2145,50 @@ UiSliderResult updateUiSlider(
         return clamp(nextValue, spec.minValue, spec.maxValue);
     };
 
+    const bool pointerPressedInside = ui.pressed(rect) && !ui.navigationActive();
+    const auto otherOperationPressed = [&] {
+        if ((input.mouseLeftPressed() && !pointerPressedInside) ||
+            input.mouseWheelDelta() != 0 ||
+            input.saveShortcutPressed() ||
+            input.undoShortcutPressed() ||
+            input.redoShortcutPressed() ||
+            input.copyShortcutPressed() ||
+            input.pasteShortcutPressed() ||
+            input.shortcutCursorDelta() != 0 ||
+            input.shortcutSlotPressed() >= 0 ||
+            input.ringPresetRegisterSlotPressed() >= 0 ||
+            input.activeRingDelta() != 0) {
+            return true;
+        }
+        for (int action = 0; action < InputActionCount; ++action) {
+            if (input.pressed(static_cast<InputAction>(action))) {
+                return true;
+            }
+        }
+        return false;
+    };
+    if (!state.dragging() && state.valueBubbleVisible() && otherOperationPressed()) {
+        state.dismissValue();
+    }
+
     bool interacting = false;
-    if (state.dragging) {
+    if (state.dragging()) {
         if (input.mouseLeftHeld()) {
             interacting = true;
+            rememberUiControlVisualSelection(rect, true);
         } else {
-            state.dragging = false;
+            state.releaseDrag();
         }
-    } else if (
-        input.mouseLeftPressed() &&
-        !ui.pointerConsumed() &&
-        ui.pointerInside(rect)) {
-        state.dragging = true;
+    } else if (pointerPressedInside) {
+        state.beginDrag();
         interacting = true;
     }
 
     if (interacting) {
+        state.beginDrag();
         result.value = valueAtPointer();
         result.changed = std::abs(result.value - value) > 0.0001f;
+        result.interacting = true;
         ui.consumePointer();
     }
     return result;
@@ -2053,6 +2199,7 @@ void drawUiSlider(
     UiRect rect,
     float value,
     const UiSliderSpec& spec,
+    const UiSliderState& state,
     const UiSliderStyle& style)
 {
     const float range = spec.maxValue - spec.minValue;
@@ -2060,42 +2207,81 @@ void drawUiSlider(
         return;
     }
 
-    UiGaugeStyle gaugeStyle = style.gauge;
-    if (spec.step > 0.0f) {
-        gaugeStyle.tickCount = std::max(
-            1,
-            static_cast<int>(std::lround(range / spec.step)));
-    }
+    UiControlMotionScope motion(renderer, rect, UiControlMotion::HoverAndPress);
     const float progress = clamp((value - spec.minValue) / range, 0.0f, 1.0f);
-    drawUiGauge(renderer, rect, progress, gaugeStyle);
-
     const float centerY = rect.pos.y + rect.size.y * 0.5f;
-    const auto drawTick = [&](float tickValue, float halfHeight, Color color) {
-        if (!colorVisible(color) ||
-            tickValue <= spec.minValue ||
-            tickValue >= spec.maxValue) {
-            return;
-        }
-        const float normalized = (tickValue - spec.minValue) / range;
-        const float x = rect.pos.x + rect.size.x * normalized;
-        renderer.drawLine({x, centerY - halfHeight}, {x, centerY + halfHeight}, color);
-    };
+    const float trackThickness = clamp(
+        style.trackThickness,
+        1.0f,
+        std::max(1.0f, rect.size.y));
+    const UiRect track{{
+        rect.pos.x,
+        centerY - trackThickness * 0.5f,
+    }, {
+        rect.size.x,
+        trackThickness,
+    }};
+    fillRoundedRect(renderer, track, trackThickness * 0.5f, style.track);
 
-    if (spec.majorTickStep > 0.0f) {
-        const float firstTick =
-            std::ceil(spec.minValue / spec.majorTickStep) * spec.majorTickStep;
-        const float halfHeight = std::max(1.0f, rect.size.y * 0.42f);
-        for (float tickValue = firstTick;
-             tickValue < spec.maxValue;
-             tickValue += spec.majorTickStep) {
-            drawTick(tickValue, halfHeight, style.majorTick);
-        }
+    const float thumbX = rect.pos.x + rect.size.x * progress;
+    const float activeWidth = std::max(0.0f, thumbX - rect.pos.x);
+    if (activeWidth > 0.0f) {
+        fillRoundedRect(
+            renderer,
+            {track.pos, {activeWidth, track.size.y}},
+            trackThickness * 0.5f,
+            style.activeTrack);
     }
-    if (spec.showReference) {
-        drawTick(
-            spec.referenceValue,
-            std::max(1.0f, rect.size.y * 0.68f),
-            style.referenceTick);
+
+    const float thumbRadius = style.thumbRadius >= 0.0f
+        ? style.thumbRadius
+        : clamp(rect.size.y * 0.45f, 6.0f, 10.0f);
+    const Vec2 thumbCenter{thumbX, centerY};
+    renderer.fillSoftCircle(thumbCenter, thumbRadius, style.thumb);
+    if (colorVisible(style.thumbOutline)) {
+        renderer.drawSoftRing(thumbCenter, thumbRadius, 1.25f, style.thumbOutline);
+    }
+
+    if (state.valueBubbleVisible() && style.showValueBubble && colorVisible(style.valueBubble)) {
+        char numericValueBuffer[32];
+        std::snprintf(
+            numericValueBuffer,
+            sizeof(numericValueBuffer),
+            "%.*f",
+            std::clamp(spec.valueDecimalPlaces, 0, 4),
+            clamp(value, spec.minValue, spec.maxValue));
+        std::string valueText{numericValueBuffer};
+        valueText.append(spec.valueSuffix);
+        constexpr int ValueTextScale = 1;
+        constexpr float BubblePaddingX = 8.0f;
+        constexpr float BubblePaddingY = 5.0f;
+        constexpr float PointerHeight = 5.0f;
+        constexpr float BubbleGap = 3.0f;
+        const Vec2 textSize = renderer.measureText(valueText, ValueTextScale);
+        const Vec2 bubbleSize{
+            std::max(30.0f, textSize.x + BubblePaddingX * 2.0f),
+            textSize.y + BubblePaddingY * 2.0f,
+        };
+        const UiRect bubble{{
+            thumbCenter.x - bubbleSize.x * 0.5f,
+            thumbCenter.y - thumbRadius - BubbleGap - PointerHeight - bubbleSize.y,
+        }, bubbleSize};
+        fillRoundedRect(renderer, bubble, 2.0f, style.valueBubble);
+
+        const Vec2 pointer[] = {
+            {thumbCenter.x - PointerHeight, bubble.pos.y + bubble.size.y - 1.0f},
+            {thumbCenter.x + PointerHeight, bubble.pos.y + bubble.size.y - 1.0f},
+            {thumbCenter.x, bubble.pos.y + bubble.size.y + PointerHeight},
+        };
+        renderer.fillPolygon(pointer, 3, style.valueBubble);
+        renderer.drawText(
+            {
+                bubble.pos.x + (bubble.size.x - textSize.x) * 0.5f,
+                bubble.pos.y + (bubble.size.y - textSize.y) * 0.5f,
+            },
+            valueText,
+            style.valueText,
+            ValueTextScale);
     }
 }
 
@@ -2109,7 +2295,7 @@ bool tryActivateUiButton(UiContext& ui, UiButtonState state)
     if (uiButtonAvailable(state)) {
         return true;
     }
-    ui.emitSound(UiSoundEvent::Error);
+    ui.rejectAction();
     return false;
 }
 
@@ -2148,13 +2334,15 @@ void drawUiButtonWithNavigationRole(
     UiRect rect,
     std::string_view label,
     int iconImageNumber,
-    bool hot,
+    bool preferred,
     const UiButtonStyle& style,
-    UiNavigationRole navigationRole)
+    UiNavigationRole navigationRole,
+    bool enabled)
 {
     rect.size.y = ui::ButtonHeight;
-    const bool selected = hot || hasUiControlVisualSelection(rect);
-    registerUiNavigationTarget(rect, navigationRole, selected);
+    const bool selected = uiControlVisualState(rect).selected;
+    registerUiNavigationTarget(rect, navigationRole, preferred, enabled);
+    UiControlMotionScope motion(renderer, rect, UiControlMotion::PressOnly, enabled);
 
     if (renderer.hasUiButtonTexture()) {
         Color tint = selected ? style.imageTintHot : style.imageTint;
@@ -2186,18 +2374,18 @@ void drawUiButton(
     Renderer& renderer,
     UiRect rect,
     std::string_view label,
-    bool hot,
+    bool preferred,
     const UiButtonStyle& style,
     UiNavigationRole navigationRole)
 {
-    drawUiButton(renderer, rect, label, hot, UiButtonState::Enabled, style, navigationRole);
+    drawUiButton(renderer, rect, label, preferred, UiButtonState::Enabled, style, navigationRole);
 }
 
 void drawUiButton(
     Renderer& renderer,
     UiRect rect,
     std::string_view label,
-    bool hot,
+    bool preferred,
     UiButtonState state,
     const UiButtonStyle& style,
     UiNavigationRole navigationRole)
@@ -2207,14 +2395,15 @@ void drawUiButton(
         rect,
         label,
         0,
-        hot,
+        preferred,
         uiButtonStyleForState(style, state),
-        navigationRole);
+        navigationRole,
+        uiButtonAvailable(state));
 }
 
-void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, int iconImageNumber, bool hot, const UiButtonStyle& style)
+void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, int iconImageNumber, bool preferred, const UiButtonStyle& style)
 {
-    drawUiButton(renderer, rect, label, iconImageNumber, hot, UiButtonState::Enabled, style);
+    drawUiButton(renderer, rect, label, iconImageNumber, preferred, UiButtonState::Enabled, style);
 }
 
 void drawUiButton(
@@ -2222,7 +2411,7 @@ void drawUiButton(
     UiRect rect,
     std::string_view label,
     int iconImageNumber,
-    bool hot,
+    bool preferred,
     UiButtonState state,
     const UiButtonStyle& style)
 {
@@ -2231,53 +2420,75 @@ void drawUiButton(
         rect,
         label,
         iconImageNumber,
-        hot,
+        preferred,
         uiButtonStyleForState(style, state),
-        UiNavigationRole::Control);
+        UiNavigationRole::Control,
+        uiButtonAvailable(state));
 }
 
-void drawUiFlexibleButtonFrame(Renderer& renderer, UiRect rect, bool selected, const UiButtonStyle& style)
+namespace {
+
+bool drawUiFlexibleButtonFrameContent(
+    Renderer& renderer,
+    UiRect rect,
+    bool preferred,
+    UiButtonState state,
+    const UiButtonStyle& style)
 {
-    drawUiFlexibleButtonFrame(renderer, rect, selected, UiButtonState::Enabled, style);
+    const UiButtonStyle resolvedStyle = uiButtonStyleForState(style, state);
+    const bool selected = uiControlVisualState(rect).selected;
+    registerUiNavigationTarget(
+        rect,
+        UiNavigationRole::Control,
+        preferred,
+        uiButtonAvailable(state));
+    const Color tint = selected ? resolvedStyle.imageTintHot : resolvedStyle.imageTint;
+    if (!drawUiFlexibleButtonImage(renderer, rect, selected, tint)) {
+        const Color fill = selected ? resolvedStyle.fillHot : resolvedStyle.fill;
+        const Color outline = selected ? scaledColor(resolvedStyle.outlineHot, 1.04f) : resolvedStyle.outline;
+        renderer.fillRect(rect.pos, rect.size, fill);
+        renderer.drawRect(rect.pos, rect.size, outline);
+    }
+    if (selected) {
+        requestUiSelectionCursor(rect);
+    }
+    return selected;
+}
+
+}
+
+void drawUiFlexibleButtonFrame(Renderer& renderer, UiRect rect, bool preferred, const UiButtonStyle& style)
+{
+    drawUiFlexibleButtonFrame(renderer, rect, preferred, UiButtonState::Enabled, style);
 }
 
 void drawUiFlexibleButtonFrame(
     Renderer& renderer,
     UiRect rect,
-    bool selected,
+    bool preferred,
     UiButtonState state,
     const UiButtonStyle& style)
 {
-    const UiButtonStyle resolvedStyle = uiButtonStyleForState(style, state);
-    selected = selected || hasUiControlVisualSelection(rect);
-    registerUiNavigationTarget(rect, UiNavigationRole::Control, selected);
-    const Color tint = selected ? resolvedStyle.imageTintHot : resolvedStyle.imageTint;
-    if (drawUiFlexibleButtonImage(renderer, rect, selected, tint)) {
-        return;
-    }
-
-    const Color fill = selected ? resolvedStyle.fillHot : resolvedStyle.fill;
-    const Color outline = selected ? scaledColor(resolvedStyle.outlineHot, 1.04f) : resolvedStyle.outline;
-    renderer.fillRect(rect.pos, rect.size, fill);
-    renderer.drawRect(rect.pos, rect.size, outline);
+    UiControlMotionScope motion(renderer, rect, UiControlMotion::PressOnly, uiButtonAvailable(state));
+    drawUiFlexibleButtonFrameContent(renderer, rect, preferred, state, style);
 }
 
-void drawUiFlexibleButton(Renderer& renderer, UiRect rect, std::string_view label, bool selected, const UiButtonStyle& style)
+void drawUiFlexibleButton(Renderer& renderer, UiRect rect, std::string_view label, bool preferred, const UiButtonStyle& style)
 {
-    drawUiFlexibleButton(renderer, rect, label, selected, UiButtonState::Enabled, style);
+    drawUiFlexibleButton(renderer, rect, label, preferred, UiButtonState::Enabled, style);
 }
 
 void drawUiFlexibleButton(
     Renderer& renderer,
     UiRect rect,
     std::string_view label,
-    bool selected,
+    bool preferred,
     UiButtonState state,
     const UiButtonStyle& style)
 {
     const UiButtonStyle resolvedStyle = uiButtonStyleForState(style, state);
-    selected = selected || hasUiControlVisualSelection(rect);
-    drawUiFlexibleButtonFrame(renderer, rect, selected, state, style);
+    UiControlMotionScope motion(renderer, rect, UiControlMotion::PressOnly, uiButtonAvailable(state));
+    drawUiFlexibleButtonFrameContent(renderer, rect, preferred, state, style);
 
     const Vec2 textSize = renderer.measureText(label, 2);
     const Vec2 textPos{
@@ -2285,9 +2496,6 @@ void drawUiFlexibleButton(
         rect.pos.y + std::max(0.0f, (rect.size.y - textSize.y) * 0.5f),
     };
     renderer.drawText(textPos, label, resolvedStyle.text, 2);
-    if (selected) {
-        requestUiSelectionCursor(rect);
-    }
 }
 
 void drawUiRectButton(Renderer& renderer, UiRect rect, std::string_view label, bool hot, const UiButtonStyle& style)
@@ -2304,11 +2512,13 @@ void drawUiRectButton(
     const UiButtonStyle& style)
 {
     const UiButtonStyle resolvedStyle = uiButtonStyleForState(style, state);
-    const bool selected = hot || hasUiControlVisualSelection(rect);
-    registerUiNavigationTarget(rect, UiNavigationRole::Control, selected);
-    const float scale = selected ? 1.035f : 1.0f;
-    const Vec2 center = rect.pos + rect.size * 0.5f;
-    renderer.pushScreenTransform(center, scale, 1.0f);
+    const bool selected = uiControlVisualState(rect).selected;
+    registerUiNavigationTarget(
+        rect,
+        UiNavigationRole::Control,
+        hot,
+        uiButtonAvailable(state));
+    UiControlMotionScope motion(renderer, rect, UiControlMotion::PressOnly, uiButtonAvailable(state));
 
     const Color fill = selected ? resolvedStyle.fillHot : resolvedStyle.fill;
     const Color outline = selected ? scaledColor(resolvedStyle.outlineHot, 1.04f) : resolvedStyle.outline;
@@ -2321,17 +2531,12 @@ void drawUiRectButton(
         rect.pos.y + std::max(0.0f, (rect.size.y - textSize.y) * 0.5f),
     };
     renderer.drawText(textPos, label, resolvedStyle.text, 2);
-    renderer.popScreenTransform();
     if (selected) {
         requestUiSelectionCursor(rect);
     }
 }
 
 namespace {
-
-constexpr float UiArrowButtonHoverScale = 1.10f;
-constexpr float UiArrowButtonPressedScale = 0.94f;
-constexpr int UiArrowButtonPressDurationFrames = 6;
 
 std::string_view uiArrowButtonImagePath(UiArrowButtonVariant variant)
 {
@@ -2370,66 +2575,6 @@ ImageDrawOptions uiArrowButtonImageOptions(UiArrowDirection direction, bool enab
     return options;
 }
 
-UiArrowButtonPressAnimation* findUiArrowButtonPressAnimation(UiRect rect)
-{
-    const auto animation = std::find_if(
-        arrowButtonPressAnimations.begin(),
-        arrowButtonPressAnimations.end(),
-        [&](const UiArrowButtonPressAnimation& candidate) {
-            return navigationRectsMatch(candidate.rect, rect);
-        });
-    return animation != arrowButtonPressAnimations.end() ? &*animation : nullptr;
-}
-
-void updateUiArrowButtonPressAnimation(UiRect rect, bool activated)
-{
-    UiArrowButtonPressAnimation* animation = findUiArrowButtonPressAnimation(rect);
-    if (animation == nullptr && activated) {
-        arrowButtonPressAnimations.push_back({rect, UiArrowButtonPressDurationFrames, true});
-        return;
-    }
-    if (animation == nullptr) {
-        return;
-    }
-    animation->seen = true;
-    if (activated) {
-        animation->remainingFrames = UiArrowButtonPressDurationFrames;
-    }
-}
-
-bool uiArrowButtonPressAnimating(UiRect rect)
-{
-    const UiArrowButtonPressAnimation* animation = findUiArrowButtonPressAnimation(rect);
-    return animation != nullptr && animation->remainingFrames > 0;
-}
-
-void rememberUiArrowButtonVisualState(UiRect rect, bool selected, bool pressed)
-{
-    const auto existing = std::find_if(
-        arrowButtonVisualStates.begin(),
-        arrowButtonVisualStates.end(),
-        [&](const UiArrowButtonVisualState& state) {
-            return navigationRectsMatch(state.rect, rect);
-        });
-    if (existing != arrowButtonVisualStates.end()) {
-        existing->selected = existing->selected || selected;
-        existing->pressed = existing->pressed || pressed;
-        return;
-    }
-    arrowButtonVisualStates.push_back({rect, selected, pressed});
-}
-
-const UiArrowButtonVisualState* findUiArrowButtonVisualState(UiRect rect)
-{
-    const auto state = std::find_if(
-        arrowButtonVisualStates.begin(),
-        arrowButtonVisualStates.end(),
-        [&](const UiArrowButtonVisualState& candidate) {
-            return navigationRectsMatch(candidate.rect, rect);
-        });
-    return state != arrowButtonVisualStates.end() ? &*state : nullptr;
-}
-
 } // namespace
 
 Vec2 uiArrowButtonNativeSize(UiArrowButtonVariant variant)
@@ -2444,20 +2589,19 @@ bool updateUiArrowButton(
     UiArrowButtonVariant variant,
     bool enabled)
 {
-    if (!enabled) {
-        return false;
-    }
     const UiRect imageRect = normalizedUiArrowButtonRect(rect, variant);
     const bool activated = ui.pressedImage(
         imageRect,
         uiArrowButtonImagePath(variant),
-        uiArrowButtonImageOptions(direction, true));
-    rememberUiArrowButtonVisualState(
-        imageRect,
-        hasUiControlVisualSelection(imageRect),
-        isUiControlVisuallyPressed(imageRect));
-    updateUiArrowButtonPressAnimation(imageRect, activated);
-    return activated;
+        uiArrowButtonImageOptions(direction, enabled));
+    if (!activated) {
+        return false;
+    }
+    if (!enabled) {
+        ui.rejectAction();
+        return false;
+    }
+    return true;
 }
 
 void drawUiArrowButton(
@@ -2469,17 +2613,11 @@ void drawUiArrowButton(
 {
     const UiRect imageRect = normalizedUiArrowButtonRect(rect, variant);
     registerUiNavigationTarget(imageRect, UiNavigationRole::Control, false, enabled);
-    const UiArrowButtonVisualState* visualState = findUiArrowButtonVisualState(imageRect);
-    const bool pressed = enabled &&
-        ((visualState != nullptr && visualState->pressed) || uiArrowButtonPressAnimating(imageRect));
-    const bool selected = enabled && visualState != nullptr && visualState->selected;
-    const float scale = pressed
-        ? UiArrowButtonPressedScale
-        : (selected ? UiArrowButtonHoverScale : 1.0f);
+    UiControlMotionScope motion(renderer, imageRect, UiControlMotion::HoverAndPress, enabled);
     renderer.drawImage(
         uiArrowButtonImagePath(variant),
         imageRect.pos + imageRect.size * 0.5f,
-        imageRect.size * scale,
+        imageRect.size,
         uiArrowButtonImageOptions(direction, enabled),
         TextureFilter::Nearest);
 }
@@ -2493,14 +2631,16 @@ void drawUiSmallSelectButton(
     bool disabled,
     const UiSmallSelectButtonStyle& style)
 {
+    const bool selected = uiControlVisualState(rect).selected;
     registerUiNavigationTarget(rect, UiNavigationRole::Control, hot, !disabled);
-    const Color fill = disabled ? style.fillDisabled : (hot ? style.fillHot : style.fill);
-    const Color outline = disabled ? style.outlineDisabled : (hot ? style.outlineHot : style.outline);
+    UiControlMotionScope motion(renderer, rect, UiControlMotion::PressOnly, !disabled);
+    const Color fill = disabled ? style.fillDisabled : (selected ? style.fillHot : style.fill);
+    const Color outline = disabled ? style.outlineDisabled : (selected ? style.outlineHot : style.outline);
     const Color labelColor = disabled ? style.disabledText : style.text;
     const Color valueColor = disabled ? style.disabledText : style.valueText;
     renderer.fillRect(rect.pos, rect.size, fill);
     renderer.drawRect(rect.pos, rect.size, outline);
-    if (hot && !disabled) {
+    if (selected && !disabled) {
         renderer.fillRect(rect.pos + Vec2{2.0f, 4.0f}, {5.0f, std::max(0.0f, rect.size.y - 8.0f)}, style.accent);
     }
 
@@ -2546,7 +2686,9 @@ bool handleUiTextInputEvent(UiTextInputState& state, const SDL_Event& event, int
     }
 
     if (event.type == SDL_EVENT_TEXT_EDITING) {
-        state.composition = event.edit.text == nullptr ? std::string{} : std::string(event.edit.text);
+        state.composition = event.edit.text == nullptr
+            ? std::string{}
+            : utf8::sanitized(event.edit.text);
         return true;
     }
 
@@ -2682,9 +2824,26 @@ void drawUiSystemMessage(Renderer& renderer, std::string_view message, Vec2 pos,
     float maxWidth,
     int scale)
 {
+    UiWrappedColoredTextStyle style;
+    style.scale = scale;
+    return drawUiWrappedColoredText(renderer, pos, runs, maxWidth, style);
+}
+
+[[nodiscard]] float drawUiWrappedColoredText(
+    Renderer& renderer,
+    Vec2 pos,
+    std::span<const UiColoredTextRun> runs,
+    float maxWidth,
+    const UiWrappedColoredTextStyle& style)
+{
     std::vector<WrappedUiColoredTextLine> lines;
     WrappedUiColoredTextLine line;
     const float wrapWidth = std::max(1.0f, maxWidth);
+    const int scale = std::max(1, style.scale);
+    const float hangingIndent = std::clamp(
+        uiHangingIndentAdvance(renderer, style.hangingIndentText, scale),
+        0.0f,
+        std::max(0.0f, wrapWidth - 1.0f));
 
     for (const UiColoredTextRun& run : runs) {
         for (std::size_t i = 0; i < run.text.size();) {
@@ -2702,9 +2861,11 @@ void drawUiSystemMessage(Renderer& renderer, std::string_view message, Vec2 pos,
             const std::string_view token = run.text.substr(i, length);
             std::string candidate = line.text;
             candidate.append(token.data(), token.size());
-            if (!line.text.empty() && renderer.measureText(candidate, scale).x > wrapWidth) {
+            if (!line.text.empty() &&
+                line.indent + uiColoredTextAdvance(renderer, candidate, scale) > wrapWidth) {
                 lines.push_back(std::move(line));
                 line = {};
+                line.indent = hangingIndent;
             }
             appendWrappedUiColoredText(line, token, run.color);
             i += length;
@@ -2722,7 +2883,7 @@ void drawUiSystemMessage(Renderer& renderer, std::string_view message, Vec2 pos,
     const float lineAdvance = uiWrappedTextLineAdvance(renderer, scale);
     float y = pos.y;
     for (const WrappedUiColoredTextLine& wrappedLine : lines) {
-        float x = pos.x;
+        float x = pos.x + wrappedLine.indent;
         for (const WrappedUiColoredTextRun& run : wrappedLine.runs) {
             renderer.drawText({x, y}, run.text, run.color, scale);
             x += uiColoredTextAdvance(renderer, run.text, scale);
@@ -2789,28 +2950,56 @@ float drawUiDetailHeaderWithIcon(
 
 void drawUiDetailText(Renderer& renderer, UiRect panel, float& y, std::string_view text)
 {
-    drawUiDetailText(renderer, panel, y, text, ui::Text);
+    drawUiDetailText(renderer, panel, y, text, UiDetailTextStyle{});
 }
 
 void drawUiDetailText(Renderer& renderer, UiRect panel, float& y, std::string_view text, Color color)
 {
-    constexpr float TextGap = 8.0f;
+    UiDetailTextStyle style;
+    style.color = color;
+    drawUiDetailText(renderer, panel, y, text, style);
+}
+
+void drawUiDetailText(
+    Renderer& renderer,
+    UiRect panel,
+    float& y,
+    std::string_view text,
+    const UiDetailTextStyle& style)
+{
     const UiRect content = uiSubPanelContentRect(panel);
-    renderer.drawWrappedText({content.pos.x, y}, text, content.size.x, color, 2);
-    y += renderer.measureWrappedText(text, content.size.x, 2).y + TextGap;
+    const int scale = std::max(1, style.scale);
+    renderer.drawWrappedText({content.pos.x, y}, text, content.size.x, style.color, scale);
+    y += renderer.measureWrappedText(text, content.size.x, scale).y + std::max(0.0f, style.bottomGap);
 }
 
 void drawUiDetailLine(Renderer& renderer, UiRect panel, float& y, std::string_view label, std::string_view value, Color valueColor)
 {
-    constexpr float LabelWidth = 106.0f;
-    constexpr float MinLineHeight = 31.0f;
-    constexpr float LineGap = 4.0f;
+    UiDetailLineStyle style;
+    style.valueColor = valueColor;
+    drawUiDetailLine(renderer, panel, y, label, value, style);
+}
+
+void drawUiDetailLine(
+    Renderer& renderer,
+    UiRect panel,
+    float& y,
+    std::string_view label,
+    std::string_view value,
+    const UiDetailLineStyle& style)
+{
     const float labelX = panel.pos.x + ui::SubPanelPadding.x;
-    const float valueX = labelX + LabelWidth;
+    const float valueX = labelX + std::max(0.0f, style.labelWidth);
     const float valueMaxWidth = panel.pos.x + panel.size.x - valueX - ui::SubPanelPadding.x;
-    renderer.drawText({labelX, y}, label, ui::TextMuted, 2);
-    renderer.drawWrappedText({valueX, y}, value, valueMaxWidth, valueColor, 2);
-    y += std::max(MinLineHeight, renderer.measureWrappedText(value, valueMaxWidth, 2).y + LineGap);
+    const int scale = std::max(1, style.scale);
+    renderer.drawText({labelX, y}, label, style.labelColor, scale);
+    renderer.drawWrappedText({valueX, y}, value, valueMaxWidth, style.valueColor, scale);
+    const float contentHeight = std::max(
+        renderer.measureText(label, scale).y,
+        renderer.measureWrappedText(value, valueMaxWidth, scale).y);
+    y += std::max(
+        std::max(0.0f, style.minLineHeight),
+        contentHeight + std::max(0.0f, style.lineGap));
 }
 
 UiRect uiResultDialogOkButtonRect(UiRect panel)
@@ -2922,20 +3111,35 @@ void drawCenteredUiResultDialogLine(Renderer& renderer, UiRect rect, float y, co
     }
 }
 
-UiRect uiQuantityValueRect(UiRect panel)
+UiRect uiQuantityConfirmButtonRect(UiRect panel)
 {
-    const UiRect body = uiBodyRect(panel);
-    return {{body.pos.x + 28.0f, body.pos.y + 10.0f}, {body.size.x - 56.0f, 132.0f}};
+    return uiFooterActionButtonRect(
+        panel,
+        {180.0f, ui::ButtonHeight},
+        UiFooterActionAlignment::Center);
+}
+
+UiRect uiQuantityControlRect(UiRect panel)
+{
+    const UiRect body = uiBodyRect(panel, 0.0f, ui::PanelPadding);
+    const UiRect confirmButton = uiQuantityConfirmButtonRect(panel);
+    return {
+        body.pos,
+        {
+            body.size.x,
+            std::max(0.0f, confirmButton.pos.y - ui::ButtonGap - body.pos.y),
+        },
+    };
 }
 
 UiRect uiQuantityDownButtonRect(UiRect panel)
 {
-    const UiRect value = uiQuantityValueRect(panel);
+    const UiRect control = uiQuantityControlRect(panel);
     constexpr Vec2 ButtonSize = ui::ArrowButtonWideSize;
     return {
         {
-            value.pos.x + (value.size.x - ButtonSize.x) * 0.5f,
-            value.pos.y + value.size.y - ButtonSize.y - 10.0f,
+            control.pos.x + (control.size.x - ButtonSize.x) * 0.5f,
+            control.pos.y + control.size.y - ButtonSize.y,
         },
         ButtonSize,
     };
@@ -2943,22 +3147,12 @@ UiRect uiQuantityDownButtonRect(UiRect panel)
 
 UiRect uiQuantityUpButtonRect(UiRect panel)
 {
-    const UiRect value = uiQuantityValueRect(panel);
+    const UiRect control = uiQuantityControlRect(panel);
     constexpr Vec2 ButtonSize = ui::ArrowButtonWideSize;
     return {
-        {value.pos.x + (value.size.x - ButtonSize.x) * 0.5f, value.pos.y + 10.0f},
+        {control.pos.x + (control.size.x - ButtonSize.x) * 0.5f, control.pos.y},
         ButtonSize,
     };
-}
-
-UiRect uiQuantityConfirmButtonRect(UiRect panel)
-{
-    const UiRect body = uiBodyRect(panel);
-    constexpr Vec2 Size{150.0f, ui::ButtonHeight};
-    return {{
-        body.pos.x + (body.size.x - Size.x) * 0.5f,
-        panel.pos.y + panel.size.y - ui::FooterMaxHeight - Size.y - 8.0f,
-    }, Size};
 }
 
 void closeUiConfirmDialog(UiConfirmDialogState& state)
@@ -2976,7 +3170,6 @@ void closeUiQuantityDialog(UiQuantityDialogState& state)
 {
     state.open = false;
     state.title.clear();
-    state.message.clear();
     state.unitLabel.clear();
 }
 
@@ -3029,8 +3222,8 @@ void drawUiResultDialog(Renderer& renderer, const UiResultDialogState& state, Ui
     if (!state.open) {
         return;
     }
-    UiNavigationLayerScope navigationScope;
     panel = fitUiResultDialogRect(state, panel);
+    UiModalNavigationScope navigationScope(panel);
 
     UiWindowScope window(renderer, id, panel, "", "F/Enter OK", UiWindowOptions{true, false});
     const UiRect body = uiResultDialogTextRect(panel);
@@ -3040,7 +3233,7 @@ void drawUiResultDialog(Renderer& renderer, const UiResultDialogState& state, Ui
         drawCenteredUiResultDialogLine(renderer, body, y, line, TextScale);
         y += measureUiResultDialogLine(renderer, line, TextScale).y + 10.0f;
     }
-    drawUiButton(renderer, uiResultDialogOkButtonRect(panel), "OK", true, uiActionButtonStyle());
+    drawUiButton(renderer, uiResultDialogOkButtonRect(panel), "OK", false, uiActionButtonStyle());
 }
 
 UiRect uiConfirmDialogButtonRect(UiRect panel, int index)
@@ -3090,10 +3283,10 @@ UiConfirmDialogResult updateUiConfirmDialog(UiConfirmDialogState& state, UiConte
     } else if (ui.hovered(uiConfirmDialogButtonRect(panel, 1))) {
         state.selection = 1;
     }
-    if (input.pressed(InputAction::MoveLeft) || input.pressed(InputAction::MoveUp) || input.activeRingDelta() < 0) {
+    if (input.pressed(InputAction::MoveLeft) || input.pressed(InputAction::MoveUp)) {
         state.selection = 1;
     }
-    if (input.pressed(InputAction::MoveRight) || input.pressed(InputAction::MoveDown) || input.activeRingDelta() > 0) {
+    if (input.pressed(InputAction::MoveRight) || input.pressed(InputAction::MoveDown)) {
         state.selection = 0;
     }
     ui.emitCursorMoveIfChanged(previousSelection, state.selection);
@@ -3101,11 +3294,10 @@ UiConfirmDialogResult updateUiConfirmDialog(UiConfirmDialogState& state, UiConte
     const bool confirmRequested =
         ui.pressed(uiConfirmDialogButtonRect(panel, 0)) ||
         ((input.confirmPressed() || input.useItemPressed()) && state.selection == 0);
-    const bool backPressed = input.backPressed() && !ui.backInputConsumed();
+    const bool cancelControlRequested = uiCancelControlRequested(input, ui, panel);
     const bool cancelRequested =
         ui.pressed(uiConfirmDialogButtonRect(panel, 1)) ||
-        ui.pressed(uiCancelButtonRect(panel)) ||
-        backPressed ||
+        cancelControlRequested ||
         ((input.confirmPressed() || input.useItemPressed()) && state.selection == 1);
 
     if (confirmRequested && tryActivateUiButton(ui, state.confirmState)) {
@@ -3114,10 +3306,9 @@ UiConfirmDialogResult updateUiConfirmDialog(UiConfirmDialogState& state, UiConte
         return UiConfirmDialogResult::Confirmed;
     }
     if (cancelRequested) {
-        if (backPressed) {
-            ui.consumeBackInput();
+        if (!cancelControlRequested) {
+            ui.emitSound(UiSoundEvent::Cancel);
         }
-        ui.emitSound(UiSoundEvent::Cancel);
         closeUiConfirmDialog(state);
         return UiConfirmDialogResult::Cancelled;
     }
@@ -3147,7 +3338,7 @@ void drawUiConfirmDialog(Renderer& renderer, const UiConfirmDialogState& state, 
         return;
     }
 
-    UiNavigationLayerScope navigationScope;
+    UiModalNavigationScope navigationScope(panel);
     UiWindowScope window(renderer, id, panel, state.title, uiConfirmDialogHelpText(), UiWindowOptions{true, true});
     drawUiWindowBodyText(
         renderer,
@@ -3163,7 +3354,6 @@ void drawUiConfirmDialog(Renderer& renderer, const UiConfirmDialogState& state, 
 void openUiQuantityDialog(
     UiQuantityDialogState& state,
     std::string title,
-    std::string message,
     int minValue,
     int maxValue,
     int initialValue,
@@ -3171,7 +3361,6 @@ void openUiQuantityDialog(
 {
     state.open = true;
     state.title = std::move(title);
-    state.message = std::move(message);
     state.unitLabel = std::move(unitLabel);
     state.minValue = std::min(minValue, maxValue);
     state.maxValue = std::max(minValue, maxValue);
@@ -3228,17 +3417,13 @@ UiQuantityDialogResult updateUiQuantityDialog(UiQuantityDialogState& state, UiCo
     }
     ui.emitCursorMoveIfChanged(previousValue, state.value);
     if (ui.pressed(uiQuantityConfirmButtonRect(panel)) ||
-        (!ui.navigationActive() && (input.confirmPressed() || input.useItemPressed()))) {
+        input.confirmPressed() ||
+        input.useItemPressed()) {
         ui.emitSound(UiSoundEvent::Confirm);
         closeUiQuantityDialog(state);
         return UiQuantityDialogResult::Confirmed;
     }
-    const bool backPressed = input.backPressed() && !ui.backInputConsumed();
-    if (ui.pressed(uiCancelButtonRect(panel)) || backPressed) {
-        if (backPressed) {
-            ui.consumeBackInput();
-        }
-        ui.emitSound(UiSoundEvent::Cancel);
+    if (uiCancelControlRequested(input, ui, panel)) {
         closeUiQuantityDialog(state);
         return UiQuantityDialogResult::Cancelled;
     }
@@ -3252,15 +3437,15 @@ void drawUiQuantityDialog(Renderer& renderer, const UiQuantityDialogState& state
         return;
     }
 
-    UiNavigationLayerScope navigationScope;
-    UiWindowScope window(renderer, id, panel, state.title, "↑/↓　+1/-1　Z/X　+10/-10　F/Enter　決定", UiWindowOptions{true, true});
-    const UiRect body = uiBodyRect(panel);
-    const UiRect valueRect = uiQuantityValueRect(panel);
-    if (!state.message.empty()) {
-        renderer.drawWrappedText({valueRect.pos.x, body.pos.y - 24.0f}, state.message, valueRect.size.x, ui::Text, 2);
-    }
-
-    drawUiSubPanel(renderer, valueRect);
+    UiExclusiveNavigationScope navigationScope(panel);
+    UiWindowScope window(
+        renderer,
+        id,
+        panel,
+        state.title,
+        "↑/↓ 1個ずつ  Z/X 10個ずつ  F/Enter 決定",
+        UiWindowOptions{true, true});
+    const UiRect controlRect = uiQuantityControlRect(panel);
     std::string valueText = std::to_string(state.value);
     if (!state.unitLabel.empty()) {
         valueText += state.unitLabel;
@@ -3272,7 +3457,7 @@ void drawUiQuantityDialog(Renderer& renderer, const UiQuantityDialogState& state
     const float textBandBottom = downButton.pos.y;
     renderer.drawText(
         {
-            valueRect.pos.x + (valueRect.size.x - valueSize.x) * 0.5f,
+            controlRect.pos.x + (controlRect.size.x - valueSize.x) * 0.5f,
             textBandTop + std::max(0.0f, (textBandBottom - textBandTop - valueSize.y) * 0.5f),
         },
         valueText,
@@ -3292,7 +3477,7 @@ void drawUiQuantityDialog(Renderer& renderer, const UiQuantityDialogState& state
         UiArrowButtonVariant::Wide,
         state.value > state.minValue);
 
-    drawUiButton(renderer, uiQuantityConfirmButtonRect(panel), "決定", true, uiActionButtonStyle());
+    drawUiButton(renderer, uiQuantityConfirmButtonRect(panel), "決定", false, uiActionButtonStyle());
 }
 
 void openUiCommandMenu(
@@ -3406,14 +3591,18 @@ int updateUiCommandMenu(UiCommandMenuState& state, UiContext& ui, const Input& i
     }
 
     bool hoveredByMouse = false;
+    int pressedIndex = -1;
     for (int i = 0; i < itemCount; ++i) {
-        if (ui.navigationFocused(commandMenuItemRect(state, i))) {
+        const UiRect rect = commandMenuItemRect(state, i);
+        if (ui.navigationFocused(rect)) {
             state.hoveredIndex = i;
         }
-        if (ui.hovered(commandMenuItemRect(state, i))) {
+        if (ui.hovered(rect)) {
             state.hoveredIndex = i;
             hoveredByMouse = true;
-            break;
+        }
+        if (ui.pressed(rect)) {
+            pressedIndex = i;
         }
     }
     if (!hoveredByMouse && (state.hoveredIndex < 0 || state.hoveredIndex >= itemCount)) {
@@ -3421,20 +3610,17 @@ int updateUiCommandMenu(UiCommandMenuState& state, UiContext& ui, const Input& i
     }
     ui.emitCursorMoveIfChanged(previousHoveredIndex, state.hoveredIndex);
 
-    if (input.confirmPressed() || input.useItemPressed()) {
-        if (state.hoveredIndex < 0 || state.hoveredIndex >= itemCount) {
+    if (pressedIndex >= 0) {
+        if (!tryActivateUiButton(ui, items[pressedIndex].state)) {
             return -1;
         }
-        if (!tryActivateUiButton(ui, items[state.hoveredIndex].state)) {
-            return -1;
-        }
-        const int selected = state.hoveredIndex;
+        const int selected = pressedIndex;
         ui.emitSound(UiSoundEvent::Confirm);
         closeUiCommandMenu(state);
         return selected;
     }
 
-    if (!input.mouseLeftPressed()) {
+    if (!input.mouseLeftPressed() || ui.pointerConsumed()) {
         return -1;
     }
 
@@ -3446,17 +3632,7 @@ int updateUiCommandMenu(UiCommandMenuState& state, UiContext& ui, const Input& i
         return -1;
     }
 
-    if (state.hoveredIndex < 0 || state.hoveredIndex >= itemCount) {
-        return -1;
-    }
-    ui.consumePointer();
-    if (!tryActivateUiButton(ui, items[state.hoveredIndex].state)) {
-        return -1;
-    }
-    const int selected = state.hoveredIndex;
-    ui.emitSound(UiSoundEvent::Confirm);
-    closeUiCommandMenu(state);
-    return selected;
+    return -1;
 }
 
 void drawUiCommandMenu(Renderer& renderer, const UiCommandMenuState& state, const UiCommandMenuItem* items, int itemCount)
@@ -3465,7 +3641,7 @@ void drawUiCommandMenu(Renderer& renderer, const UiCommandMenuState& state, cons
         return;
     }
 
-    UiNavigationLayerScope navigationScope;
+    UiModalNavigationScope navigationScope(state.panel);
     const float t = easeOut(state.animation);
     const Vec2 center = panelCenter(state.panel);
     renderer.pushScreenTransform(center, lerp(0.92f, 1.0f, t), t);
@@ -3475,8 +3651,10 @@ void drawUiCommandMenu(Renderer& renderer, const UiCommandMenuState& state, cons
     const unsigned char alpha = static_cast<unsigned char>(std::lround(96.0f + 140.0f * pulse));
     for (int i = 0; i < itemCount; ++i) {
         const UiRect rect = commandMenuItemRect(state, i);
-        const bool hot = i == state.hoveredIndex;
-        registerUiNavigationTarget(rect, UiNavigationRole::Control, hot);
+        const bool preferred = i == state.hoveredIndex;
+        const bool hot = uiControlVisualState(rect).selected;
+        registerUiNavigationTarget(rect, UiNavigationRole::Control, preferred);
+        UiControlMotionScope motion(renderer, rect, UiControlMotion::PressOnly);
         UiButtonStyle itemStyle;
         itemStyle.text = ui::Text;
         const Color text = uiButtonStyleForState(itemStyle, items[i].state).text;
@@ -3580,6 +3758,7 @@ UiScrollAreaLayout updateUiScrollArea(
     UiScrollAreaLayout layout = makeUiScrollAreaLayout(viewport, contentHeight, scrollOffset, style);
     if (state != nullptr && state->draggingScrollbar) {
         if (input.mouseLeftHeld() && layout.scrollable) {
+            rememberUiControlVisualSelection(scrollAreaTrackRect(layout, style), true);
             scrollAreaSetThumbY(layout, style, ui.mouse().y - state->scrollbarDragOffsetY, scrollOffset);
             layout = makeUiScrollAreaLayout(viewport, contentHeight, scrollOffset, style);
             ui.consumePointer();
@@ -3588,9 +3767,9 @@ UiScrollAreaLayout updateUiScrollArea(
         state->draggingScrollbar = false;
     }
 
-    if (state != nullptr && layout.scrollable && input.mouseLeftPressed() && !ui.pointerConsumed()) {
+    if (state != nullptr && layout.scrollable) {
         const UiRect track = scrollAreaTrackRect(layout, style);
-        if (track.contains(ui.mouse())) {
+        if (ui.pressed(track) && !ui.navigationActive()) {
             const UiRect thumb = scrollAreaThumbRect(layout, style);
             state->draggingScrollbar = true;
             state->scrollbarDragOffsetY = thumb.contains(ui.mouse())
@@ -3651,6 +3830,7 @@ void drawUiScrollAreaScrollbar(Renderer& renderer, const UiScrollAreaLayout& lay
 
     const UiRect track = scrollAreaTrackRect(layout, style);
     const UiRect thumb = scrollAreaThumbRect(layout, style);
+    UiControlMotionScope motion(renderer, track, UiControlMotion::HoverAndPress);
     renderer.fillRect(track.pos, track.size, style.scrollbarTrack);
     renderer.fillRect(thumb.pos, thumb.size, style.scrollbarThumb);
 }
@@ -3887,10 +4067,13 @@ UiSelectableTableResult updateUiSelectableTable(
             continue;
         }
         for (int column = 0; column < columnCount; ++column) {
+            const UiRect cellRect = uiSelectableTableCellRect(layout, columns, columnCount, row, column, style);
             if (!columns[column].enabled) {
+                if (ui.pressed(cellRect)) {
+                    ui.rejectAction();
+                }
                 continue;
             }
-            const UiRect cellRect = uiSelectableTableCellRect(layout, columns, columnCount, row, column, style);
             if (ui.hovered(cellRect)) {
                 state.selectedRow = row;
                 state.selectedColumn = column;
@@ -4030,6 +4213,10 @@ int updateUiDropdown(
     int selected = -1;
 
     if (ui.pressed(buttonRect)) {
+        if (!state.open && count <= 0) {
+            ui.rejectAction();
+            return -1;
+        }
         state.open = !state.open;
         if (state.open) {
             state.highlightedIndex = count > 0 ? std::clamp(selectedIndex, 0, count - 1) : -1;
@@ -4081,6 +4268,8 @@ int updateUiDropdown(
                     selected = itemIndex;
                     state.open = false;
                     ui.emitSound(UiSoundEvent::Confirm);
+                } else {
+                    ui.rejectAction();
                 }
                 return selected;
             }
@@ -4095,6 +4284,7 @@ int updateUiDropdown(
                 ui.emitSound(UiSoundEvent::Confirm);
                 return selected;
             }
+            ui.rejectAction();
         }
     }
 
@@ -4148,9 +4338,9 @@ void drawUiDropdown(
         return;
     }
 
-    UiNavigationLayerScope navigationScope;
     const int count = std::max(0, itemCount);
     const UiRect listRect = uiDropdownListRect(buttonRect, count, style);
+    UiModalNavigationScope navigationScope(listRect);
     renderer.fillRect(listRect.pos, listRect.size, style.fill);
     renderer.drawRect(listRect.pos, listRect.size, style.outline);
 
@@ -4217,6 +4407,19 @@ void drawUiDropdown(
     }
 }
 
+int uiCycleInputDelta(const Input& input, int itemCount)
+{
+    return itemCount > 1 ? input.activeRingDelta() : 0;
+}
+
+UiTabsInput makeUiCycleTabsInput(const Input& input, int itemCount)
+{
+    UiTabsInput tabsInput{};
+    tabsInput.focusDelta = uiCycleInputDelta(input, itemCount);
+    tabsInput.commit = tabsInput.focusDelta != 0;
+    return tabsInput;
+}
+
 int updateUiTabs(
     UiTabsState& state,
     UiContext& ui,
@@ -4234,6 +4437,7 @@ int updateUiTabs(
         return -1;
     }
 
+    const int previousHoveredIndex = state.hoveredIndex;
     clampTabFocus(state, selectedIndex, items, itemCount);
     state.hoveredIndex = -1;
     state.navigationFocused = false;
@@ -4249,6 +4453,7 @@ int updateUiTabs(
         }
         if (ui.pressed(rects[i])) {
             if (!tabItemEnabled(items, i)) {
+                ui.rejectAction();
                 return -1;
             }
             state.focusedIndex = i;
@@ -4259,8 +4464,17 @@ int updateUiTabs(
         }
     }
 
-    if (input.directFocusIndex >= 0 && input.directFocusIndex < itemCount && tabItemEnabled(items, input.directFocusIndex)) {
-        state.focusedIndex = input.directFocusIndex;
+    if (state.hoveredIndex >= 0 && state.hoveredIndex != previousHoveredIndex) {
+        ui.emitSound(UiSoundEvent::CursorMove);
+    }
+
+    if (input.directFocusIndex >= 0 && input.directFocusIndex < itemCount) {
+        if (tabItemEnabled(items, input.directFocusIndex)) {
+            state.focusedIndex = input.directFocusIndex;
+        } else if (input.commit) {
+            ui.rejectAction();
+            return -1;
+        }
     }
     if (input.focusDelta != 0) {
         moveTabFocus(state, input.focusDelta, items, itemCount, style);
@@ -4326,10 +4540,13 @@ void drawUiTabs(
                 rect.size + Vec2{imageOutset * 2.0f, imageOutset * 2.0f},
             };
 
-            Color tint = selected ? buttonStyle.imageTintHot : buttonStyle.imageTint;
             const bool enabled = tabItemEnabled(items, i);
-            if (i == state.focusedIndex && enabled) {
-                tint = scaledColor(tint, 1.08f);
+            const UiControlVisualState visual = uiControlVisualState(rects[i]);
+            Color tint = selected ? buttonStyle.imageTintHot : buttonStyle.imageTint;
+            if (visual.pressed && enabled) {
+                tint = scaledColor(tint, UiHorizontalTabPressedBrightness);
+            } else if (visual.selected && enabled) {
+                tint = scaledColor(tint, UiHorizontalTabFocusBrightness);
             }
             if (!enabled) {
                 tint = alphaScaledColor(tint, 0.55f);
@@ -4362,8 +4579,14 @@ void drawUiTabs(
             UiButtonStyle buttonStyle = style.buttonStyle;
             const bool selected = i == selectedIndex;
             const bool enabled = tabItemEnabled(items, i);
+            const UiControlVisualState visual = uiControlVisualState(rects[i]);
             if (selected) {
                 buttonStyle.text = style.selectedText;
+            }
+            if (visual.pressed && enabled) {
+                buttonStyle.text = scaledColor(buttonStyle.text, UiHorizontalTabPressedBrightness);
+            } else if (visual.selected && enabled) {
+                buttonStyle.text = scaledColor(buttonStyle.text, UiHorizontalTabFocusBrightness);
             }
             if (!enabled) {
                 buttonStyle.text = ui::TextDisabled;
@@ -4372,6 +4595,11 @@ void drawUiTabs(
             UiRect rect = rects[i];
             rect.size.y = ui::ButtonHeight;
             Color iconTint = selected ? style.selectedImageTint : Color{255, 255, 255, 255};
+            if (visual.pressed && enabled) {
+                iconTint = scaledColor(iconTint, UiHorizontalTabPressedBrightness);
+            } else if (visual.selected && enabled) {
+                iconTint = scaledColor(iconTint, UiHorizontalTabFocusBrightness);
+            }
             if (!enabled) {
                 iconTint = alphaScaledColor(iconTint, 0.45f);
             }
@@ -4385,7 +4613,7 @@ void drawUiTabs(
                 UiTabIconSize,
                 TabTextOffsetY,
                 iconTint);
-            if (i == state.focusedIndex && enabled) {
+            if (visual.selected && enabled) {
                 requestUiSelectionCursor(rect);
             }
         }
@@ -4410,10 +4638,13 @@ void drawUiTabs(
         rect.size.x = std::max(1.0f, rect.size.x - visualInsetX * 2.0f);
 
         const bool selected = i == selectedIndex;
-        const bool active = selected || (i == state.focusedIndex && tabItemEnabled(items, i));
-        const float scale = active ? std::max(1.0f, style.activeScale) : 1.0f;
-        const Vec2 center = rect.pos + rect.size * 0.5f;
-        renderer.pushScreenTransform(center, scale, 1.0f);
+        const UiControlVisualState visual = uiControlVisualState(rects[i]);
+        const bool enabled = tabItemEnabled(items, i);
+        if (visual.pressed && enabled) {
+            buttonStyle.text = scaledColor(buttonStyle.text, UiHorizontalTabPressedBrightness);
+        } else if (visual.selected && enabled) {
+            buttonStyle.text = scaledColor(buttonStyle.text, UiHorizontalTabFocusBrightness);
+        }
 
         const float imageOutset = std::max(0.0f, style.imageOutset);
         const UiRect imageRect{
@@ -4422,11 +4653,21 @@ void drawUiTabs(
         };
 
         if (renderer.hasUiTabTexture()) {
-            const Color tint = selected ? buttonStyle.imageTintHot : buttonStyle.imageTint;
+            Color tint = selected ? buttonStyle.imageTintHot : buttonStyle.imageTint;
+            if (visual.pressed) {
+                tint = scaledColor(tint, UiHorizontalTabPressedBrightness);
+            } else if (visual.selected) {
+                tint = scaledColor(tint, UiHorizontalTabFocusBrightness);
+            }
             renderer.drawUiTabFrame(imageRect.pos, imageRect.size, selected, tint);
 
             Color iconTint = selected ? style.selectedImageTint : Color{255, 255, 255, 255};
-            if (!tabItemEnabled(items, i)) {
+            if (visual.pressed && enabled) {
+                iconTint = scaledColor(iconTint, UiHorizontalTabPressedBrightness);
+            } else if (visual.selected && enabled) {
+                iconTint = scaledColor(iconTint, UiHorizontalTabFocusBrightness);
+            }
+            if (!enabled) {
                 iconTint = alphaScaledColor(iconTint, 0.45f);
             }
             drawUiLabelWithOptionalIcon(
@@ -4440,13 +4681,25 @@ void drawUiTabs(
                 TabTextOffsetY,
                 iconTint);
         } else {
-            const Color fill = selected ? buttonStyle.fillHot : buttonStyle.fill;
-            const Color outline = selected ? scaledColor(buttonStyle.outlineHot, 1.04f) : buttonStyle.outline;
+            Color fill = selected ? buttonStyle.fillHot : buttonStyle.fill;
+            Color outline = selected ? scaledColor(buttonStyle.outlineHot, 1.04f) : buttonStyle.outline;
+            if (visual.pressed) {
+                fill = scaledColor(fill, UiHorizontalTabPressedBrightness);
+                outline = scaledColor(outline, UiHorizontalTabPressedBrightness);
+            } else if (visual.selected) {
+                fill = scaledColor(fill, UiHorizontalTabFocusBrightness);
+                outline = scaledColor(outline, UiHorizontalTabFocusBrightness);
+            }
             renderer.fillRect(imageRect.pos, imageRect.size, fill);
             renderer.drawRect(imageRect.pos, imageRect.size, outline);
 
             Color iconTint = selected ? style.selectedImageTint : Color{255, 255, 255, 255};
-            if (!tabItemEnabled(items, i)) {
+            if (visual.pressed && enabled) {
+                iconTint = scaledColor(iconTint, UiHorizontalTabPressedBrightness);
+            } else if (visual.selected && enabled) {
+                iconTint = scaledColor(iconTint, UiHorizontalTabFocusBrightness);
+            }
+            if (!enabled) {
                 iconTint = alphaScaledColor(iconTint, 0.45f);
             }
             drawUiLabelWithOptionalIcon(
@@ -4460,20 +4713,21 @@ void drawUiTabs(
                 TabTextOffsetY,
                 iconTint);
         }
-        renderer.popScreenTransform();
-        if (active) {
+        if (visual.selected) {
             requestUiSelectionCursor(rect);
         }
     };
 
     for (int i = 0; i < itemCount; ++i) {
-        const bool active = i == selectedIndex || (i == state.focusedIndex && tabItemEnabled(items, i));
+        const bool active = i == selectedIndex ||
+            (uiControlVisualState(rects[i]).selected && tabItemEnabled(items, i));
         if (!active) {
             drawTab(i);
         }
     }
     for (int i = 0; i < itemCount; ++i) {
-        const bool active = i == selectedIndex || (i == state.focusedIndex && tabItemEnabled(items, i));
+        const bool active = i == selectedIndex ||
+            (uiControlVisualState(rects[i]).selected && tabItemEnabled(items, i));
         if (active) {
             drawTab(i);
         }
@@ -4577,19 +4831,38 @@ void drawUiSubTabs(
     for (int i = 0; i < itemCount; ++i) {
         const bool enabled = tabItemEnabled(items, i);
         const bool selected = i == selectedIndex;
-        const bool hovered = enabled && i == state.hoveredIndex;
+        const UiControlVisualState visual = uiControlVisualState(rects[i]);
+        const bool focused = enabled && visual.selected;
         const UiRect rect = rects[i];
 
         if (selected) {
-            fillFadedTab(rect, hovered ? scaledColor(style.selectedFill, 1.08f) : style.selectedFill);
-        } else if (hovered) {
-            fillFadedTab(rect, style.hoverFill);
+            Color fill = focused ? scaledColor(style.selectedFill, UiHorizontalTabFocusBrightness) : style.selectedFill;
+            if (visual.pressed) {
+                fill = scaledColor(fill, UiHorizontalTabPressedBrightness);
+            }
+            fillFadedTab(rect, fill);
+        } else if (focused) {
+            fillFadedTab(
+                rect,
+                visual.pressed
+                    ? scaledColor(style.hoverFill, UiHorizontalTabPressedBrightness)
+                    : style.hoverFill);
         }
 
-        const Color textColor = enabled
+        Color textColor = enabled
             ? (selected ? style.selectedText : style.text)
             : style.disabledText;
+        if (enabled && visual.pressed) {
+            textColor = scaledColor(textColor, UiHorizontalTabPressedBrightness);
+        } else if (enabled && focused) {
+            textColor = scaledColor(textColor, UiHorizontalTabFocusBrightness);
+        }
         Color iconTint = selected ? style.selectedText : Color{255, 255, 255, 255};
+        if (enabled && visual.pressed) {
+            iconTint = scaledColor(iconTint, UiHorizontalTabPressedBrightness);
+        } else if (enabled && focused) {
+            iconTint = scaledColor(iconTint, UiHorizontalTabFocusBrightness);
+        }
         if (!enabled) {
             iconTint = alphaScaledColor(iconTint, 0.45f);
         }
@@ -4603,7 +4876,7 @@ void drawUiSubTabs(
             UiTabIconSize,
             style.textOffsetY,
             iconTint);
-        if (enabled && (i == state.focusedIndex || selected)) {
+        if (focused) {
             requestUiSelectionCursor(rect);
         }
     }
@@ -4660,11 +4933,8 @@ void drawUiVerticalTabs(
     auto drawTab = [&](int i) {
         const bool enabled = itemEnabled(i);
         const bool selected = i == selectedIndex;
-        const bool active = selected || (i == state.focusedIndex && enabled);
-        const float scale = active ? std::max(1.0f, style.tabs.activeScale) : 1.0f;
         const UiRect rect = rects[i];
-        const Vec2 center = rect.pos + rect.size * 0.5f;
-        renderer.pushScreenTransform(center, scale, 1.0f);
+        UiControlMotionScope motion(renderer, rect, UiControlMotion::HoverAndPress, enabled);
 
         const float imageOutset = std::max(0.0f, style.tabs.imageOutset);
         const UiRect imageRect{
@@ -4717,17 +4987,21 @@ void drawUiVerticalTabs(
         if (hasValue) {
             renderer.drawText({valueX, valueY}, items[i].value, valueColor, valueScale);
         }
-        renderer.popScreenTransform();
+        if (uiControlVisualState(rect).selected && enabled) {
+            requestUiSelectionCursor(rect);
+        }
     };
 
     for (int i = 0; i < itemCount; ++i) {
-        const bool active = i == selectedIndex || (i == state.focusedIndex && itemEnabled(i));
+        const bool active = i == selectedIndex ||
+            (uiControlVisualState(rects[i]).selected && itemEnabled(i));
         if (!active) {
             drawTab(i);
         }
     }
     for (int i = 0; i < itemCount; ++i) {
-        const bool active = i == selectedIndex || (i == state.focusedIndex && itemEnabled(i));
+        const bool active = i == selectedIndex ||
+            (uiControlVisualState(rects[i]).selected && itemEnabled(i));
         if (active) {
             drawTab(i);
         }

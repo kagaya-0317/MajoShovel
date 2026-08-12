@@ -1,5 +1,7 @@
 ﻿#include "game/Hitbox.hpp"
 
+#include "game/EnemyFacing.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <fstream>
@@ -283,11 +285,17 @@ Vec2 hitboxDirectionVector(HitboxDirection direction)
 
 HitboxDirection enemyHitboxDirectionForFacing(float facingAngle)
 {
-    const Vec2 direction{std::cos(facingAngle), std::sin(facingAngle)};
-    if (std::abs(direction.x) > std::abs(direction.y)) {
-        return direction.x >= 0.0f ? HitboxDirection::Right : HitboxDirection::Left;
+    switch (enemyFacingDirection(facingAngle)) {
+    case EnemyFacingDirection::Down:
+        return HitboxDirection::Down;
+    case EnemyFacingDirection::Left:
+        return HitboxDirection::Left;
+    case EnemyFacingDirection::Right:
+        return HitboxDirection::Right;
+    case EnemyFacingDirection::Up:
+        return HitboxDirection::Up;
     }
-    return direction.y >= 0.0f ? HitboxDirection::Down : HitboxDirection::Up;
+    return HitboxDirection::Down;
 }
 
 HitboxProfile singleCircleHitbox(float radius)

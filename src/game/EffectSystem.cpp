@@ -1036,13 +1036,16 @@ void EffectSystem::renderDamagePopups(Renderer& renderer)
         std::snprintf(buffer, sizeof(buffer), "%d", popup.amount);
         const bool emphasized = popup.style == DamagePopupStyle::Critical ||
             popup.style == DamagePopupStyle::WeakPoint;
-        const int textScale = emphasized
+        const bool guarded = popup.style == DamagePopupStyle::Guard;
+        const int textScale = guarded
+            ? 3
+            : emphasized
             ? (t < 0.14f ? 5 : 4)
             : (t < 0.10f ? 4 : 3);
         const Vec2 size = renderer.measureText(buffer, textScale, TextStyle::Italic);
         float hopHeight = 0.0f;
-        const float primaryHopHeight = emphasized ? 42.0f : 34.0f;
-        const float secondaryHopHeight = emphasized ? 17.0f : 13.0f;
+        const float primaryHopHeight = guarded ? 20.0f : (emphasized ? 42.0f : 34.0f);
+        const float secondaryHopHeight = guarded ? 7.0f : (emphasized ? 17.0f : 13.0f);
         if (t < 0.58f) {
             const float u = t / 0.58f;
             hopHeight = std::sin(u * Pi) * primaryHopHeight;
@@ -1057,14 +1060,25 @@ void EffectSystem::renderDamagePopups(Renderer& renderer)
             textColor = {255, 72, 64, alpha};
         } else if (popup.style == DamagePopupStyle::Heal) {
             textColor = {72, 238, 132, alpha};
+        } else if (popup.style == DamagePopupStyle::Guard) {
+            textColor = {150, 202, 232, alpha};
         } else if (popup.style == DamagePopupStyle::Critical) {
             textColor = mixColor({255, 42, 36, alpha}, {255, 255, 255, alpha}, clamp(t / 0.26f, 0.0f, 1.0f));
         } else if (popup.style == DamagePopupStyle::WeakPoint) {
             textColor = mixColor({72, 210, 255, alpha}, {255, 255, 255, alpha}, clamp(t / 0.26f, 0.0f, 1.0f));
         }
-        const Color shadowColor{0, 0, 0, static_cast<unsigned char>(std::clamp(std::lround(190.0f * fade), 0L, 255L))};
+        const Color shadowColor = guarded
+            ? Color{24, 52, 72, static_cast<unsigned char>(std::clamp(std::lround(225.0f * fade), 0L, 255L))}
+            : Color{0, 0, 0, static_cast<unsigned char>(std::clamp(std::lround(190.0f * fade), 0L, 255L))};
 
-        renderer.drawText(pos + Vec2{2.0f, 2.0f}, buffer, shadowColor, textScale, TextStyle::Italic);
+        if (guarded) {
+            renderer.drawText(pos + Vec2{-1.0f, 0.0f}, buffer, shadowColor, textScale, TextStyle::Italic);
+            renderer.drawText(pos + Vec2{1.0f, 0.0f}, buffer, shadowColor, textScale, TextStyle::Italic);
+            renderer.drawText(pos + Vec2{0.0f, -1.0f}, buffer, shadowColor, textScale, TextStyle::Italic);
+            renderer.drawText(pos + Vec2{0.0f, 1.0f}, buffer, shadowColor, textScale, TextStyle::Italic);
+        } else {
+            renderer.drawText(pos + Vec2{2.0f, 2.0f}, buffer, shadowColor, textScale, TextStyle::Italic);
+        }
         renderer.drawText(pos, buffer, textColor, textScale, TextStyle::Italic);
     }
 
@@ -1223,6 +1237,10 @@ void EffectSystem::spawnDamagePopup(Vec2 position, int amount, DamagePopupStyle 
         popup->position = position + Vec2{randomRange(-14.0f, 14.0f), randomRange(-42.0f, -32.0f)};
         popup->velocity = {randomRange(-12.0f, 12.0f), 0.0f};
         popup->duration = 1.05f + randomRange(-0.04f, 0.04f);
+    } else if (style == DamagePopupStyle::Guard) {
+        popup->position = position + Vec2{randomRange(-8.0f, 8.0f), randomRange(-29.0f, -23.0f)};
+        popup->velocity = {randomRange(-4.0f, 4.0f), 0.0f};
+        popup->duration = 0.78f + randomRange(-0.03f, 0.03f);
     } else {
         popup->position = position + Vec2{randomRange(-12.0f, 12.0f), randomRange(-34.0f, -26.0f)};
         popup->velocity = {randomRange(-10.0f, 10.0f), 0.0f};

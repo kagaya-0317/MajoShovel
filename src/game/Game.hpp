@@ -979,6 +979,10 @@ private:
         Processing,
         Merchant,
     };
+    enum class BaseRingInteractionMode {
+        Manage,
+        ActivateOnly,
+    };
     struct BaseRingInteractionResult {
         bool consumed = false;
         int activateIndex = -1;
@@ -1003,7 +1007,7 @@ private:
         UiConfirmDialogState confirm{};
     };
     struct StorageBatchTransferSummary {
-        int itemCount = 0;
+        int selectedCount = 0;
         int requiredSlots = 0;
         int freeSlots = 0;
 
@@ -1017,9 +1021,17 @@ private:
         Deposit,
         Withdraw,
     };
-    struct StorageQuantityPending {
-        StorageQuantityOperation operation = StorageQuantityOperation::None;
-        StorageTransferTarget target{};
+    enum class BaseQuantityOperation {
+        None,
+        StorageDeposit,
+        StorageWithdraw,
+        MerchantBuy,
+        MerchantSell,
+    };
+    struct BaseQuantityPending {
+        BaseQuantityOperation operation = BaseQuantityOperation::None;
+        BaseItemTarget target{};
+        int merchantProductIndex = -1;
     };
     enum class RingWorkshopUpgrade {
         RadiusAdjust,
@@ -1412,11 +1424,11 @@ private:
     int sellPrice(const ItemData& item, const ItemInstance* instance = nullptr) const;
     int sellPrice(const ItemData& item, const SpellRingItem* ringItem) const;
     bool isHighValueBuyObject(const ItemData& item) const;
-    bool merchantProductCanFit(const ItemData* item) const;
+    int merchantProductPurchasableQuantity(const MerchantProduct& product) const;
     bool canBuyMerchantProduct(const MerchantProduct& product) const;
     void refreshHighValueBuyObjects(bool force);
     void refreshMerchantStock(bool force);
-    void buyMerchantProduct(int index);
+    bool buyMerchantProduct(int index, int count);
     void sellMerchantEntry(int index, int count);
     MerchantSellTarget merchantSellTargetForSourceSlot(int source, int slotIndex) const;
     MerchantSellTarget merchantSellTargetForScreenSlot(int slotIndex) const;
@@ -1437,7 +1449,8 @@ private:
         int source,
         int& selection,
         BaseRingPreviewKind previewKind,
-        float animationSeconds);
+        float animationSeconds,
+        BaseRingInteractionMode mode = BaseRingInteractionMode::Manage);
     bool cancelBaseRingItemInteraction(bool restoreOriginalAngle);
     void clearBaseItemInteractions();
     bool batchItemKeySelected(
@@ -1456,7 +1469,7 @@ private:
     MerchantBulkSellSummary merchantBulkSellSummary() const;
     bool sellMerchantBulkSelection();
     void clearMerchantBulkSellState();
-    void sellMerchantTarget(MerchantSellTarget target, int count);
+    bool sellMerchantTarget(MerchantSellTarget target, int count);
     void sellMerchantScreenSlot(int slotIndex, int count);
     std::vector<StorageEntry> processingEntries() const;
     std::optional<StorageEntry> processingEntryForScreenSlot(int slotIndex) const;
@@ -1499,6 +1512,8 @@ private:
     int warehouseEntryIndexAtStorageSlot(int slot) const;
     void assignWarehouseEntryToStorageSlot(int entryIndex, int slot);
     void removeWarehouseDisplaySlotAtEntryIndex(int entryIndex);
+    bool canAddWarehouseObjectStack(std::string_view objectId, int count) const;
+    bool addWarehouseObjectStack(const InventoryObjectStack& stack, int count);
     StorageTransferTarget storageDepositTargetForSourceSlot(int source, int slotIndex) const;
     StorageTransferTarget storageDepositTargetForScreenSlot(int slotIndex) const;
     StorageTransferTarget storageWithdrawTargetForSlot(int slotIndex) const;
@@ -1506,8 +1521,8 @@ private:
     bool storageTransferTargetIsStack(StorageTransferTarget target) const;
     int storageTransferTargetStackCount(StorageTransferTarget target) const;
     InventoryUiEntryView storageTransferTargetView(StorageTransferTarget target) const;
-    void depositStorageTarget(StorageTransferTarget target, int count);
-    void withdrawStorageTarget(StorageTransferTarget target, int count);
+    bool depositStorageTarget(StorageTransferTarget target, int count);
+    bool withdrawStorageTarget(StorageTransferTarget target, int count);
     std::vector<StorageTransferTarget> storageDepositTargetsForSource(int source) const;
     bool storageBulkDepositTargetSelected(StorageTransferTarget target) const;
     bool toggleStorageBulkDepositTarget(StorageTransferTarget target);
@@ -1523,6 +1538,9 @@ private:
     StorageBatchTransferSummary storageBulkWithdrawSummary() const;
     bool withdrawStorageBulkSelection();
     void clearStorageBatchSelectionState();
+    int storageBulkActionCount() const;
+    UiButtonState storageBulkActionState(int actionIndex) const;
+    bool canDepositAnyBackpackItem() const;
     void depositAllBackpackItems();
     void prepareRingPresetFromWarehouse(int presetIndex);
     std::string storageEntryLabel(StorageEntry entry, bool warehouseEntry) const;
@@ -1547,7 +1565,9 @@ private:
     int ringWorkshopRespecMoneyCost() const;
     int ringWorkshopRespecMoonCost() const;
     bool adjustRingWorkshopRespec(RingLevelUpgradeSelection from, RingLevelUpgradeSelection to);
-    void confirmRingWorkshopRespec();
+    bool openRingWorkshopRespecConfirm();
+    void applyRingWorkshopRespec();
+    void drawRingWorkshopRespecConfirmDialog(Renderer& renderer, UiRect panel) const;
     const char* ringWorkshopUpgradeName(RingWorkshopUpgrade upgrade) const;
     int ringWorkshopUpgradeLevel(RingWorkshopUpgrade upgrade) const;
     int ringWorkshopUpgradeMaxLevel(RingWorkshopUpgrade upgrade) const;
@@ -1876,6 +1896,7 @@ private:
         bool allowGeneratedRewardLoot);
     void initializeRewardNodesFromLayout();
     int grantDungeonMoney(int amount, Vec2 origin);
+    int takeDungeonMoney(int amount, Vec2 origin);
     void revealRewardNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
     void revealMoonFragmentNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
     void materializeExposedPlacementDrops(bool allowGeneratedRewardLoot);
@@ -2043,6 +2064,12 @@ private:
         std::string name;
         std::filesystem::path path;
     };
+    struct DebugNamedSaveTarget {
+        std::string requestedName;
+        std::string fileName;
+        std::filesystem::path path;
+        bool exists = false;
+    };
     std::vector<DebugNamedSaveEntry> listDebugNamedSaveData() const;
     std::filesystem::path debugNamedSaveDataPath(std::string_view name) const;
     DiarySaveSummary currentDiarySaveSummary() const;
@@ -2153,12 +2180,20 @@ private:
     bool handleDebugItemPickerCommand(std::string_view normalized);
     bool handleDebugNamedSaveCommand(std::string_view normalized);
     bool handleDebugNamedSaveEvent(const SDL_Event& event);
+    enum class DebugNamedSaveDialogMode {
+        Closed,
+        Save,
+        Load,
+    };
     void openDebugNamedSaveDialog();
     void closeDebugNamedSaveDialog();
     void openDebugNamedLoadDialog();
     void closeDebugNamedLoadDialog();
-    void rebuildDebugNamedLoadEntries();
-    void commitDebugNamedSave();
+    void rebuildDebugNamedSaveEntries();
+    DebugNamedSaveTarget resolveDebugNamedSaveTarget(std::string_view name) const;
+    void refreshDebugNamedSaveTargetStatus();
+    void requestDebugNamedSave();
+    void commitDebugNamedSave(const DebugNamedSaveTarget& target);
     void loadSelectedDebugNamedSave();
     void updateDebugNamedSaveUi(const Input& input, UiContext& ui);
     void renderDebugNamedSaveUi(Renderer& renderer) const;
@@ -2301,6 +2336,8 @@ private:
     void renderScreenTransitionOverlay(Renderer& renderer);
     void renderFinalScreenOverlays(Renderer& renderer);
     void renderDevBuildNotice(Renderer& renderer) const;
+    bool basePanelUiActive() const;
+    bool baseInteractionHintsVisible() const;
     void renderBaseBackdrop(Renderer& renderer) const;
     void renderBaseScreen(Renderer& renderer) const;
     void renderBaseStoryFadeOverlay(Renderer& renderer) const;
@@ -2477,8 +2514,8 @@ private:
     int baseStorageDepositSelection_ = 0;
     int baseStorageWithdrawSelection_ = 0;
     int baseStorageWarehousePage_ = 0;
-    UiQuantityDialogState baseStorageQuantityDialog_{};
-    StorageQuantityPending baseStorageQuantityPending_{};
+    UiQuantityDialogState baseQuantityDialog_{};
+    BaseQuantityPending baseQuantityPending_{};
     UiCommandMenuState baseStorageCommandMenu_{};
     StorageQuantityOperation baseStorageCommandOperation_ = StorageQuantityOperation::None;
     StorageTransferTarget baseStorageCommandTarget_{};
@@ -2669,13 +2706,15 @@ private:
     float debugItemPickerScrollOffset_ = 0.0f;
     std::string debugItemPickerStatus_;
     mutable UiCancelControlState debugItemPickerCancelState_{};
-    bool debugNamedSaveInputActive_ = false;
-    bool debugNamedLoadActive_ = false;
+    DebugNamedSaveDialogMode debugNamedSaveDialogMode_ = DebugNamedSaveDialogMode::Closed;
     UiTextInputState debugNamedSaveInput_;
-    std::vector<DebugNamedSaveEntry> debugNamedLoadEntries_;
-    int debugNamedLoadSelectedIndex_ = -1;
-    float debugNamedLoadScrollOffset_ = 0.0f;
-    UiScrollAreaState debugNamedLoadScrollState_{};
+    std::string debugNamedSaveInputSnapshot_;
+    std::vector<DebugNamedSaveEntry> debugNamedSaveEntries_;
+    int debugNamedSaveSelectedIndex_ = -1;
+    float debugNamedSaveScrollOffset_ = 0.0f;
+    UiScrollAreaState debugNamedSaveScrollState_{};
+    UiConfirmDialogState debugNamedSaveOverwriteConfirm_{};
+    std::optional<DebugNamedSaveTarget> debugNamedSavePendingTarget_;
     std::string debugNamedSaveStatus_;
     mutable UiCancelControlState debugNamedSaveCancelState_{};
     std::optional<DebugRoguelikeRunSnapshot> debugRoguelikeRunSnapshot_;
@@ -2749,11 +2788,15 @@ private:
     int optionsPage_ = 0;
     int audioSettingsSelection_ = 0;
     int videoSettingsSelection_ = 0;
+    UiTabsState audioSettingsTabs_{};
+    UiTabsState videoSettingsTabs_{};
     bool optionsSettingsLoaded_ = false;
     bool optionsSuppressCancelThisFrame_ = false;
     std::string optionsStatus_;
     UiTabsState operationSettingsTabs_{};
     UiSelectableTableState operationSettingsTable_{};
+    int operationSettingsHoveredRow_ = -1;
+    int operationSettingsHoveredColumn_ = -1;
     UiCommandMenuState operationSettingsCommandMenu_{};
     UiConfirmDialogState operationSettingsConflictConfirm_{};
     UiConfirmDialogState operationSettingsResetAllConfirm_{};

@@ -315,59 +315,92 @@ std::string formatDiscoveryNumber(double value)
         return std::to_string(static_cast<int>(std::lround(value)));
     }
     char buffer[64];
-    std::snprintf(buffer, sizeof(buffer), "%.1f", value);
-    return buffer;
+    std::snprintf(buffer, sizeof(buffer), "%.3f", value);
+    std::string text(buffer);
+    while (!text.empty() && text.back() == '0') {
+        text.pop_back();
+    }
+    if (!text.empty() && text.back() == '.') {
+        text.pop_back();
+    }
+    return text;
 }
 
 std::string formatDiscoveryPercent(double value)
 {
-    if (std::fabs(value - std::round(value)) < 0.001) {
-        return std::to_string(static_cast<int>(std::lround(value))) + "%";
-    }
-    char buffer[64];
-    std::snprintf(buffer, sizeof(buffer), "%.1f%%", value);
-    return buffer;
+    return formatDiscoveryNumber(value) + "%";
 }
 
-std::string statusNameJa(std::string_view effect)
+struct StatusTextJa {
+    std::string_view self;
+    std::string_view enemy;
+};
+
+StatusTextJa statusTextJa(std::string_view effect)
 {
     if (effect.find("defense_down") != std::string_view::npos) {
-        return "防御低下";
+        return {"防御力が下がる", "防御力を下げる"};
     }
     if (effect.find("paralyze") != std::string_view::npos) {
-        return "麻痺";
+        return {"麻痺する", "麻痺させる"};
     }
     if (effect.find("shocked") != std::string_view::npos) {
-        return "感電";
+        return {"感電する", "感電させる"};
     }
     if (effect.find("poison") != std::string_view::npos) {
-        return "毒";
+        return {"毒になる", "毒にする"};
     }
     if (effect.find("slow") != std::string_view::npos) {
-        return "鈍足";
+        return {"鈍足になる", "鈍足にする"};
     }
     if (effect.find("glued") != std::string_view::npos) {
-        return "接着";
+        return {"接着状態になる", "接着状態にする"};
     }
     if (effect.find("bleed") != std::string_view::npos) {
-        return "出血";
+        return {"出血する", "出血させる"};
     }
     if (effect.find("confuse") != std::string_view::npos) {
-        return "混乱";
+        return {"混乱する", "混乱させる"};
     }
     if (effect.find("blind") != std::string_view::npos) {
-        return "盲目";
+        return {"盲目になる", "盲目にする"};
     }
     if (effect.find("wet") != std::string_view::npos) {
-        return "濡れ";
+        return {"水濡れになる", "水濡れにする"};
     }
     if (effect.find("hot") != std::string_view::npos) {
-        return "熱々";
+        return {"熱々になる", "熱々にする"};
     }
     if (effect.find("frozen") != std::string_view::npos) {
-        return "凍結";
+        return {"凍結する", "凍結させる"};
     }
-    return "状態異常";
+    if (effect.find("giant") != std::string_view::npos) {
+        return {"巨大化する", "巨大化させる"};
+    }
+    if (effect.find("sleep") != std::string_view::npos) {
+        return {"眠る", "眠らせる"};
+    }
+    if (effect.find("stun") != std::string_view::npos) {
+        return {"気絶する", "気絶させる"};
+    }
+    return {"状態異常になる", "状態異常にする"};
+}
+
+std::string lightEffectText(double value)
+{
+    if (value <= 2.0) {
+        return "周囲をかすかに照らす";
+    }
+    if (value <= 4.0) {
+        return "周囲を少し照らす";
+    }
+    if (value <= 6.0) {
+        return "周囲をしっかり照らす";
+    }
+    if (value <= 8.0) {
+        return "周囲を明るく照らす";
+    }
+    return "周囲をとても明るく照らす";
 }
 
 std::string normalizeEffectKey(std::string_view effect)
@@ -438,8 +471,8 @@ void pushDiscoveryLine(
     if (effectKey.empty() || text.empty()) {
         return;
     }
-    const auto it = std::find_if(lines.begin(), lines.end(), [&effectKey](const DiscoveryEffectLine& line) {
-        return line.effectKey == effectKey;
+    const auto it = std::find_if(lines.begin(), lines.end(), [&effectKey, &text](const DiscoveryEffectLine& line) {
+        return line.effectKey == effectKey && line.text == text;
     });
     if (it != lines.end()) {
         return;
@@ -456,16 +489,20 @@ bool autoTextForEffectCode(
     std::string_view effectCode,
     double value,
     double duration,
+    std::string_view target,
     std::string& outText)
 {
     if (effectCode == "heal") {
-        outText = value > 0.0
-            ? "HPを回復する（" + formatDiscoveryNumber(value) + "）"
-            : "HPを回復する";
+        outText = target == "enemy" ? "敵のHPを" : "HPを";
+        if (value > 0.0) {
+            outText += " " + formatDiscoveryNumber(value) + " 回復する";
+        } else {
+            outText += "回復する";
+        }
         return true;
     }
     if (effectCode == "light") {
-        outText = "周囲を照らす";
+        outText = lightEffectText(value);
         return true;
     }
     if (effectCode == "detect_treasure" || effectCode == "detect") {
@@ -485,21 +522,24 @@ bool autoTextForEffectCode(
         return true;
     }
     if (effectCode == "coin_drop_chance") {
-        outText = "敵に当たると少額のお金を落とす（" + formatDiscoveryPercent(std::max(0.0, value)) + "）";
+        outText = "敵に当たると " + formatDiscoveryPercent(std::max(0.0, value)) +
+            "の確率で少額のお金を落とす";
         return true;
     }
     if (effectCode == "hit_coin_spill") {
-        outText = "敵に当たると小銭をこぼさせる（" + formatDiscoveryPercent(std::max(0.0, value)) + "）";
+        outText = "敵に当たると " + formatDiscoveryPercent(std::max(0.0, value)) +
+            "の確率で小銭をこぼさせる";
         return true;
     }
     if (effectCode == "break_coin_spill") {
         outText = value > 0.0
-            ? "壊れると小銭をばらまく（" + formatDiscoveryNumber(value) + "倍）"
+            ? "壊れると " + formatDiscoveryNumber(value) + "倍の小銭をばらまく"
             : "壊れると小銭をばらまく";
         return true;
     }
     if (effectCode == "break_random_item_drop") {
-        outText = "壊れるとランダムなアイテムを落とす（" + formatDiscoveryPercent(std::max(0.0, value)) + "）";
+        outText = "壊れると " + formatDiscoveryPercent(std::max(0.0, value)) +
+            "の確率でランダムなアイテムを落とす";
         return true;
     }
     if (effectCode == "vacuum_pull_light") {
@@ -519,18 +559,18 @@ bool autoTextForEffectCode(
         return true;
     }
     if (effectCode == "critical_chance") {
-        outText = "会心率を上げる（" + formatDiscoveryPercent(std::max(0.0, value)) + "）";
+        outText = "会心率を " + formatDiscoveryPercent(std::max(0.0, value)) + " 上げる";
         return true;
     }
     if (effectCode == "critical_power") {
         outText = value > 0.0
-            ? "会心ダメージ倍率を変える（" + formatDiscoveryNumber(value) + "倍）"
+            ? "会心ダメージを " + formatDiscoveryNumber(value) + "倍にする"
             : "会心ダメージ倍率を変える";
         return true;
     }
     if (effectCode == "forced_critical_hit") {
         outText = value > 0.0
-            ? "敵に当たると必ず会心になる（" + formatDiscoveryNumber(value) + "倍）"
+            ? "敵に当たると必ず " + formatDiscoveryNumber(value) + "倍の会心ダメージを与える"
             : "敵に当たると必ず会心になる";
         return true;
     }
@@ -556,23 +596,26 @@ bool autoTextForEffectCode(
     }
     if (effectCode == "water_shot_emitter") {
         outText = duration > 0.0
-            ? "一定間隔で外側へ水弾を放ち、当たった敵を水濡れにする（" + formatDiscoveryNumber(duration) + "秒）"
+            ? "一定間隔で外側へ水弾を放ち、当たった敵を " + formatDiscoveryNumber(duration) +
+                "秒の間 水濡れにする"
             : "一定間隔で外側へ水弾を放ち、当たった敵を水濡れにする";
         return true;
     }
     if (effectCode == "hot_air") {
-        outText = "回転中に熱気を出し、周囲の敵を熱々にする";
+        outText = duration > 0.0
+            ? "熱風で敵を " + formatDiscoveryNumber(duration) + "秒の間 熱々にする"
+            : "熱風で敵を熱々にする";
         return true;
     }
     if (effectCode == "dry_wet_bonus_damage") {
         outText = value > 0.0
-            ? "濡れた敵を乾かすと追加ダメージを与える（+" + formatDiscoveryNumber(value) + "）"
-            : "濡れた敵を乾かすと追加ダメージを与える";
+            ? "濡れた敵へのダメージを " + formatDiscoveryNumber(value) + "倍にする"
+            : "濡れた敵へのダメージを増やす";
         return true;
     }
     if (effectCode == "sleeping_bonus_damage") {
         outText = value > 0.0
-            ? "眠っている敵への接触ダメージを強める（" + formatDiscoveryNumber(value) + "倍）"
+            ? "眠っている敵への接触ダメージを " + formatDiscoveryNumber(value) + "倍にする"
             : "眠っている敵への接触ダメージを強める";
         return true;
     }
@@ -581,11 +624,19 @@ bool autoTextForEffectCode(
         return true;
     }
     if (effectCode == "capture_net") {
-        outText = "敵の捕獲を試みるたびに耐久を1消費する";
+        outText = "リング接触時に";
+        if (value > 0.0 && std::fabs(value - 1.0) >= 0.001) {
+            outText += formatDiscoveryNumber(value) + "倍の捕獲率で";
+        }
+        outText += "敵の捕獲を試み";
+        if (duration > 0.0) {
+            outText += "、再挑戦は " + formatDiscoveryNumber(duration) + "秒間隔";
+        }
+        outText += "、挑戦ごとに耐久を 1 消費する";
         return true;
     }
     if (effectCode == "inspect_enemy") {
-        outText = "詳細未記録の敵に当たると耐久を1消費し、モンスターの詳細を記録する";
+        outText = "詳細未記録の敵に当たると耐久を 1 消費し、モンスターの詳細を記録する";
         return true;
     }
     if (effectCode == "bounce_grounded") {
@@ -593,15 +644,16 @@ bool autoTextForEffectCode(
         return true;
     }
     if (effectCode == "fall_damage_synergy") {
-        outText = value > 0.0
-            ? "跳ね上げた敵の着地ダメージを強める（" + formatDiscoveryNumber(value) + "倍）"
+        outText = value > 1.0
+            ? "跳ね上げた敵の着地ダメージを " + formatDiscoveryNumber(value) + "倍にする"
             : "跳ね上げた敵に着地ダメージを与える";
         return true;
     }
     if (effectCode == "shock_wet") {
         outText = duration > 0.0
-            ? "濡れた敵だけを感電させる（" + formatDiscoveryNumber(duration) + "秒）"
-            : "濡れた敵だけを感電させる";
+            ? "水濡れの敵を " + formatDiscoveryNumber(duration) +
+                "秒の間 感電させ、触れたキャラにも感電させる"
+            : "水濡れの敵を感電させ、触れたキャラにも感電させる";
         return true;
     }
     if (effectCode == "conduct_water_puddle") {
@@ -614,44 +666,44 @@ bool autoTextForEffectCode(
     }
     if (effectCode == "slash_power") {
         outText = value > 0.0
-            ? "斬撃接触ダメージを強める（" + formatDiscoveryNumber(value) + "倍）"
+            ? "斬撃接触ダメージを " + formatDiscoveryNumber(value) + "倍にする"
             : "斬撃接触ダメージを強める";
         return true;
     }
     if (effectCode == "item_orbit_offset") {
         outText = value != 0.0
-            ? "このアイテムだけ軌道距離を補正する（" + formatDiscoveryNumber(value) + "px）"
+            ? "このアイテムだけ軌道距離を " + formatDiscoveryNumber(value) + " px補正する"
             : "このアイテムだけ軌道距離を補正する";
         return true;
     }
     if (effectCode == "regen") {
         outText = value > 0.0
-            ? "少しずつHPを回復する（毎秒" + formatDiscoveryNumber(value) + "）"
+            ? "HPを毎秒 " + formatDiscoveryNumber(value) + " 回復する"
             : "少しずつHPを回復する";
         return true;
     }
     if (effectCode == "reflect_physical") {
-        outText = "物理弾を反射する";
+        outText = "物理弾を 100%の確率で反射する";
         return true;
     }
     if (effectCode == "reflect_physical_chance") {
-        outText = "物理弾を確率で反射（" + formatDiscoveryPercent(std::max(0.0, value)) + "）";
+        outText = "物理弾を " + formatDiscoveryPercent(std::max(0.0, value)) + "の確率で反射する";
         return true;
     }
     if (effectCode == "reflect_magic") {
-        outText = "元素/魔法弾を反射する";
+        outText = "魔法弾を 100%の確率で反射する";
         return true;
     }
     if (effectCode == "reflect_magic_chance") {
-        outText = "元素/魔法弾を確率で反射（" + formatDiscoveryPercent(std::max(0.0, value)) + "）";
+        outText = "魔法弾を " + formatDiscoveryPercent(std::max(0.0, value)) + "の確率で反射する";
         return true;
     }
     if (effectCode == "reflect_water") {
-        outText = "水弾を反射する";
+        outText = "水弾を 100%の確率で反射する";
         return true;
     }
     if (effectCode == "reflect_water_chance") {
-        outText = "水弾を確率で反射（" + formatDiscoveryPercent(std::max(0.0, value)) + "）";
+        outText = "水弾を " + formatDiscoveryPercent(std::max(0.0, value)) + "の確率で反射する";
         return true;
     }
     if (effectCode == "spawn_bias_maggot") {
@@ -662,57 +714,100 @@ bool autoTextForEffectCode(
         outText = "リングに入れていると、ゴースト系が出現しやすくなる";
         return true;
     }
+    if (effectCode.rfind("cast_", 0) == 0) {
+        const std::string element = std::string(effectCode.substr(5));
+        std::string_view name = "魔法";
+        if (element == "fire") {
+            name = "火魔法";
+        } else if (element == "ice") {
+            name = "氷魔法";
+        } else if (element == "thunder") {
+            name = "雷魔法";
+        } else if (element == "wind") {
+            name = "風魔法";
+        } else if (element == "earth") {
+            name = "土魔法";
+        }
+        outText = std::string(name);
+        if (value > 0.0) {
+            outText += "を発動する（威力" + formatDiscoveryNumber(value) + "）";
+        } else {
+            outText += "を発動する";
+        }
+        return true;
+    }
+    if (effectCode == "break_wood_fragments") {
+        outText = "壊れると木片が出る";
+        return true;
+    }
+    if (effectCode == "hit_sound") {
+        outText = "敵に当たると音が鳴る";
+        return true;
+    }
     if (effectCode.rfind("status_", 0) == 0) {
         const bool chance = effectCode.size() > 7 && effectCode.rfind("_chance") == effectCode.size() - 7;
-        const std::string name = statusNameJa(effectCode);
+        const bool playerTarget = target == "player";
+        const StatusTextJa status = statusTextJa(effectCode);
+        const std::string_view phrase = playerTarget ? status.self : status.enemy;
+        const std::string subject = playerTarget ? std::string{} : "敵を ";
+        const std::string durationText = duration > 0.0
+            ? formatDiscoveryNumber(duration) + "秒の間 "
+            : std::string{};
         if (chance) {
-            outText = "敵を" + name + "させる（" + formatDiscoveryPercent(std::max(0.0, value)) + "）";
-        } else if (duration > 0.0) {
-            outText = "敵を" + name + "させる（" + formatDiscoveryNumber(duration) + "秒）";
+            outText = formatDiscoveryPercent(std::max(0.0, value)) + "の確率で" + subject +
+                durationText + std::string(phrase);
         } else {
-            outText = "敵を" + name + "させる";
+            outText = subject + durationText + std::string(phrase);
         }
         return true;
     }
-    if (effectCode == "buff_attack" || effectCode == "debuff_attack") {
-        outText = (effectCode == "buff_attack" ? "攻撃力を上げる" : "攻撃力を下げる");
+    if (effectCode == "buff_attack" || effectCode == "debuff_attack" ||
+        effectCode == "buff_speed" || effectCode == "debuff_speed" ||
+        effectCode == "buff_defense" || effectCode == "debuff_defense") {
+        const bool buff = effectCode.rfind("buff_", 0) == 0;
+        const std::string_view stat = effectCode.find("attack") != std::string_view::npos
+            ? "攻撃力"
+            : (effectCode.find("speed") != std::string_view::npos ? "移動速度" : "防御力");
+        outText = target == "enemy" ? "敵の" : "";
+        outText += stat;
+        outText += "を ";
         if (duration > 0.0) {
-            outText += "（" + formatDiscoveryNumber(duration) + "秒）";
+            outText += formatDiscoveryNumber(duration) + "秒の間 ";
         }
-        return true;
-    }
-    if (effectCode == "buff_speed" || effectCode == "debuff_speed") {
-        outText = (effectCode == "buff_speed" ? "移動速度を上げる" : "移動速度を下げる");
-        if (duration > 0.0) {
-            outText += "（" + formatDiscoveryNumber(duration) + "秒）";
+        if (value > 0.0) {
+            outText += formatDiscoveryNumber(value) + "倍に";
         }
-        return true;
-    }
-    if (effectCode == "buff_defense" || effectCode == "debuff_defense") {
-        outText = (effectCode == "buff_defense" ? "防御力を上げる" : "防御力を下げる");
-        if (duration > 0.0) {
-            outText += "（" + formatDiscoveryNumber(duration) + "秒）";
-        }
+        outText += buff ? "上げる" : "下げる";
         return true;
     }
     if (effectCode == "knockback") {
-        outText = "敵をノックバックさせる";
+        outText = value > 0.0
+            ? "敵を " + formatDiscoveryNumber(value) + "倍の強さでノックバックさせる"
+            : "敵をノックバックさせる";
         return true;
     }
     if (effectCode == "orbit_speed") {
-        outText = "リング回転速度を変化させる";
+        outText = value > 0.0
+            ? "リング回転速度を " + formatDiscoveryNumber(value) + "倍にする"
+            : "リング回転速度を変化させる";
         return true;
     }
     if (effectCode == "orbit_gravity") {
-        outText = "リング軌道を内側へ寄せる";
+        outText = value > 0.0
+            ? "リング軌道のまとまりやすさを " + formatDiscoveryNumber(value) + "倍にする"
+            : "リング軌道を内側へ寄せる";
         return true;
     }
     if (effectCode == "orbit_power") {
-        outText = "リング出力を変化させる";
+        outText = value > 0.0
+            ? "リング出力を " + formatDiscoveryNumber(value) + "倍にする"
+            : "リング出力を変化させる";
         return true;
     }
     if (effectCode == "orbit_antigravity") {
-        outText = "リング軌道を外側へ広げる";
+        outText = value > 0.0
+            ? "リング軌道の広がりやすさを " + formatDiscoveryNumber(value) + "倍にする"
+            : "リング軌道を外側へ広げる";
         return true;
     }
     if (effectCode == "orbit_anchor") {
@@ -720,11 +815,15 @@ bool autoTextForEffectCode(
         return true;
     }
     if (effectCode == "orbit_shift") {
-        outText = "リングずらし距離を変化させる";
+        outText = value > 0.0
+            ? "リングずらし距離を " + formatDiscoveryNumber(value) + "倍にする"
+            : "リングずらし距離を変化させる";
         return true;
     }
     if (effectCode == "damage_speed") {
-        outText = "速度ダメージ補正を強める";
+        outText = value > 0.0
+            ? "速度によるダメージ補正を " + formatDiscoveryNumber(value) + "倍にする"
+            : "速度ダメージ補正を強める";
         return true;
     }
     return false;
@@ -1624,12 +1723,15 @@ std::vector<DiscoveryEffectLine> buildDiscoveryEffectLines(const ObjectDefinitio
     }
 
     const bool staffObject = isStaffObject(object);
+    const bool hasDigMulti = hasEffectCode(object.orbitEffects, "dig_multi");
     const bool hasDigHard = hasEffectCode(object.orbitEffects, "dig_hard");
     if (object.digPower > 0) {
-        const std::string key = hasDigHard ? "dig_hard" : "dig";
-        const std::string text = hasDigHard
-            ? "\xE7\xA1\xAC\xE3\x81\x84\xE5\x9C\x9F\xE3\x82\x92\xE6\x8E\x98\xE3\x82\x8C\xE3\x82\x8B\xEF\xBC\x88\xE6\x8E\x98\xE5\x89\x8A\xE5\x8A\x9B" + std::to_string(object.digPower) + "\xEF\xBC\x89"
-            : "\xE5\x9C\x9F\xE3\x82\x92\xE6\x8E\x98\xE3\x82\x8C\xE3\x82\x8B\xEF\xBC\x88\xE6\x8E\x98\xE5\x89\x8A\xE5\x8A\x9B" + std::to_string(object.digPower) + "\xEF\xBC\x89";
+        const std::string key = hasDigMulti ? "dig_multi" : (hasDigHard ? "dig_hard" : "dig");
+        const std::string text = hasDigMulti
+            ? "\xE9\x80\xA3\xE7\xB6\x9A\xE3\x81\xA7\xE6\x8E\x98\xE3\x82\x8C\xE3\x82\x8B\xEF\xBC\x88\xE6\x8E\x98\xE5\x89\x8A\xE5\x8A\x9B" + std::to_string(object.digPower) + "\xEF\xBC\x89"
+            : (hasDigHard
+                ? "\xE7\xA1\xAC\xE3\x81\x84\xE5\x9C\x9F\xE3\x82\x92\xE6\x8E\x98\xE3\x82\x8C\xE3\x82\x8B\xEF\xBC\x88\xE6\x8E\x98\xE5\x89\x8A\xE5\x8A\x9B" + std::to_string(object.digPower) + "\xEF\xBC\x89"
+                : "\xE5\x9C\x9F\xE3\x82\x92\xE6\x8E\x98\xE3\x82\x8C\xE3\x82\x8B\xEF\xBC\x88\xE6\x8E\x98\xE5\x89\x8A\xE5\x8A\x9B" + std::to_string(object.digPower) + "\xEF\xBC\x89");
         pushDiscoveryLine(lines, object, key, text, DiscoveryTrigger::Dig);
     }
 
@@ -1641,8 +1743,11 @@ std::vector<DiscoveryEffectLine> buildDiscoveryEffectLines(const ObjectDefinitio
                 if (effect.empty() || effect == "none" || effect == "dig" || effect == "dig_hard" || effect == "dig_multi") {
                     continue;
                 }
+                if (effect == "damage_speed" && std::fabs(spec.values[i] - 1.0) < 0.001) {
+                    continue;
+                }
                 std::string text;
-                if (!autoTextForEffectCode(effect, spec.values[i], spec.duration, text)) {
+                if (!autoTextForEffectCode(effect, spec.values[i], spec.duration, spec.target, text)) {
                     if (debugWarnings != nullptr) {
                         debugWarnings->push_back(
                             "object=\"" + object.id + "\" discovery effect line skipped: unsupported effect code \"" + effect + "\"");

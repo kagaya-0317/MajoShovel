@@ -7,10 +7,13 @@
 #include "game/ActorVisual.hpp"
 #include "game/Collision.hpp"
 #include "game/EnemyImageRenderer.hpp"
+#include "game/EnemyFacing.hpp"
 #include "game/EncyclopediaSystem.hpp"
 #include "game/EntityStatusVisuals.hpp"
 #include "game/ExplosionWarning.hpp"
 #include "game/EffectSystem.hpp"
+#include "game/InventoryUiCommon.hpp"
+#include "game/ItemImageRenderer.hpp"
 #include "game/ObjectVisualPose.hpp"
 #include "game/RingItemVisual.hpp"
 #include "game/TerrainDigRules.hpp"
@@ -42,6 +45,7 @@ namespace {
 constexpr int FlowRadiusTiles = 80;
 constexpr float SpawnAvoidancePadding = 5.0f;
 constexpr std::string_view AudioSeEnemySpawn = "se.enemy.spawn";
+constexpr std::string_view AudioSeRatSteal = "se.enemy.rat_steal";
 constexpr float PlayerPushShare = 0.35f;
 constexpr float EnemyPushShare = 0.65f;
 constexpr float BossRadiusMultiplier = 1.0f;
@@ -195,6 +199,7 @@ constexpr int CapturedBossRewardLimit = 2;
 constexpr float StealDropFlySeconds = 0.24f;
 constexpr float StealDropFlyArcHeight = 18.0f;
 constexpr float StealDropPickupDelaySeconds = 0.04f;
+constexpr float StealItemPickupRadius = 23.0f;
 constexpr int CapturedExplosionChargeLimit = 4;
 constexpr float CapturedExplosionSleepSeconds = 2.4f;
 constexpr float CapturedExplosionRadius = 44.0f;
@@ -290,6 +295,15 @@ constexpr float AwarenessIconDuration = 0.75f;
 constexpr float LineOfSightStep = static_cast<float>(balance::TileSize) * 0.35f;
 constexpr float WanderRetargetMin = 0.9f;
 constexpr float WanderRetargetMax = 1.8f;
+constexpr int FleeSearchRadiusTiles = 12;
+constexpr int FleeSearchDiameterTiles = FleeSearchRadiusTiles * 2 + 1;
+constexpr int FleeSearchTileCount = FleeSearchDiameterTiles * FleeSearchDiameterTiles;
+constexpr float FleeWaypointLookAheadTiles = 2.5f;
+constexpr float FleeWaypointReachRadius = 8.0f;
+constexpr float FleeReplanIntervalSeconds = 0.28f;
+constexpr float FleeBlockedThresholdSeconds = 0.20f;
+constexpr float FleeFailedDirectionPenaltySeconds = 0.80f;
+constexpr float FleeTurnSpeedRadiansPerSecond = 8.0f;
 constexpr float PatrolRetargetMin = 1.8f;
 constexpr float PatrolRetargetMax = 3.2f;
 constexpr float PatrolRadius = 120.0f;
@@ -336,6 +350,7 @@ constexpr float StunWakeHopPixels = 8.0f;
 constexpr double DefaultCriticalDamageMultiplier = 2.0;
 constexpr double MaxCriticalDamageMultiplier = 5.0;
 constexpr double MaxSleepingBonusDamageMultiplier = 8.0;
+constexpr double MaxDryWetDamageMultiplier = 8.0;
 constexpr float ConfusedRetargetMinSeconds = 0.25f;
 constexpr float ConfusedRetargetMaxSeconds = 0.65f;
 constexpr double ConfusedSpeedMultiplier = 0.75;
@@ -387,6 +402,18 @@ struct FlowNodeGreater {
     bool operator()(const FlowNode& left, const FlowNode& right) const
     {
         return left.distance > right.distance;
+    }
+};
+
+struct FleeSearchNode {
+    int routeCost = 0;
+    int localIndex = 0;
+};
+
+struct FleeSearchNodeGreater {
+    bool operator()(const FleeSearchNode& left, const FleeSearchNode& right) const
+    {
+        return left.routeCost > right.routeCost;
     }
 };
 
@@ -1092,7 +1119,21 @@ bool enemyCanStealInView(
     return circleIntersectsRect(enemy.position, enemyPassageRadius(enemy, placementCatalog), stealViewBounds);
 }
 
-EnemyEvent makeEnemyStealEvent(const Enemy& enemy, const WorldDropItem& stolenDrop)
+const WorldDropItem* nearestStealableDropForEnemy(
+    const Enemy& enemy,
+    const ObjectCatalog& objectCatalog,
+    const WorldDropSystem& worldDrops,
+    const CollisionRect& stealViewBounds)
+{
+    return worldDrops.nearestStealableDrop(
+        objectCatalog,
+        enemy.position,
+        std::max(enemy.stealRadius, enemy.stealSeekRadius),
+        enemy.stealTarget,
+        &stealViewBounds);
+}
+
+EnemyEvent makeEnemyStealEvent(const Enemy& enemy, const EnemyHeldDrop& stolenDrop)
 {
     EnemyEvent event;
     event.type = EnemyEventType::Steal;
@@ -1101,13 +1142,140 @@ EnemyEvent makeEnemyStealEvent(const Enemy& enemy, const WorldDropItem& stolenDr
     event.dungeonEventId = enemy.dungeonEventId;
     event.enemyId = enemy.enemyId;
     event.enemyName = enemy.enemyName;
-    if (stolenDrop.kind == WorldDropKind::Money) {
+    if (stolenDrop.kind == EnemyHeldDropKind::Money) {
         event.moneyDrop = std::max(0, stolenDrop.quantity);
-    } else if (stolenDrop.kind == WorldDropKind::Object) {
-        event.objectDropId = stolenDrop.id;
+    } else if (stolenDrop.kind == EnemyHeldDropKind::Object) {
+        event.objectDropId = stolenDrop.objectId;
         event.objectDropCount = 1;
+        event.objectDropRuntimeItem = stolenDrop.runtimeItem;
     }
     return event;
+}
+
+bool inventoryItemMatchesStealTarget(const ItemData& item, std::string_view targetFilter)
+{
+    if (targetFilter.empty() ||
+        filterContainsToken(targetFilter, "drop") ||
+        filterContainsToken(targetFilter, "item") ||
+        filterContainsToken(targetFilter, "object")) {
+        return true;
+    }
+    return filterContainsToken(targetFilter, "treasure") &&
+        (item.category == "\xE5\xAE\x9D" || objectHasTag(item, "treasure"));
+}
+
+bool takePlayerInventoryItem(
+    InventorySystem& inventory,
+    std::string_view targetFilter,
+    std::mt19937& rng,
+    EnemyHeldDrop& outDrop)
+{
+    struct Candidate {
+        bool instance = false;
+        std::string stableId;
+    };
+    std::vector<Candidate> candidates;
+    for (const InventoryObjectStack& stack : inventory.objectStacks()) {
+        if (stack.count <= 0 || stack.objectId.empty() ||
+            objectExcludedFromHeldDrops(stack.item) ||
+            !inventoryItemMatchesStealTarget(stack.item, targetFilter)) {
+            continue;
+        }
+        candidates.push_back({false, stack.objectId});
+    }
+    for (const InventoryObjectInstance& entry : inventory.objectInstances()) {
+        if (entry.instance.instanceId.empty() ||
+            entry.instance.protectionEnabled ||
+            inventory.isStaffEquipped(entry.instance.instanceId) ||
+            objectExcludedFromHeldDrops(entry.item) ||
+            !inventoryItemMatchesStealTarget(entry.item, targetFilter)) {
+            continue;
+        }
+        candidates.push_back({true, entry.instance.instanceId});
+    }
+    if (candidates.empty()) {
+        return false;
+    }
+
+    std::uniform_int_distribution<std::size_t> candidateDist(0, candidates.size() - 1);
+    const Candidate candidate = candidates[candidateDist(rng)];
+    if (!candidate.instance) {
+        const auto stackIt = std::find_if(
+            inventory.objectStacks().begin(),
+            inventory.objectStacks().end(),
+            [&candidate](const InventoryObjectStack& stack) {
+                return stack.objectId == candidate.stableId;
+            });
+        if (stackIt == inventory.objectStacks().end()) {
+            return false;
+        }
+        const ItemData item = stackIt->item;
+        if (!inventory.removeObjectItemCount(candidate.stableId, 1)) {
+            return false;
+        }
+        outDrop = EnemyHeldDrop{
+            .kind = EnemyHeldDropKind::Object,
+            .origin = EnemyHeldDropOrigin::PickedUp,
+            .objectId = item.id.empty() ? candidate.stableId : item.id,
+            .quantity = 1,
+            .deathDropChance = 1.0f,
+            .runtimeItem = item,
+        };
+        return true;
+    }
+
+    InventoryObjectInstance taken;
+    if (!inventory.takeObjectInstance(candidate.stableId, taken)) {
+        return false;
+    }
+    outDrop = EnemyHeldDrop{
+        .kind = EnemyHeldDropKind::Object,
+        .origin = EnemyHeldDropOrigin::PickedUp,
+        .objectId = taken.item.id.empty() ? taken.instance.objectId : taken.item.id,
+        .quantity = 1,
+        .deathDropChance = 1.0f,
+        .instance = std::move(taken.instance),
+        .runtimeItem = std::move(taken.item),
+    };
+    return true;
+}
+
+bool takePlayerLoot(
+    Enemy& enemy,
+    InventorySystem& inventory,
+    const std::function<int(int, Vec2)>& takeMoney,
+    std::mt19937& rng,
+    EnemyHeldDrop& outDrop)
+{
+    const bool canTakeItems = enemy.stealTarget.empty() ||
+        filterContainsToken(enemy.stealTarget, "drop") ||
+        filterContainsToken(enemy.stealTarget, "item") ||
+        filterContainsToken(enemy.stealTarget, "object") ||
+        filterContainsToken(enemy.stealTarget, "treasure");
+    if (canTakeItems && takePlayerInventoryItem(inventory, enemy.stealTarget, rng, outDrop)) {
+        return true;
+    }
+
+    const bool canTakeMoney = enemy.stealTarget.empty() ||
+        filterContainsToken(enemy.stealTarget, "drop") ||
+        filterContainsToken(enemy.stealTarget, "money");
+    if (!canTakeMoney || !takeMoney) {
+        return false;
+    }
+    const int requested = std::max(
+        1,
+        behaviorParamInt(enemy, "steal_item", "playerMoney", std::max(1, enemy.moneyDrop)));
+    const int stolen = std::max(0, takeMoney(requested, enemy.position));
+    if (stolen <= 0) {
+        return false;
+    }
+    outDrop = EnemyHeldDrop{
+        .kind = EnemyHeldDropKind::Money,
+        .origin = EnemyHeldDropOrigin::PickedUp,
+        .quantity = stolen,
+        .deathDropChance = 1.0f,
+    };
+    return true;
 }
 
 bool heldDropMatchesFilter(const EnemyHeldDrop& drop, const ObjectCatalog& catalog, std::string_view targetFilter)
@@ -1309,6 +1477,11 @@ std::string defaultBossActionPatternFor(const Enemy& enemy)
 bool enemyVisible(const Enemy& enemy)
 {
     return enemy.active && !enemy.bossAction.hidden;
+}
+
+int enemyHeldDropCount(const Enemy& enemy)
+{
+    return static_cast<int>(enemy.heldDrops.size());
 }
 
 bool enemyScreenSleepEligible(const Enemy& enemy)
@@ -1796,7 +1969,7 @@ bool updateBossActionJumpMotion(Enemy& enemy, float dt)
 
 bool frontGuardApplies(const Enemy& enemy, Vec2 hitPosition, float arcDegrees)
 {
-    const Vec2 facing = facingVector(enemy.facingAngle);
+    const Vec2 facing = enemyFacingDirectionVector(enemy.facingAngle);
     const Vec2 hitDirection = normalize(hitPosition - enemy.position);
     const float clampedArc = clamp(arcDegrees, 10.0f, 360.0f);
     const float halfArcRadians = (clampedArc * 0.5f) * (Pi / 180.0f);
@@ -2404,7 +2577,10 @@ FlameBurstHitSpec collectFlameBurstHitSpec(const ObjectDefinition* hitObject)
     return result;
 }
 
-double sleepingBonusDamageMultiplierFor(const ObjectDefinition* hitObject)
+double contactDamageMultiplierFor(
+    const ObjectDefinition* hitObject,
+    std::string_view effectKey,
+    double maxMultiplier)
 {
     double multiplier = 1.0;
     if (hitObject == nullptr) {
@@ -2415,11 +2591,11 @@ double sleepingBonusDamageMultiplierFor(const ObjectDefinition* hitObject)
             continue;
         }
         for (std::size_t index = 0; index < spec.effects.size(); ++index) {
-            if (spec.effects[index] != "sleeping_bonus_damage") {
+            if (spec.effects[index] != effectKey) {
                 continue;
             }
             const double value = index < spec.values.size() ? spec.values[index] : 1.0;
-            multiplier = std::max(multiplier, std::clamp(value, 1.0, MaxSleepingBonusDamageMultiplier));
+            multiplier = std::max(multiplier, std::clamp(value, 1.0, maxMultiplier));
         }
     }
     return multiplier;
@@ -3046,9 +3222,8 @@ void drawEnemyHpBar(Renderer& renderer, const Enemy& enemy, Vec2 drawPosition, f
     hpGaugeStyle.trackOuter = scaleColorAlpha({255, 220, 220, 54}, fade);
     hpGaugeStyle.shadow = scaleColorAlpha({0, 0, 0, 92}, fade);
     hpGaugeStyle.highlight = scaleColorAlpha({255, 238, 220, 62}, fade);
-    hpGaugeStyle.capGlow = scaleColorAlpha({255, 112, 112, 44}, fade);
-    hpGaugeStyle.capCore = {255, 240, 220, 0};
-    hpGaugeStyle.outline = scaleColorAlpha({255, 255, 255, 255}, fade);
+    hpGaugeStyle.outline = scaleColorAlpha({180, 167, 127, 255}, fade);
+    hpGaugeStyle.outerOutline = scaleColorAlpha({0, 0, 0, 255}, fade);
     hpGaugeStyle.trackOuterExtra = 1.0f;
     hpGaugeStyle.trackInnerInset = 1.5f;
     hpGaugeStyle.shadowOffsetY = 1.0f;
@@ -3082,6 +3257,7 @@ struct RingContactDamageResult {
     int damageDealt = 0;
     bool criticalHit = false;
     bool sleepingBonusApplied = false;
+    bool dryWetBonusApplied = false;
     bool nonlethalHit = false;
     bool frontGuarded = false;
     bool weakPointHit = false;
@@ -3306,13 +3482,28 @@ RingContactDamageResult computeRingContactDamageAgainstEnemy(
         recordCriticalEffectDiscoveries(discoveryEvents, encyclopedia, criticalSpec.sources, enemy.position);
     }
 
-    const double sleepingBonusMultiplier = sleepingBonusDamageMultiplierFor(hitObject);
+    const double sleepingBonusMultiplier = contactDamageMultiplierFor(
+        hitObject,
+        "sleeping_bonus_damage",
+        MaxSleepingBonusDamageMultiplier);
     result.sleepingBonusApplied = adjustedDamage > 0 &&
         sleepingBonusMultiplier > 1.0 &&
         enemy.status.hasState("status_sleep");
     if (result.sleepingBonusApplied) {
         adjustedDamage = static_cast<int>(
             std::ceil(static_cast<double>(adjustedDamage) * sleepingBonusMultiplier));
+    }
+
+    const double dryWetMultiplier = contactDamageMultiplierFor(
+        hitObject,
+        "dry_wet_bonus_damage",
+        MaxDryWetDamageMultiplier);
+    result.dryWetBonusApplied = adjustedDamage > 0 &&
+        dryWetMultiplier > 1.0 &&
+        enemy.status.hasState("status_wet");
+    if (result.dryWetBonusApplied) {
+        adjustedDamage = static_cast<int>(
+            std::ceil(static_cast<double>(adjustedDamage) * dryWetMultiplier));
     }
 
     if (isPhysicalDamageType(result.damageType) && hasBehavior(enemy, "physical_resist")) {
@@ -3324,7 +3515,8 @@ RingContactDamageResult computeRingContactDamageAgainstEnemy(
         adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * enemy.magicBodyMagicMultiplier));
     }
 
-    result.frontGuarded = hasBehavior(enemy, "front_guard") &&
+    result.frontGuarded = !result.criticalHit &&
+        hasBehavior(enemy, "front_guard") &&
         enemy.frontGuardDamageMultiplier < 0.999f &&
         frontGuardApplies(enemy, item.worldPosition, enemy.frontGuardArcDegrees);
     if (result.frontGuarded) {
@@ -3596,6 +3788,65 @@ void drawCountdownExplosionWarningOverlay(
 bool isAstragnaBossAction(const Enemy& enemy);
 void drawAstragnaBoss(Renderer& renderer, const TileMap& map, const Enemy& enemy);
 
+const EnemyHeldDrop* visibleCarriedLoot(const Enemy& enemy)
+{
+    const auto it = std::find_if(enemy.heldDrops.begin(), enemy.heldDrops.end(), [](const EnemyHeldDrop& held) {
+        return held.origin == EnemyHeldDropOrigin::PickedUp && held.quantity > 0;
+    });
+    return it != enemy.heldDrops.end() ? &*it : nullptr;
+}
+
+void drawEnemyCarriedLoot(
+    Renderer& renderer,
+    const Enemy& enemy,
+    const ObjectCatalog& objectCatalog,
+    Vec2 drawPosition,
+    float visualRadius)
+{
+    const EnemyHeldDrop* held = visibleCarriedLoot(enemy);
+    if (held == nullptr) {
+        return;
+    }
+
+    const Vec2 facing = enemyFacingDirectionVector(enemy.facingAngle);
+    const Vec2 iconMaxSize = WorldItemImageMaxSize;
+    const float iconExtent = std::max(iconMaxSize.x, iconMaxSize.y);
+    const float bob = std::sin(enemy.behaviorTimer * 8.0f) * 1.2f;
+    const Vec2 anchor = drawPosition - facing * (visualRadius * 0.55f) + Vec2{0.0f, -visualRadius * 0.45f + bob};
+    renderer.fillEllipse(
+        anchor + Vec2{0.0f, iconExtent * 0.18f},
+        {iconExtent * 0.32f, iconExtent * 0.16f},
+        {24, 14, 10, 112});
+
+    bool drewImage = false;
+    if (held->kind == EnemyHeldDropKind::Money) {
+        drewImage = drawWorldIcon(
+            renderer,
+            moneyWorldIconForAmount(held->quantity),
+            anchor,
+            iconMaxSize);
+    } else if (held->kind == EnemyHeldDropKind::Object) {
+        const ItemData* catalogItem = objectCatalog.registry.findById(held->objectId);
+        const ItemData* item = held->runtimeItem ? &*held->runtimeItem : catalogItem;
+        if (item != nullptr) {
+            const bool broken = held->instance && held->instance->isBroken;
+            const ObjectImageDrawOptions options = itemImageOptionsWithBrokenState(
+                objectGroundImageOptions(*item),
+                broken);
+            drewImage = catalogItem != nullptr
+                ? drawObjectImage(renderer, *item, anchor, iconMaxSize, options)
+                : drawItemImage(renderer, *item, anchor, iconMaxSize, options);
+        }
+    }
+    if (!drewImage) {
+        const Color fill = held->kind == EnemyHeldDropKind::Money
+            ? Color{245, 206, 76, 255}
+            : Color{255, 118, 148, 255};
+        renderer.fillCircle(anchor, 7.0f, fill);
+        renderer.drawCircle(anchor, 10.0f, {255, 246, 190, 220});
+    }
+}
+
 float bossActionContactDamageMultiplier(const Enemy& enemy)
 {
     if (enemy.bossAction.pattern != StardustMolePatternId) {
@@ -3614,6 +3865,7 @@ void drawEnemyVisual(
     Renderer& renderer,
     const TileMap& map,
     const Enemy& enemy,
+    const ObjectCatalog& objectCatalog,
     const HitboxCatalog* hitboxCatalog,
     const EnemyPlacementCatalog* placementCatalog,
     bool captureHighlighted,
@@ -3731,6 +3983,7 @@ void drawEnemyVisual(
     if (!astragnaVisual) {
         drawCountdownExplosionWarningOverlay(renderer, drawPosition, visualRadius, explosionWarning);
     }
+    drawEnemyCarriedLoot(renderer, enemy, objectCatalog, drawPosition, visualRadius);
     if (enemy.death.active) {
         return;
     }
@@ -3753,8 +4006,6 @@ void drawEnemyVisual(
         bossHpGaugeStyle.trackOuter = {255, 210, 96, 62};
         bossHpGaugeStyle.shadow = {0, 0, 0, 92};
         bossHpGaugeStyle.highlight = {255, 248, 214, 72};
-        bossHpGaugeStyle.capGlow = {255, 190, 80, 46};
-        bossHpGaugeStyle.capCore = {255, 248, 210, 0};
         bossHpGaugeStyle.trackOuterExtra = 1.0f;
         bossHpGaugeStyle.trackInnerInset = 2.0f;
         bossHpGaugeStyle.shadowOffsetY = 1.0f;
@@ -6780,6 +7031,9 @@ void EnemySystem::queueEnemyHeldDrops(Enemy& enemy)
             if (held.instance) {
                 event.objectDropInstance = std::move(held.instance);
             }
+            if (held.runtimeItem) {
+                event.objectDropRuntimeItem = std::move(held.runtimeItem);
+            }
             events_.push_back(std::move(event));
         }
     }
@@ -6900,7 +7154,9 @@ bool EnemySystem::tryStealHeldDrop(
                 *held.instance,
                 targetPosition,
                 spawnedAtSeconds,
-                motion);
+                motion,
+                false,
+                held.runtimeItem ? &*held.runtimeItem : nullptr);
         } else {
             spawned = worldDrops.spawnObjectDrop(objectCatalog, held.objectId, targetPosition, spawnedAtSeconds, motion);
         }
@@ -7106,7 +7362,7 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
     enemy.stealItemEnabled = false;
     enemy.stealTarget.clear();
     enemy.stealRadius = 0.0f;
-    enemy.stealEscapeDistance = 0.0f;
+    enemy.stealSeekRadius = 0.0f;
     enemy.stealMaxCarry = 0;
     enemy.bossAction = {};
     enemy.death = {};
@@ -7265,8 +7521,12 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
     if (hasBehavior(enemy, "steal_item")) {
         enemy.stealItemEnabled = true;
         enemy.stealTarget = behaviorParamString(enemy, "steal_item", "target", "money|treasure|drop");
-        enemy.stealRadius = static_cast<float>(std::max(12.0, behaviorParamDouble(enemy, "steal_item", "radius", 120.0)));
-        enemy.stealEscapeDistance = static_cast<float>(std::max(16.0, behaviorParamDouble(enemy, "steal_item", "escapeDistance", 120.0)));
+        enemy.stealRadius = static_cast<float>(std::max(
+            12.0,
+            behaviorParamDouble(enemy, "steal_item", "radius", StealItemPickupRadius)));
+        enemy.stealSeekRadius = static_cast<float>(std::max(
+            static_cast<double>(enemy.stealRadius),
+            behaviorParamDouble(enemy, "steal_item", "seekRadius", ItemSeekRadius)));
         enemy.stealMaxCarry = std::clamp(behaviorParamInt(enemy, "steal_item", "maxCarry", EnemyHeldDropCapacity), 1, EnemyHeldDropCapacity);
     }
     if (hasBehavior(enemy, "drop_item")) {
@@ -9232,6 +9492,7 @@ void EnemySystem::update(
     const ObjectCatalog& objectCatalog,
     WorldDropSystem& worldDrops,
     const std::function<bool(int, Vec2)>& grantMoney,
+    const std::function<int(int, Vec2)>& takeMoney,
     Vec2 playerLight,
     const std::vector<LightSource>& extraLights,
     const EffectDispatcher& effectDispatcher,
@@ -9625,9 +9886,6 @@ void EnemySystem::update(
         const bool usesRangedEngagementRange =
             enemy.awareness == EnemyAwarenessState::Detected &&
             hasRangedEngagementRange(rangedRange);
-        const auto carriedCount = [&]() {
-            return static_cast<int>(enemy.heldDrops.size());
-        };
         const auto fireRangedAttack = [&](Enemy& firingEnemy) {
             if (firingEnemy.rangedBehaviorId == "wind_blow") {
                 if (windPulses_.size() >= MaxEnemyWindPulses) {
@@ -9695,38 +9953,58 @@ void EnemySystem::update(
             beginEnemyChestBiteAction(enemy);
         }
         const bool actionLocksMovement = enemy.action.active && enemy.action.lockMovement;
+        std::optional<Vec2> stealDropTargetPosition;
         if (enemy.stealItemEnabled &&
-            carriedCount() < std::max(1, enemy.stealMaxCarry) &&
+            enemyHeldDropCount(enemy) < std::max(1, enemy.stealMaxCarry) &&
             enemyCanStealInView(enemy, stealViewBounds, placementCatalog_)) {
-            WorldDropItem stolenDrop;
-            if (worldDrops.stealNearestDrop(
+            const WorldDropItem* targetDrop = nearestStealableDropForEnemy(
+                enemy,
+                objectCatalog,
+                worldDrops,
+                stealViewBounds);
+            if (targetDrop != nullptr) {
+                stealDropTargetPosition = targetDrop->position;
+            }
+            if (targetDrop != nullptr &&
+                distanceSquared(enemy.position, targetDrop->position) <= enemy.stealRadius * enemy.stealRadius) {
+                WorldDropItem stolenDrop;
+                const bool removed = worldDrops.stealNearestDrop(
                     objectCatalog,
                     enemy.position,
                     std::max(8.0f, enemy.stealRadius),
                     enemy.stealTarget,
                     stolenDrop,
-                    &stealViewBounds)) {
+                    &stealViewBounds);
                 bool stolen = false;
-                if (stolenDrop.kind == WorldDropKind::Money) {
-                    stolen = addHeldDropToEnemy(enemy, EnemyHeldDrop{
+                EnemyHeldDrop heldDrop;
+                if (removed && stolenDrop.kind == WorldDropKind::Money) {
+                    heldDrop = EnemyHeldDrop{
                         .kind = EnemyHeldDropKind::Money,
                         .origin = EnemyHeldDropOrigin::PickedUp,
                         .quantity = std::max(0, stolenDrop.quantity),
                         .deathDropChance = 1.0f,
-                    });
-                } else if (stolenDrop.kind == WorldDropKind::Object && !stolenDrop.id.empty()) {
-                    stolen = addHeldDropToEnemy(enemy, EnemyHeldDrop{
+                    };
+                    stolen = addHeldDropToEnemy(enemy, heldDrop);
+                } else if (removed && stolenDrop.kind == WorldDropKind::Object && !stolenDrop.id.empty()) {
+                    heldDrop = EnemyHeldDrop{
                         .kind = EnemyHeldDropKind::Object,
                         .origin = EnemyHeldDropOrigin::PickedUp,
                         .objectId = stolenDrop.id,
                         .quantity = 1,
                         .deathDropChance = 1.0f,
                         .instance = std::move(stolenDrop.instance),
-                    });
+                        .runtimeItem = std::move(stolenDrop.runtimeItem),
+                    };
+                    stolen = addHeldDropToEnemy(enemy, heldDrop);
                 }
                 if (stolen) {
-                    events_.push_back(makeEnemyStealEvent(enemy, stolenDrop));
+                    events_.push_back(makeEnemyStealEvent(enemy, heldDrop));
+                    soundEvents_.push_back(EnemySoundEvent{
+                        .cueId = std::string(AudioSeRatSteal),
+                        .position = enemy.position,
+                    });
                     setAwareness(enemy, EnemyAwarenessState::Detected, false);
+                    stealDropTargetPosition.reset();
                 }
             }
         }
@@ -9746,8 +10024,16 @@ void EnemySystem::update(
             }
             return fleeDirectionFor(map, enemy, player.position, enemy.aiMoveDirection);
         };
-        bool stealEscaping = false;
-        if (aiId == "idle" || aiId == "stationary") {
+        const bool stealEscaping = enemy.stealItemEnabled && enemyHeldDropCount(enemy) > 0;
+        if (stealEscaping) {
+            direction = chooseFleeDirection();
+        } else if (enemy.stealItemEnabled && stealDropTargetPosition) {
+            direction = normalize(*stealDropTargetPosition - enemy.position);
+        } else if (enemy.stealItemEnabled && enemy.awareness == EnemyAwarenessState::Detected) {
+            direction = flowDirectionFor(map, enemy.position, player.position);
+        } else if (enemy.stealItemEnabled) {
+            direction = chooseWanderDirection();
+        } else if (aiId == "idle" || aiId == "stationary") {
             direction = {};
         } else if (aiId == "buried") {
             direction = {};
@@ -9853,10 +10139,6 @@ void EnemySystem::update(
             }
         } else {
             direction = flowDirectionFor(map, enemy.position, player.position);
-        }
-        if (enemy.stealItemEnabled && carriedCount() > 0 && distanceToPlayer < enemy.stealEscapeDistance) {
-            direction = chooseFleeDirection();
-            stealEscaping = true;
         }
         if (confused) {
             if (enemy.aiDecisionTimer <= 0.0f || lengthSquared(enemy.aiMoveDirection) <= 0.0001f) {
@@ -9996,7 +10278,7 @@ void EnemySystem::update(
                 aiId == "patrol" ||
                 aiId == "item_seek" ||
                 aiId == "dig_wander" ||
-                (enemy.stealItemEnabled && carriedCount() > 0)) &&
+                (enemy.stealItemEnabled && enemyHeldDropCount(enemy) > 0)) &&
             distanceSquared(enemy.position, previousPosition) <= 0.0004f) {
             enemy.aiDecisionTimer = 0.0f;
             enemy.aiMoveDirection = randomDirection(rng_);
@@ -10219,6 +10501,21 @@ void EnemySystem::update(
                     const Vec2 push = normalize(player.position - enemy.position) * enemy.chestBiteKnockback;
                     tryMoveCircle(map, player.position, playerRadius, push);
                 }
+                if (enemy.stealItemEnabled &&
+                    enemyHeldDropCount(enemy) < std::max(1, enemy.stealMaxCarry) &&
+                    (!enemyCanStealInView(enemy, stealViewBounds, placementCatalog_) ||
+                        nearestStealableDropForEnemy(enemy, objectCatalog, worldDrops, stealViewBounds) == nullptr)) {
+                    EnemyHeldDrop stolenLoot;
+                    if (takePlayerLoot(enemy, inventory, takeMoney, rng_, stolenLoot) &&
+                        addHeldDropToEnemy(enemy, stolenLoot)) {
+                        events_.push_back(makeEnemyStealEvent(enemy, stolenLoot));
+                        soundEvents_.push_back(EnemySoundEvent{
+                            .cueId = std::string(AudioSeRatSteal),
+                            .position = enemy.position,
+                        });
+                        setAwareness(enemy, EnemyAwarenessState::Detected, false);
+                    }
+                }
             }
             events_.push_back(makeEnemyEvent(
                 EnemyEventType::Attack,
@@ -10376,6 +10673,7 @@ void EnemySystem::update(
             const std::string_view contactDamageType = damageResult.damageType;
             const bool frontGuarded = damageResult.frontGuarded;
             const bool sleepingBonusApplied = damageResult.sleepingBonusApplied;
+            const bool dryWetBonusApplied = damageResult.dryWetBonusApplied;
             const bool nonlethalHit = damageResult.nonlethalHit;
             const bool criticalHit = damageResult.criticalHit;
             const std::string_view bossEffectId = damageResult.bossEffectId;
@@ -10389,6 +10687,9 @@ void EnemySystem::update(
                 enemy.position,
                 static_cast<float>(std::max(0, damageDealt))));
             applyEnemyDamageTyped(enemy, damageDealt, contactDamageType);
+            if (dryWetBonusApplied) {
+                enemy.status.removeState("status_wet");
+            }
             revealEnemyHpBar(enemy, damageDealt);
             if (damageDealt > 0) {
                 item.actionFlashTimer = SpellRingItemActionFlashSeconds;
@@ -10471,19 +10772,8 @@ void EnemySystem::update(
                     burst.damageType = "fire";
                     burst.effectId = "flame_burst";
                     burst.excludedRuntimeId = enemy.id;
-                    int driedWetCount = 0;
-                    if (item.dryWetBonusDamage > 0) {
-                        burst.consumeStateForBonus = "status_wet";
-                        burst.consumeStateBonusDamage = item.dryWetBonusDamage;
-                        burst.consumeStateBonusDamageType = "fire";
-                        burst.consumeStateBonusEffectId = "dry_wet_bonus_damage";
-                        burst.outConsumedStateCount = &driedWetCount;
-                    }
                     applyMagicArea(burst, spellRing);
                     recordObjectEffectDiscovery(discoveryEvents, *hitObject, "flame_burst", "", enemy.position);
-                    if (driedWetCount > 0) {
-                        recordObjectEffectDiscovery(discoveryEvents, *hitObject, "dry_wet_bonus_damage", "", enemy.position);
-                    }
                 }
                 if (damageDealt > 0) {
                     recordObjectEffectDiscovery(discoveryEvents, *hitObject, "basic_attack", "", enemy.position);
@@ -10492,6 +10782,9 @@ void EnemySystem::update(
                     }
                     if (sleepingBonusApplied) {
                         recordObjectEffectDiscovery(discoveryEvents, *hitObject, "sleeping_bonus_damage", "", enemy.position);
+                    }
+                    if (dryWetBonusApplied) {
+                        recordObjectEffectDiscovery(discoveryEvents, *hitObject, "dry_wet_bonus_damage", "", enemy.position);
                     }
                     if (nonlethalHit) {
                         recordObjectEffectDiscovery(discoveryEvents, *hitObject, "nonlethal_hit", "", enemy.position);
@@ -10571,6 +10864,7 @@ void EnemySystem::update(
             enemy.hitFlash = 0.12f;
             EnemyEvent attackHitEvent = makeEnemyEvent(EnemyEventType::AttackHit, enemy, hitEffectId, damageDealt, criticalHit);
             attackHitEvent.ringItemImpact = true;
+            attackHitEvent.frontGuarded = frontGuarded;
             attackHitEvent.weakPointHit = weakPointHit;
             events_.push_back(std::move(attackHitEvent));
             if (enemy.hp <= 0) {
@@ -10639,6 +10933,7 @@ void EnemySystem::update(
 void EnemySystem::render(
     Renderer& renderer,
     const TileMap& map,
+    const ObjectCatalog& objectCatalog,
     Vec2 playerLight,
     const std::vector<LightSource>& extraLights,
     int highlightedEnemyId,
@@ -10646,7 +10941,7 @@ void EnemySystem::render(
 {
     std::vector<DepthRenderEntry> entries;
     renderShadows(renderer, map, playerLight, extraLights);
-    appendRenderEntries(entries, renderer, map, playerLight, extraLights, highlightedEnemyId, encyclopedia);
+    appendRenderEntries(entries, renderer, map, objectCatalog, playerLight, extraLights, highlightedEnemyId, encyclopedia);
     std::stable_sort(entries.begin(), entries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
         return left.sortY < right.sortY;
     });
@@ -10678,6 +10973,7 @@ void EnemySystem::appendRenderEntries(
     std::vector<DepthRenderEntry>& entries,
     Renderer& renderer,
     const TileMap& map,
+    const ObjectCatalog& objectCatalog,
     Vec2 playerLight,
     const std::vector<LightSource>& extraLights,
     int highlightedEnemyId,
@@ -10781,7 +11077,11 @@ void EnemySystem::appendRenderEntries(
             continue;
         }
         const Vec2 drawPosition = enemyDrawPosition(enemy, placementCatalog_);
-        const Vec2 visualSize = enemyVisualBoundsSize(renderer, enemy);
+        Vec2 visualSize = enemyVisualBoundsSize(renderer, enemy);
+        if (visibleCarriedLoot(enemy) != nullptr) {
+            visualSize.x = std::max(visualSize.x, WorldItemImageMaxSize.x + enemyVisualRadius(enemy));
+            visualSize.y = std::max(visualSize.y, WorldItemImageMaxSize.y + enemyVisualRadius(enemy));
+        }
         const bool walkInPresentation =
             enemy.spawnTimer > 0.0f &&
             enemy.spawnVisualKind == EnemySpawnVisualKind::WalkIn;
@@ -10794,8 +11094,8 @@ void EnemySystem::appendRenderEntries(
             encyclopedia->enemyStage(enemy.enemyId) == EncyclopediaStage::Complete;
         entries.push_back(DepthRenderEntry{
             enemy.position.y,
-            [&renderer, &map, &enemy, hitboxCatalog = hitboxCatalog_, placementCatalog = placementCatalog_, captureHighlighted, detailsKnown]() {
-                drawEnemyVisual(renderer, map, enemy, hitboxCatalog, placementCatalog, captureHighlighted, detailsKnown);
+            [&renderer, &map, &objectCatalog, &enemy, hitboxCatalog = hitboxCatalog_, placementCatalog = placementCatalog_, captureHighlighted, detailsKnown]() {
+                drawEnemyVisual(renderer, map, enemy, objectCatalog, hitboxCatalog, placementCatalog, captureHighlighted, detailsKnown);
             },
         });
     }
@@ -11045,16 +11345,10 @@ int EnemySystem::applyHotAir(
     float strength,
     float dt,
     std::string_view source,
-    SpellRingSystem& spellRing,
-    int dryWetBonusDamage,
-    int* outHotCount,
-    int* outDriedWetCount)
+    int* outHotCount)
 {
     if (outHotCount != nullptr) {
         *outHotCount = 0;
-    }
-    if (outDriedWetCount != nullptr) {
-        *outDriedWetCount = 0;
     }
     if (radius <= 0.0f || strength <= 0.0f || dt <= 0.0f) {
         return 0;
@@ -11062,9 +11356,7 @@ int EnemySystem::applyHotAir(
 
     int touched = 0;
     int heated = 0;
-    int driedWet = 0;
     const double hotValue = std::max(0.25, static_cast<double>(strength));
-    const int bonusBaseDamage = std::max(0, dryWetBonusDamage);
     for (Enemy& enemy : enemies_.items()) {
         if (!enemyCanBeHit(enemy) || enemy.spawnTimer > 0.0f) {
             continue;
@@ -11075,37 +11367,6 @@ int EnemySystem::applyHotAir(
         }
 
         ++touched;
-        if (enemy.status.removeState("status_wet")) {
-            ++driedWet;
-            if (bonusBaseDamage > 0) {
-                const int typedDamage = std::max(
-                    0,
-                    static_cast<int>(std::ceil(static_cast<double>(bonusBaseDamage) * damageTypeMultiplier("fire"))));
-                const BossDamageAdjustment bossDamage = adjustBossIncomingDamage(
-                    enemy,
-                    typedDamage,
-                    position,
-                    radius,
-                    hitboxCatalog_,
-                    placementCatalog_);
-                const int damageDealt = applyDefenseModifier(enemy.status, bossDamage.damage);
-                applyEnemyDamageTyped(enemy, damageDealt, "fire");
-                revealEnemyHpBar(enemy, damageDealt);
-                enemy.hitFlash = 0.12f;
-                EnemyEvent hitEvent = makeEnemyEvent(
-                    EnemyEventType::AttackHit,
-                    enemy,
-                    bossDamage.effectId.empty() ? "dry_wet_bonus_damage" : std::string(bossDamage.effectId),
-                    damageDealt);
-                hitEvent.weakPointHit = bossDamage.weakPointHit;
-                events_.push_back(std::move(hitEvent));
-                if (enemy.hp <= 0) {
-                    beginEnemyDeath(enemy, spellRing, position);
-                    continue;
-                }
-            }
-        }
-
         if (!enemy.isBoss) {
             const EntityStateApplyResult result = enemy.status.applyState(
                 "status_hot",
@@ -11127,9 +11388,6 @@ int EnemySystem::applyHotAir(
 
     if (outHotCount != nullptr) {
         *outHotCount = heated;
-    }
-    if (outDriedWetCount != nullptr) {
-        *outDriedWetCount = driedWet;
     }
     return touched;
 }
@@ -11237,14 +11495,10 @@ int EnemySystem::applyMagicArea(const EnemyMagicHitSpec& spec, SpellRingSystem& 
 {
     if (spec.damage <= 0 &&
         spec.statusEffect.empty() &&
-        spec.consumeStateForBonus.empty() &&
         spec.knockbackStrength <= 0.0f) {
         return 0;
     }
 
-    if (spec.outConsumedStateCount != nullptr) {
-        *spec.outConsumedStateCount = 0;
-    }
     int hits = 0;
     const float radius = std::max(0.0f, spec.radius);
     std::uniform_real_distribution<double> chanceDist(0.0, 100.0);
@@ -11287,43 +11541,6 @@ int EnemySystem::applyMagicArea(const EnemyMagicHitSpec& spec, SpellRingSystem& 
                 damageDealt);
             hitEvent.weakPointHit = bossDamage.weakPointHit;
             events_.push_back(std::move(hitEvent));
-        }
-
-        if (!spec.consumeStateForBonus.empty() && enemy.hp > 0 && enemy.status.removeState(spec.consumeStateForBonus)) {
-            if (spec.outConsumedStateCount != nullptr) {
-                ++(*spec.outConsumedStateCount);
-            }
-            if (spec.consumeStateBonusDamage > 0) {
-                const std::string& bonusDamageType = spec.consumeStateBonusDamageType.empty()
-                    ? spec.damageType
-                    : spec.consumeStateBonusDamageType;
-                const std::string& bonusEffectId = spec.consumeStateBonusEffectId.empty()
-                    ? bonusDamageType
-                    : spec.consumeStateBonusEffectId;
-                const int typedDamage = std::max(
-                    0,
-                    static_cast<int>(std::ceil(
-                        static_cast<double>(spec.consumeStateBonusDamage) *
-                        damageTypeMultiplier(bonusDamageType))));
-                const BossDamageAdjustment bossDamage = adjustBossIncomingDamage(
-                    enemy,
-                    typedDamage,
-                    spec.position,
-                    radius,
-                    hitboxCatalog_,
-                    placementCatalog_);
-                const int damageDealt = applyDefenseModifier(enemy.status, bossDamage.damage);
-                applyEnemyDamageTyped(enemy, damageDealt, bonusDamageType);
-                revealEnemyHpBar(enemy, damageDealt);
-                enemy.hitFlash = 0.12f;
-                EnemyEvent hitEvent = makeEnemyEvent(
-                    EnemyEventType::AttackHit,
-                    enemy,
-                    bossDamage.effectId.empty() ? bonusEffectId : std::string(bossDamage.effectId),
-                    damageDealt);
-                hitEvent.weakPointHit = bossDamage.weakPointHit;
-                events_.push_back(std::move(hitEvent));
-            }
         }
 
         if (!spec.statusEffect.empty() && enemy.hp > 0 && !enemy.isBoss && chanceDist(rng_) <= std::clamp(spec.statusChance, 0.0, 100.0)) {

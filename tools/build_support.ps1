@@ -105,22 +105,222 @@ function Join-MajoShovelCommandLineArguments([string[]]$Arguments) {
     return ($Arguments | ForEach-Object { ConvertTo-MajoShovelCommandLineArgument $_ }) -join " "
 }
 
+function Get-MajoShovelSha256HexFromBytes([byte[]]$Bytes) {
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = $sha256.ComputeHash($Bytes)
+        return [System.BitConverter]::ToString($hash).Replace("-", "").ToLowerInvariant()
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
+function Get-MajoShovelFileSha256(
+    [string]$Path,
+    [System.Security.Cryptography.HashAlgorithm]$Hasher = $null
+) {
+    $stream = [System.IO.File]::Open(
+        $Path,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read,
+        [System.IO.FileShare]::ReadWrite)
+    $ownsHasher = $null -eq $Hasher
+    if ($ownsHasher) {
+        $Hasher = [System.Security.Cryptography.SHA256]::Create()
+    }
+    try {
+        $hash = $Hasher.ComputeHash($stream)
+        return [System.BitConverter]::ToString($hash).Replace("-", "").ToLowerInvariant()
+    }
+    finally {
+        $stream.Dispose()
+        if ($ownsHasher) {
+            $Hasher.Dispose()
+        }
+    }
+}
+
+function Get-MajoShovelStableFileSnapshot(
+    [string]$Path,
+    [System.Security.Cryptography.HashAlgorithm]$Hasher = $null
+) {
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    for ($attempt = 0; $attempt -lt 3; $attempt++) {
+        $before = Get-Item -LiteralPath $fullPath -ErrorAction Stop
+        $hash = Get-MajoShovelFileSha256 $fullPath $Hasher
+        $after = Get-Item -LiteralPath $fullPath -ErrorAction Stop
+        if ($before.Length -eq $after.Length -and
+            $before.LastWriteTimeUtc.Ticks -eq $after.LastWriteTimeUtc.Ticks) {
+            return [pscustomobject]@{
+                fullPath = $fullPath
+                length = [int64]$after.Length
+                lastWriteUtcTicks = [int64]$after.LastWriteTimeUtc.Ticks
+                sha256 = $hash
+            }
+        }
+        Start-Sleep -Milliseconds 40
+    }
+    throw "Build input changed while it was being hashed: $fullPath"
+}
+
+function Get-MajoShovelDevBuildEvidenceRoot([string]$Root) {
+    $base = $env:LOCALAPPDATA
+    if ([string]::IsNullOrWhiteSpace($base)) {
+        $base = Join-Path $Root ".local"
+    }
+    return Join-Path $base "MajoShovel\build-logs\dev-auto-reload"
+}
+
+function Get-MajoShovelRepositoryRelativePath([string]$Root, [string]$Path) {
+    $rootPath = [System.IO.Path]::GetFullPath($Root).TrimEnd([System.IO.Path]::DirectorySeparatorChar)
+    $fullPath = if ([System.IO.Path]::IsPathRooted($Path)) {
+        [System.IO.Path]::GetFullPath($Path)
+    } else {
+        [System.IO.Path]::GetFullPath((Join-Path $rootPath $Path))
+    }
+    $rootPrefix = $rootPath + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $fullPath.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Path is outside the repository: $Path"
+    }
+    return $fullPath.Substring($rootPrefix.Length).Replace('\', '/')
+}
+
+function Get-MajoShovelBuildInputSnapshot([string]$Root) {
+    $rootPath = [System.IO.Path]::GetFullPath($Root).TrimEnd([System.IO.Path]::DirectorySeparatorChar)
+    $sourcePath = Join-Path $rootPath "src"
+    $paths = @()
+    if (Test-Path -LiteralPath $sourcePath -PathType Container) {
+        $paths += @(Get-ChildItem -LiteralPath $sourcePath -Recurse -File -ErrorAction Stop |
+            Select-Object -ExpandProperty FullName)
+    }
+    $cmakeLists = Join-Path $rootPath "CMakeLists.txt"
+    if (Test-Path -LiteralPath $cmakeLists -PathType Leaf) {
+        $paths += $cmakeLists
+    }
+
+    $entries = [System.Collections.Generic.List[object]]::new()
+    $fingerprintText = [System.Text.StringBuilder]::new()
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        foreach ($path in @($paths | Sort-Object -Unique)) {
+            $file = Get-MajoShovelStableFileSnapshot $path $sha256
+            $relativePath = Get-MajoShovelRepositoryRelativePath $rootPath $file.fullPath
+            $entry = [pscustomobject]@{
+                path = $relativePath
+                length = $file.length
+                lastWriteUtcTicks = $file.lastWriteUtcTicks
+                sha256 = $file.sha256
+            }
+            $entries.Add($entry)
+            [void]$fingerprintText.Append($relativePath)
+            [void]$fingerprintText.Append("`t")
+            [void]$fingerprintText.Append($file.sha256)
+            [void]$fingerprintText.Append("`n")
+        }
+    }
+    finally {
+        $sha256.Dispose()
+    }
+
+    $fingerprintBytes = [System.Text.Encoding]::UTF8.GetBytes($fingerprintText.ToString())
+    return [pscustomobject]@{
+        algorithm = "sha256-path-content-v1"
+        capturedAtUtc = [DateTime]::UtcNow.ToString("o")
+        fingerprint = Get-MajoShovelSha256HexFromBytes $fingerprintBytes
+        files = @($entries)
+    }
+}
+
+function Get-MajoShovelObjectWriteTimes(
+    [string]$BuildPath,
+    [string]$Config,
+    [string]$TargetName
+) {
+    $targetDirectory = Join-Path $BuildPath "$TargetName.dir\$Config"
+    $writeTimes = @{}
+    if (-not (Test-Path -LiteralPath $targetDirectory -PathType Container)) {
+        return ,$writeTimes
+    }
+
+    foreach ($object in Get-ChildItem -LiteralPath $targetDirectory -Filter "*.obj" -File -Recurse -ErrorAction SilentlyContinue) {
+        $writeTimes[$object.FullName.ToUpperInvariant()] = [int64]$object.LastWriteTimeUtc.Ticks
+    }
+    return ,$writeTimes
+}
+
+function Get-MajoShovelRecompiledSources(
+    [string]$Root,
+    [string]$BuildPath,
+    [string]$Config,
+    [string]$TargetName,
+    [hashtable]$ObjectWriteTimesBefore
+) {
+    $targetDirectory = Join-Path $BuildPath "$TargetName.dir\$Config"
+    $itemsPath = Join-Path $targetDirectory "$TargetName.tlog\Cl.items.tlog"
+    if (-not (Test-Path -LiteralPath $itemsPath -PathType Leaf)) {
+        return @()
+    }
+
+    $rootPath = [System.IO.Path]::GetFullPath($Root).TrimEnd([System.IO.Path]::DirectorySeparatorChar)
+    $rootPrefix = $rootPath + [System.IO.Path]::DirectorySeparatorChar
+    $sources = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($line in [System.IO.File]::ReadAllLines($itemsPath)) {
+        $parts = $line.Split([char[]]@(';'), 2)
+        if ($parts.Length -ne 2) {
+            continue
+        }
+        $sourcePath = [System.IO.Path]::GetFullPath($parts[0])
+        $objectPath = [System.IO.Path]::GetFullPath($parts[1])
+        if (-not (Test-Path -LiteralPath $objectPath -PathType Leaf)) {
+            continue
+        }
+        $object = Get-Item -LiteralPath $objectPath
+        $objectKey = $object.FullName.ToUpperInvariant()
+        $previousTicks = if ($null -ne $ObjectWriteTimesBefore -and $ObjectWriteTimesBefore.ContainsKey($objectKey)) {
+            [int64]$ObjectWriteTimesBefore[$objectKey]
+        } else {
+            0
+        }
+        if ($object.LastWriteTimeUtc.Ticks -le $previousTicks) {
+            continue
+        }
+        $relativePath = if ($sourcePath.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $sourcePath.Substring($rootPrefix.Length).Replace('\', '/')
+        } else {
+            $sourcePath.Replace('\', '/')
+        }
+        [void]$sources.Add($relativePath)
+    }
+    return @($sources | Sort-Object)
+}
+
 function Invoke-MajoShovelNativeCommandWithProgress(
     [string]$FilePath,
     [string[]]$Arguments,
     [string]$Activity,
-    [string]$WorkingDirectory
+    [string]$WorkingDirectory,
+    [string]$LogPath = ""
 ) {
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo.FileName = $FilePath
     $process.StartInfo.Arguments = Join-MajoShovelCommandLineArguments $Arguments
     $process.StartInfo.WorkingDirectory = $WorkingDirectory
     $process.StartInfo.UseShellExecute = $false
+    $captureOutput = -not [string]::IsNullOrWhiteSpace($LogPath)
+    if ($captureOutput) {
+        $process.StartInfo.RedirectStandardOutput = $true
+        $process.StartInfo.RedirectStandardError = $true
+        $process.StartInfo.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+        $process.StartInfo.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+    }
 
     $startedAt = Get-Date
     $frames = @("|", "/", "-", "\")
     $exitCode = 1
     [void]$process.Start()
+    $standardOutputTask = if ($captureOutput) { $process.StandardOutput.ReadToEndAsync() } else { $null }
+    $standardErrorTask = if ($captureOutput) { $process.StandardError.ReadToEndAsync() } else { $null }
 
     try {
         while (-not $process.WaitForExit(200)) {
@@ -137,6 +337,26 @@ function Invoke-MajoShovelNativeCommandWithProgress(
             $process.Kill()
         }
         $process.Dispose()
+    }
+
+    if ($captureOutput) {
+        $standardOutput = $standardOutputTask.GetAwaiter().GetResult()
+        $standardError = $standardErrorTask.GetAwaiter().GetResult()
+        $utf8Bom = New-Object System.Text.UTF8Encoding($true)
+        $writer = New-Object System.IO.StreamWriter($LogPath, $true, $utf8Bom)
+        try {
+            if (-not [string]::IsNullOrEmpty($standardOutput)) {
+                $writer.Write($standardOutput)
+                [Console]::Out.Write($standardOutput)
+            }
+            if (-not [string]::IsNullOrEmpty($standardError)) {
+                $writer.Write($standardError)
+                [Console]::Error.Write($standardError)
+            }
+        }
+        finally {
+            $writer.Dispose()
+        }
     }
 
     return $exitCode

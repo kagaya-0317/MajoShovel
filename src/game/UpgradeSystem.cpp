@@ -295,7 +295,7 @@ std::optional<RingLevelUpgradeSelection> UpgradeSystem::update(
             ringTabRects[static_cast<std::size_t>(i)] = ringTabRect(i, ringCount);
         }
 
-        UiTabsInput tabsInput{};
+        UiTabsInput tabsInput = makeUiCycleTabsInput(input, ringCount);
         const int directRingFocus = input.shortcutSlotPressed();
         if (!ringSelected && directRingFocus >= 0 && directRingFocus < ringCount) {
             selectedRingIndex_ = directRingFocus;
@@ -304,11 +304,10 @@ std::optional<RingLevelUpgradeSelection> UpgradeSystem::update(
             ui.block(panelRect());
             return std::nullopt;
         }
-        tabsInput.focusDelta = input.activeRingDelta();
-        tabsInput.commit =
-            !ringSelected &&
-            !ui.navigationActive() &&
-            (input.confirmPressed() || input.useItemPressed());
+        tabsInput.commit = tabsInput.commit ||
+            (!ringSelected &&
+                !ui.navigationActive() &&
+                (input.confirmPressed() || input.useItemPressed()));
 
         const int ringSelection = updateUiTabs(
             ringTabs_,
@@ -322,11 +321,6 @@ std::optional<RingLevelUpgradeSelection> UpgradeSystem::update(
             selectedRingIndex_ = ringSelection;
             ui.block(panelRect());
             return std::nullopt;
-        }
-        if (ringSelected && input.activeRingDelta() != 0 &&
-            ringTabs_.focusedIndex >= 0 && ringTabs_.focusedIndex < ringCount) {
-            selectedRingIndex_ = ringTabs_.focusedIndex;
-            ui.emitSound(UiSoundEvent::TabSwitch);
         }
     }
 
@@ -450,7 +444,8 @@ void UpgradeSystem::render(
         const UiRect card = optionRect(i, ringCount);
         UiRect content = card;
         content.pos.y += LevelUpCardContentOffsetY;
-        const bool selected = i == selectedOption_;
+        const bool preferred = i == selectedOption_;
+        const bool selected = uiControlVisualState(card).selected;
         UiButtonStyle cardStyle;
         cardStyle.imageTint = {232, 232, 238, 245};
         cardStyle.imageTintHot = {255, 255, 235, 255};
@@ -458,7 +453,7 @@ void UpgradeSystem::render(
         cardStyle.fillHot = {54, 46, 76, 245};
         cardStyle.outline = {104, 94, 128, 255};
         cardStyle.outlineHot = ui::WindowBorder;
-        drawUiFlexibleButtonFrame(renderer, card, selected, cardStyle);
+        drawUiFlexibleButtonFrame(renderer, card, preferred, cardStyle);
         drawCenteredText(renderer, content, content.pos.y + 42.0f, upgradeName(i), ui::Text, 3);
         drawCenteredText(renderer, content, content.pos.y + 90.0f, upgradeDescription(i), ui::Text, 2);
         drawUpgradeValueLine(
@@ -478,7 +473,7 @@ void UpgradeSystem::render(
             selected ? ui::Text : ui::TextMuted,
             2);
     }
-    drawUiButton(renderer, okButtonRect(ringCount), "OK", true, uiActionButtonStyle());
+    drawUiButton(renderer, okButtonRect(ringCount), "OK", false, uiActionButtonStyle());
     renderer.popScreenTransform();
 }
 

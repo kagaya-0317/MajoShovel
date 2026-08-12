@@ -45,12 +45,14 @@ struct EnhancementBadge {
 constexpr std::string_view BrokenItemNamePrefix = "壊れた";
 constexpr Color BrokenItemImageTint{72, 72, 80, 238};
 constexpr Color BrokenItemFallbackColor{42, 42, 48, 255};
-constexpr Color InventoryEffectTextColor{255, 230, 150, 255};
-constexpr Color InventoryEnhancedEffectValueColor{255, 64, 64, 255};
+constexpr Color InventoryEffectHeadingColor{255, 230, 150, 255};
+constexpr Color InventoryEnhancedPowerColor{255, 232, 96, 255};
+constexpr std::string_view InventoryProtectionIconPath = "assets/system/UI_protectionLock.png";
 constexpr float TwoPi = 6.283185307f;
-constexpr float DetailLabelWidth = 106.0f;
-constexpr float DetailMinLineHeight = 31.0f;
-constexpr float DetailLineGap = 4.0f;
+constexpr UiDetailLineStyle InventoryDetailLineStyle{
+    .minLineHeight = 0.0f,
+    .lineGap = 0.0f,
+};
 constexpr std::string_view RarityStarGlyph = "★";
 constexpr int RarityStarScale = 2;
 constexpr float RarityStarGap = 2.0f;
@@ -382,21 +384,14 @@ std::string popInlineItemTextUnit(std::string text)
     return text;
 }
 
-void drawSelectedItemCircleOutline(Renderer& renderer, Vec2 center, float radius)
+Color scaleAlpha(Color color, float alphaScale);
+
+void drawSelectedItemCircleOutline(Renderer& renderer, Vec2 center, float radius, float alphaScale)
 {
-    const Color outline = selectedItemOutlineColor();
+    const Color outline = scaleAlpha(selectedItemOutlineColor(), alphaScale);
     for (int i = 0; i < 6; ++i) {
         renderer.drawCircle(center, radius + static_cast<float>(i), outline);
     }
-}
-
-Color darkenColor(Color color, float factor)
-{
-    factor = std::clamp(factor, 0.0f, 1.0f);
-    color.r = static_cast<unsigned char>(std::lround(static_cast<float>(color.r) * factor));
-    color.g = static_cast<unsigned char>(std::lround(static_cast<float>(color.g) * factor));
-    color.b = static_cast<unsigned char>(std::lround(static_cast<float>(color.b) * factor));
-    return color;
 }
 
 Color multiplyColor(Color color, Color multiplier)
@@ -653,35 +648,36 @@ float drawInventoryDetailHeader(
     Renderer& renderer,
     UiRect panel,
     std::string_view text,
-    bool protectedItem,
+    std::string_view category,
     int rarity,
     float animationSeconds)
 {
     constexpr float NameRarityGap = 3.0f;
     constexpr float RarityImageGap = 8.0f;
-    constexpr float ProtectionGap = 12.0f;
+    constexpr float TrailingTextGap = 12.0f;
     constexpr int TitleScale = 3;
-    constexpr int ProtectionScale = 2;
+    constexpr int TrailingTextScale = 2;
     const UiRect content = uiSubPanelContentRect(panel);
-    const std::string_view protectionText = "保護";
-    const Vec2 protectionSize = protectedItem
-        ? renderer.measureText(protectionText, ProtectionScale)
-        : Vec2{};
-    const float titleMaxWidth = protectedItem
-        ? std::max(0.0f, content.size.x - protectionSize.x - ProtectionGap)
-        : content.size.x;
+    const Vec2 categorySize = category.empty()
+        ? Vec2{}
+        : renderer.measureText(category, TrailingTextScale);
+    const float trailingWidth = categorySize.x;
+    const float titleTrailingGap = trailingWidth > 0.0f ? TrailingTextGap : 0.0f;
+    const float titleMaxWidth = std::max(1.0f, content.size.x - trailingWidth - titleTrailingGap);
 
     renderer.drawWrappedText(content.pos, text, titleMaxWidth, ui::Text, TitleScale);
     renderer.drawWrappedText({content.pos.x + 1.0f, content.pos.y}, text, titleMaxWidth, ui::Text, TitleScale);
     const Vec2 titleSize = renderer.measureWrappedText(text, titleMaxWidth, TitleScale);
-    if (protectedItem) {
+    const float titleLineHeight = renderer.measureText("あ", TitleScale).y;
+    const float trailingY = content.pos.y + std::max(0.0f, (titleLineHeight - categorySize.y) * 0.5f);
+    const float right = content.pos.x + content.size.x;
+    if (!category.empty()) {
         renderer.drawText(
-            {content.pos.x + content.size.x - protectionSize.x, content.pos.y + 6.0f},
-            protectionText,
-            {255, 230, 150, 255},
-            ProtectionScale);
+            {right - categorySize.x, trailingY},
+            category,
+            ui::Text,
+            TrailingTextScale);
     }
-
     const Vec2 raritySize = drawRarityStars(
         renderer,
         {content.pos.x, content.pos.y + titleSize.y + NameRarityGap},
@@ -698,7 +694,12 @@ ObjectImageDrawOptions inventoryUiObjectImageOptions(
     return objectGroundImageOptions(item, itemImageOptionsWithBrokenState(options, broken));
 }
 
-void drawInventoryDetailImage(Renderer& renderer, UiRect panel, float& y, const ItemData& item, bool broken)
+void drawInventoryDetailImage(
+    Renderer& renderer,
+    UiRect panel,
+    float& y,
+    const ItemData& item,
+    bool broken)
 {
     constexpr Vec2 ImageMaxSize{96.0f, 96.0f};
     constexpr float ImageBottomGap = 8.0f;
@@ -749,7 +750,9 @@ void drawExtraLines(
         drawDetailSeparator(renderer, panel, y);
     }
     for (const InventoryUiDetailExtraLine& line : extraLines) {
-        drawUiDetailLine(renderer, panel, y, line.label, line.value, line.valueColor);
+        UiDetailLineStyle style = InventoryDetailLineStyle;
+        style.valueColor = line.valueColor;
+        drawUiDetailLine(renderer, panel, y, line.label, line.value, style);
     }
 }
 
@@ -867,14 +870,15 @@ void drawInventoryEnhancementLine(Renderer& renderer, UiRect panel, float& y, co
     constexpr float BadgeGap = 5.0f;
     constexpr float RowGap = 5.0f;
     const float labelX = panel.pos.x + ui::SubPanelPadding.x;
-    const float valueX = labelX + DetailLabelWidth;
+    const float valueX = labelX + InventoryDetailLineStyle.labelWidth;
     const float valueMaxX = panel.pos.x + panel.size.x - ui::SubPanelPadding.x;
-    renderer.drawText({labelX, y}, "強化", ui::TextMuted, 2);
+    renderer.drawText({labelX, y}, "強化", InventoryDetailLineStyle.labelColor, InventoryDetailLineStyle.scale);
+    const float labelHeight = renderer.measureText("強化", InventoryDetailLineStyle.scale).y;
 
     const std::vector<EnhancementBadge> badges = enhancementBadgesFor(stats);
     if (badges.empty()) {
-        renderer.drawText({valueX, y}, "なし", ui::TextMuted, 2);
-        y += DetailMinLineHeight;
+        renderer.drawText({valueX, y}, "なし", ui::TextMuted, InventoryDetailLineStyle.scale);
+        y += std::max(labelHeight, renderer.measureText("なし", InventoryDetailLineStyle.scale).y);
         return;
     }
 
@@ -891,7 +895,7 @@ void drawInventoryEnhancementLine(Renderer& renderer, UiRect panel, float& y, co
         x += badgeWidth + BadgeGap;
         bottomY = std::max(bottomY, rowY + BadgeHeight);
     }
-    y += std::max(DetailMinLineHeight, bottomY - y + DetailLineGap);
+    y += std::max(labelHeight, bottomY - y);
 }
 
 }
@@ -1007,6 +1011,51 @@ std::optional<InventoryUiItemStats> inventoryUiEntryStats(const InventoryUiEntry
     return std::nullopt;
 }
 
+namespace {
+
+InventoryUiPowerBadgeValues inventoryUiEffectivePowerValues(
+    const ItemData& item,
+    const std::optional<InventoryUiItemStats>& stats)
+{
+    const int attackBonus = stats ? stats->attackBonus : 0;
+    const int digBonus = stats ? stats->digBonus : 0;
+    return {
+        std::max(0, item.attackPower + attackBonus),
+        std::max(0, item.digPower + digBonus),
+        attackBonus > 0,
+        digBonus > 0,
+    };
+}
+
+}
+
+InventoryUiPowerBadgeValues inventoryUiPowerBadgeValues(
+    const InventoryUiEntryView& entry,
+    const EncyclopediaSystem& encyclopedia)
+{
+    if (entry.item == nullptr) {
+        return {};
+    }
+    const auto effectDiscovered = [&](DiscoveryTrigger trigger) {
+        return std::any_of(
+            entry.item->discoveryEffectLines.begin(),
+            entry.item->discoveryEffectLines.end(),
+            [&](const DiscoveryEffectLine& line) {
+                return line.trigger == trigger &&
+                    encyclopedia.hasObjectEffect(entry.item->id, line.effectKey);
+            });
+    };
+    InventoryUiPowerBadgeValues values =
+        inventoryUiEffectivePowerValues(*entry.item, inventoryUiEntryStats(entry));
+    if (!values.attackPowerEnhanced && !effectDiscovered(DiscoveryTrigger::Attack)) {
+        values.attackPowerKnown = false;
+    }
+    if (!values.digPowerEnhanced && !effectDiscovered(DiscoveryTrigger::Dig)) {
+        values.digPowerKnown = false;
+    }
+    return values;
+}
+
 std::string joinInventoryUiEffectLines(const std::vector<std::string>& lines)
 {
     if (lines.empty()) {
@@ -1034,8 +1083,39 @@ struct InventoryUiEffectPowerValue {
 
 struct InventoryUiEffectTextRun {
     std::string text;
-    Color color = InventoryEffectTextColor;
+    Color color = ui::Text;
 };
+
+bool inventoryUiAttackEffectLine(const ObjectEffectDisplayLine& line)
+{
+    return line.effectKey == "basic_attack";
+}
+
+bool inventoryUiDigEffectLine(const ObjectEffectDisplayLine& line)
+{
+    return line.effectKey == "dig" || line.effectKey == "dig_hard" || line.effectKey == "dig_multi";
+}
+
+bool inventoryUiPowerGrantedByEnhancement(
+    const ObjectEffectDisplayLine& line,
+    const ItemData& item,
+    const std::optional<InventoryUiItemStats>& stats)
+{
+    if (!stats || line.text == "？？？") {
+        return false;
+    }
+    if (inventoryUiAttackEffectLine(line)) {
+        return item.attackPower <= 0 &&
+            stats->attackBonus > 0 &&
+            item.attackPower + stats->attackBonus > 0;
+    }
+    if (inventoryUiDigEffectLine(line)) {
+        return item.digPower <= 0 &&
+            stats->digBonus > 0 &&
+            item.digPower + stats->digBonus > 0;
+    }
+    return false;
+}
 
 std::optional<InventoryUiEffectPowerValue> inventoryUiEnhancedEffectPowerValue(
     const ObjectEffectDisplayLine& line,
@@ -1051,7 +1131,7 @@ std::optional<InventoryUiEffectPowerValue> inventoryUiEnhancedEffectPowerValue(
     if (line.effectKey == "basic_attack" && stats->attackBonus != 0) {
         label = "攻撃力";
         value = item.attackPower + stats->attackBonus;
-    } else if ((line.effectKey == "dig" || line.effectKey == "dig_hard") && stats->digBonus != 0) {
+    } else if (inventoryUiDigEffectLine(line) && stats->digBonus != 0) {
         label = "掘削力";
         value = item.digPower + stats->digBonus;
     } else {
@@ -1101,6 +1181,20 @@ void appendInventoryUiEffectTextRun(
     runs.push_back({std::move(text), color});
 }
 
+void drawInventoryUiEffectTextRuns(
+    Renderer& renderer,
+    UiRect panel,
+    float& y,
+    std::span<const UiColoredTextRun> runs,
+    bool bulleted)
+{
+    constexpr float TextGap = 8.0f;
+    const UiRect content = uiSubPanelContentRect(panel);
+    UiWrappedColoredTextStyle style;
+    style.hangingIndentText = bulleted ? std::string_view{"・"} : std::string_view{};
+    y += drawUiWrappedColoredText(renderer, {content.pos.x, y}, runs, content.size.x, style) + TextGap;
+}
+
 void drawInventoryUiEffectLines(
     Renderer& renderer,
     UiRect panel,
@@ -1118,29 +1212,34 @@ void drawInventoryUiEffectLines(
     const bool omitBullet = lines.size() == 1 && lines.front().text == "なし";
     for (std::size_t index = 0; index < lines.size(); ++index) {
         if (index > 0) {
-            appendInventoryUiEffectTextRun(ownedRuns, "\n", InventoryEffectTextColor);
+            appendInventoryUiEffectTextRun(ownedRuns, "\n", ui::Text);
         }
         const ObjectEffectDisplayLine& line = lines[index];
         const std::string bullet = omitBullet ? std::string{} : std::string{"・"};
+        if (inventoryUiPowerGrantedByEnhancement(line, item, stats)) {
+            appendInventoryUiEffectTextRun(ownedRuns, bullet, ui::Text);
+            appendInventoryUiEffectTextRun(ownedRuns, line.text, InventoryEnhancedPowerColor);
+            continue;
+        }
         const std::optional<InventoryUiEffectPowerValue> power =
             inventoryUiEnhancedEffectPowerValue(line, item, stats);
         if (!power) {
-            appendInventoryUiEffectTextRun(ownedRuns, bullet + line.text, InventoryEffectTextColor);
+            appendInventoryUiEffectTextRun(ownedRuns, bullet + line.text, ui::Text);
             continue;
         }
 
         appendInventoryUiEffectTextRun(
             ownedRuns,
             bullet + line.text.substr(0, power->begin),
-            InventoryEffectTextColor);
+            ui::Text);
         appendInventoryUiEffectTextRun(
             ownedRuns,
             power->text,
-            InventoryEnhancedEffectValueColor);
+            InventoryEnhancedPowerColor);
         appendInventoryUiEffectTextRun(
             ownedRuns,
             line.text.substr(power->end),
-            InventoryEffectTextColor);
+            ui::Text);
     }
 
     std::vector<UiColoredTextRun> runs;
@@ -1148,9 +1247,7 @@ void drawInventoryUiEffectLines(
     for (const InventoryUiEffectTextRun& run : ownedRuns) {
         runs.push_back({run.text, run.color});
     }
-    constexpr float TextGap = 8.0f;
-    const UiRect content = uiSubPanelContentRect(panel);
-    y += drawUiWrappedColoredText(renderer, {content.pos.x, y}, runs, content.size.x, 2) + TextGap;
+    drawInventoryUiEffectTextRuns(renderer, panel, y, runs, !omitBullet);
 }
 
 std::string formatInventoryUiWeightText(const ItemData& item, const std::optional<InventoryUiItemStats>& stats)
@@ -1175,9 +1272,24 @@ std::string formatInventoryUiWeightText(const ItemData& item, const std::optiona
     return buffer;
 }
 
-void drawInventoryUiEffectText(Renderer& renderer, UiRect panel, float& y, std::string_view text)
+void drawInventoryUiEffectHeading(Renderer& renderer, UiRect panel, float& y, std::string_view text)
 {
-    drawUiDetailText(renderer, panel, y, text, InventoryEffectTextColor);
+    UiDetailTextStyle style;
+    style.color = InventoryEffectHeadingColor;
+    style.bottomGap = 0.0f;
+    drawUiDetailText(renderer, panel, y, text, style);
+}
+
+void drawInventoryUiPlainEffectLines(
+    Renderer& renderer,
+    UiRect panel,
+    float& y,
+    const std::vector<std::string>& lines)
+{
+    const std::string text = joinInventoryUiEffectLines(lines);
+    const std::array<UiColoredTextRun, 1> runs{{{text, ui::Text}}};
+    const bool omitBullet = lines.size() == 1 && lines.front() == "なし";
+    drawInventoryUiEffectTextRuns(renderer, panel, y, runs, !omitBullet);
 }
 
 void drawItemEffectDetailSections(
@@ -1190,27 +1302,78 @@ void drawItemEffectDetailSections(
     const std::optional<InventoryUiItemStats>& stats,
     int unlockedRingCount)
 {
-    const ObjectEffectDisplaySections sections =
+    ObjectEffectDisplaySections sections =
         encyclopedia.buildObjectEffectDisplaySections(item.id, catalog, EffectRevealMode::WithUnknown);
+    const InventoryUiPowerBadgeValues effectivePower = inventoryUiEffectivePowerValues(item, stats);
+    const auto revealOrAppendEnhancedPowerLine = [&item, &sections](
+                                                   bool enhanced,
+                                                   int power,
+                                                   bool attack) {
+        if (!enhanced || power <= 0) {
+            return;
+        }
+
+        const auto matches = [attack](const ObjectEffectDisplayLine& line) {
+            return attack ? inventoryUiAttackEffectLine(line) : inventoryUiDigEffectLine(line);
+        };
+        const auto displayIt = std::find_if(sections.ringLines.begin(), sections.ringLines.end(), matches);
+        if (displayIt != sections.ringLines.end()) {
+            if (displayIt->text == "？？？") {
+                const auto catalogIt = std::find_if(
+                    item.discoveryEffectLines.begin(),
+                    item.discoveryEffectLines.end(),
+                    [attack](const DiscoveryEffectLine& line) {
+                        const ObjectEffectDisplayLine displayLine{line.effectKey, line.text};
+                        return attack
+                            ? inventoryUiAttackEffectLine(displayLine)
+                            : inventoryUiDigEffectLine(displayLine);
+                    });
+                if (catalogIt != item.discoveryEffectLines.end()) {
+                    displayIt->text = catalogIt->text;
+                }
+            }
+            return;
+        }
+
+        if (attack) {
+            sections.ringLines.push_back({
+                "basic_attack",
+                "敵にダメージ（攻撃力" + std::to_string(power) + "）",
+            });
+            return;
+        }
+        sections.ringLines.push_back({
+            "dig",
+            "土を掘れる（掘削力" + std::to_string(power) + "）",
+        });
+    };
+    revealOrAppendEnhancedPowerLine(
+        effectivePower.attackPowerEnhanced,
+        effectivePower.attackPower,
+        true);
+    revealOrAppendEnhancedPowerLine(
+        effectivePower.digPowerEnhanced,
+        effectivePower.digPower,
+        false);
     if (isStaffObject(item)) {
         std::vector<std::string> equipmentLines = staffEquipmentEffectLines(item, catalog, unlockedRingCount);
         applyStaffManualEquipmentEffectText(item, equipmentLines, sections.ringLines.size());
         if (!equipmentLines.empty()) {
-            drawInventoryUiEffectText(renderer, panel, y, "装備時効果");
-            drawInventoryUiEffectText(renderer, panel, y, joinInventoryUiEffectLines(equipmentLines));
+            drawInventoryUiEffectHeading(renderer, panel, y, "装備時効果");
+            drawInventoryUiPlainEffectLines(renderer, panel, y, equipmentLines);
         }
         if (!sections.ringLines.empty()) {
-            drawInventoryUiEffectText(renderer, panel, y, "リングに乗せたときの効果");
+            drawInventoryUiEffectHeading(renderer, panel, y, "リングに乗せたときの効果");
             drawInventoryUiEffectLines(renderer, panel, y, sections.ringLines, item, stats);
         }
         return;
     }
     if (!sections.useLines.empty()) {
-        drawInventoryUiEffectText(renderer, panel, y, "使用時の効果");
+        drawInventoryUiEffectHeading(renderer, panel, y, "使用時の効果");
         drawInventoryUiEffectLines(renderer, panel, y, sections.useLines, item, stats);
     }
     if (!sections.ringLines.empty()) {
-        drawInventoryUiEffectText(renderer, panel, y, "リングに乗せたときの効果");
+        drawInventoryUiEffectHeading(renderer, panel, y, "リングに乗せたときの効果");
         drawInventoryUiEffectLines(renderer, panel, y, sections.ringLines, item, stats);
     }
 }
@@ -1381,19 +1544,123 @@ void drawInventoryUiSlotBottomLabel(Renderer& renderer, UiRect rect, std::string
     renderer.drawOutlinedText(labelPos, label, color, {0, 0, 0, 120}, 6, LabelScale);
 }
 
-void drawInventoryUiProtectionLabel(
+void drawInventoryUiProtectionIcon(
     Renderer& renderer,
     UiRect rect,
-    const InventoryUiProtectionLabelStyle& style)
+    const InventoryUiProtectionIconStyle& style)
 {
     const float alphaScale = std::clamp(style.alphaScale, 0.0f, 1.0f);
-    renderer.drawOutlinedText(
-        rect.pos + Vec2{5.0f, 3.0f} + style.offset,
-        "保護",
-        scaleAlpha(style.color, alphaScale),
-        scaleAlpha({0, 0, 0, 120}, alphaScale),
-        6,
-        2);
+    const float iconSize = std::max(1.0f, style.size);
+    const Vec2 center{
+        rect.pos.x,
+        rect.pos.y,
+    };
+    ImageDrawOptions options;
+    options.tint = scaleAlpha({255, 255, 255, 255}, alphaScale);
+    options.outlineEnabled = true;
+    options.outlineColor = scaleAlpha({0, 0, 0, 255}, alphaScale);
+    options.outlinePx = 2;
+    renderer.drawImage(
+        InventoryProtectionIconPath,
+        center + style.offset,
+        {iconSize, iconSize},
+        options,
+        TextureFilter::Nearest);
+}
+
+void drawInventoryUiPowerBadges(
+    Renderer& renderer,
+    UiRect itemImageRect,
+    const InventoryUiPowerBadgeValues& values,
+    const InventoryUiPowerBadgeStyle& style)
+{
+    const float minImageSize = std::max(0.0f, std::min(itemImageRect.size.x, itemImageRect.size.y));
+    if (minImageSize <= 0.0f) {
+        return;
+    }
+
+    const float alphaScale = std::clamp(style.alphaScale, 0.0f, 1.0f);
+    const float fillAlphaScale = std::clamp(style.fillAlphaScale, 0.0f, 1.0f);
+    const Vec2 edgeInset{
+        std::clamp(style.edgeInset.x, 0.0f, itemImageRect.size.x * 0.5f),
+        std::clamp(style.edgeInset.y, 0.0f, itemImageRect.size.y * 0.5f),
+    };
+    const float baseRadius = std::clamp(minImageSize * 0.28f, 9.0f, 13.0f);
+    const float radius = baseRadius * 0.8f;
+    constexpr float InnerBorderWidth = 1.0f;
+    constexpr float GoldBorderWidth = 2.0f;
+    constexpr float OuterBorderWidth = 2.0f;
+    constexpr Color GoldBorderColor{0xd4, 0xc8, 0x7e, 255};
+    constexpr Color BlackBorderColor{0, 0, 0, 255};
+    constexpr Vec2 BadgeOffset{0.0f, 16.0f};
+    constexpr Vec2 TextOffset{3.0f, 3.0f};
+    constexpr float MultiDigitTextHeightReduction = 2.0f;
+    constexpr Color TextOutlineColor{0, 0, 0, 180};
+    constexpr float TextOutlineWidth = 2.0f;
+    const float centerY = itemImageRect.pos.y + itemImageRect.size.y - baseRadius - edgeInset.y;
+    const auto drawBadge = [&](Vec2 center, int value, bool enhanced, bool known, Color fill) {
+        if (value <= 0) {
+            return;
+        }
+        center += BadgeOffset;
+        renderer.fillSoftCircle(
+            center,
+            radius + GoldBorderWidth + OuterBorderWidth,
+            scaleAlpha(BlackBorderColor, alphaScale));
+        renderer.fillSoftCircle(center, radius, scaleAlpha(BlackBorderColor, alphaScale));
+        renderer.fillSoftCircle(
+            center,
+            std::max(0.0f, radius - InnerBorderWidth),
+            scaleAlpha(fill, alphaScale * fillAlphaScale));
+
+        const std::string text = known ? std::to_string(value) : "？";
+        const int textScale = baseRadius >= 12.0f ? 2 : 1;
+        const Vec2 textSize = renderer.measureText(text, textScale);
+        const bool multiDigit = known && text.size() >= 2;
+        const float textVisualScale = multiDigit && textSize.y > MultiDigitTextHeightReduction
+            ? (textSize.y - MultiDigitTextHeightReduction) / textSize.y
+            : 1.0f;
+        const int sourceOutlineWidth = std::max(
+            1,
+            static_cast<int>(std::lround(TextOutlineWidth / textVisualScale)));
+        const Vec2 textCenter = center + TextOffset;
+        renderer.pushScreenTransform(textCenter, textVisualScale, 1.0f);
+        renderer.drawOutlinedText(
+            textCenter - textSize * 0.5f,
+            text,
+            {255, 255, 255, 0},
+            scaleAlpha(TextOutlineColor, alphaScale),
+            sourceOutlineWidth,
+            textScale);
+        renderer.popScreenTransform();
+
+        renderer.drawSoftRing(
+            center,
+            radius + GoldBorderWidth * 0.5f,
+            GoldBorderWidth,
+            scaleAlpha(GoldBorderColor, alphaScale));
+
+        renderer.pushScreenTransform(textCenter, textVisualScale, 1.0f);
+        renderer.drawText(
+            textCenter - textSize * 0.5f,
+            text,
+            scaleAlpha(enhanced ? InventoryEnhancedPowerColor : Color{255, 255, 255, 255}, alphaScale),
+            textScale);
+        renderer.popScreenTransform();
+    };
+
+    drawBadge(
+        {itemImageRect.pos.x + edgeInset.x, centerY},
+        values.digPower,
+        values.digPowerEnhanced,
+        values.digPowerKnown,
+        {48, 104, 210, 248});
+    drawBadge(
+        {itemImageRect.pos.x + itemImageRect.size.x - edgeInset.x, centerY},
+        values.attackPower,
+        values.attackPowerEnhanced,
+        values.attackPowerKnown,
+        {210, 54, 62, 248});
 }
 
 void drawInventoryUiItemIcon(
@@ -1410,16 +1677,17 @@ void drawInventoryUiItemIcon(
     }
 
     alphaScale = std::clamp(alphaScale, 0.0f, 1.0f);
+    const float iconAlphaScale = alphaScale * (disabled ? InventoryUiDisabledIconAlpha : 1.0f);
     const std::optional<InventoryUiItemStats> stats = inventoryUiEntryStats(entry);
     const bool broken = stats ? stats->broken : entry.item->durability == 0;
     const Color objectColor = itemFallbackColorForBrokenState(inventoryUiObjectColor(*entry.item), broken);
 
     ObjectImageDrawOptions imageOptions;
-    imageOptions.tint = disabled ? Color{128, 128, 128, 255} : Color{255, 255, 255, 255};
-    imageOptions.tint = scaleAlpha(imageOptions.tint, alphaScale);
+    imageOptions.tint = scaleAlpha({255, 255, 255, 255}, iconAlphaScale);
+    imageOptions.outlineColor = scaleAlpha(imageOptions.outlineColor, iconAlphaScale);
     if (selected) {
         imageOptions = withSelectedItemOutline(imageOptions);
-        imageOptions.outlineColor = scaleAlpha(imageOptions.outlineColor, alphaScale);
+        imageOptions.selectedOutlineColor = scaleAlpha(imageOptions.selectedOutlineColor, iconAlphaScale);
     }
 
     const bool drewImage = drawItemImage(
@@ -1429,13 +1697,30 @@ void drawInventoryUiItemIcon(
         {imageMaxSize, imageMaxSize},
         inventoryUiObjectImageOptions(*entry.item, broken, imageOptions));
     if (!drewImage) {
-        Color fallback = disabled ? darkenColor(objectColor, 0.5f) : objectColor;
-        fallback = scaleAlpha(fallback, alphaScale);
+        const Color fallback = scaleAlpha(objectColor, iconAlphaScale);
         renderer.fillCircle(center, 22.0f, fallback);
         if (selected) {
-            drawSelectedItemCircleOutline(renderer, center, 22.0f);
+            drawSelectedItemCircleOutline(renderer, center, 22.0f, iconAlphaScale);
         }
     }
+}
+
+void applyInventoryUiStackCount(
+    InventoryUiSlotStyle& style,
+    const InventoryUiEntryView& entry)
+{
+    if (entry.item == nullptr || entry.instance != nullptr || entry.stackCount <= 1) {
+        return;
+    }
+    style.showTopRightCount = true;
+    style.topRightCount = entry.stackCount;
+}
+
+void applyInventoryUiPowerBadgeDiscovery(
+    InventoryUiSlotStyle& style,
+    const EncyclopediaSystem& encyclopedia)
+{
+    style.powerBadgeEncyclopedia = &encyclopedia;
 }
 
 void drawInventoryUiSlot(
@@ -1444,11 +1729,16 @@ void drawInventoryUiSlot(
     const InventoryUiEntryView& entry,
     const InventoryUiSlotStyle& style)
 {
+    const bool focused = uiControlVisualState(rect).selected;
+    const bool selected = focused || (style.showPersistentSelection && style.selected);
     if (style.registerNavigationTarget) {
         registerUiNavigationTarget(rect, UiNavigationRole::Grid, style.selected);
     }
-    Color fill = style.selected ? Color{54, 44, 72, 242} : Color{20, 20, 28, 226};
+    UiControlMotionScope motion(renderer, rect, UiControlMotion::PressOnly, !style.disabled);
+    Color fill = selected ? Color{54, 44, 72, 242} : Color{20, 20, 28, 226};
     const Vec2 slotCenter = uiRectCenter(rect);
+    const Vec2 itemImageSize{style.imageMaxSize, style.imageMaxSize};
+    const UiRect itemImageRect{slotCenter - itemImageSize * 0.5f, itemImageSize};
     const std::optional<InventoryUiItemStats> stats = inventoryUiEntryStats(entry);
     const float contentAlpha = std::clamp(style.contentAlpha, 0.0f, 1.0f);
     if (style.showFrame) {
@@ -1495,18 +1785,16 @@ void drawInventoryUiSlot(
             6,
             LabelScale);
     };
-    const auto drawProtectionLabel = [&]() {
-        if (!style.showProtectionLabel ||
-            style.bottomLabel == InventoryUiProtectionStatusText ||
+    const auto drawProtectionIcon = [&]() {
+        if (!style.showProtectionIcon ||
             !stats ||
             !stats->protectionEnabled) {
             return;
         }
-        drawInventoryUiProtectionLabel(
+        drawInventoryUiProtectionIcon(
             renderer,
-            rect,
-            InventoryUiProtectionLabelStyle{
-                .color = style.protectionLabelColor,
+            itemImageRect,
+            InventoryUiProtectionIconStyle{
                 .alphaScale = contentAlpha,
             });
     };
@@ -1517,19 +1805,17 @@ void drawInventoryUiSlot(
         return;
     }
 
-    const bool broken = stats ? stats->broken : entry.item->durability == 0;
-
-    if (!stats) {
-        drawInventoryUiItemIcon(renderer, slotCenter, entry, style.imageMaxSize, style.selected, style.disabled, contentAlpha);
-        drawBottomLabel();
-        drawTopRightCount();
-        drawEquippedLabel();
-        return;
+    drawInventoryUiItemIcon(renderer, slotCenter, entry, style.imageMaxSize, selected, style.disabled, contentAlpha);
+    if (style.showPowerBadges && style.powerBadgeEncyclopedia != nullptr) {
+        drawInventoryUiPowerBadges(
+            renderer,
+            itemImageRect,
+            inventoryUiPowerBadgeValues(entry, *style.powerBadgeEncyclopedia),
+            InventoryUiPowerBadgeStyle{
+                .alphaScale = contentAlpha,
+            });
     }
-
-    (void)broken;
-    drawInventoryUiItemIcon(renderer, slotCenter, entry, style.imageMaxSize, style.selected, style.disabled, contentAlpha);
-    drawProtectionLabel();
+    drawProtectionIcon();
     drawBottomLabel();
     drawTopRightCount();
     drawEquippedLabel();
@@ -1699,7 +1985,9 @@ void drawInventoryUiGrid(
         if (!uiScrollAreaRectVisible(layout, rect)) {
             continue;
         }
-        drawInventoryUiSlot(renderer, rect, entries[static_cast<std::size_t>(i)], i == selectedIndex, style.imageMaxSize);
+        InventoryUiSlotStyle slotStyle{i == selectedIndex, false, style.imageMaxSize};
+        slotStyle.showPowerBadges = style.showPowerBadges;
+        drawInventoryUiSlot(renderer, rect, entries[static_cast<std::size_t>(i)], slotStyle);
     }
     renderer.popClipRect();
     drawUiScrollAreaScrollbar(renderer, layout, style.scroll);
@@ -1719,13 +2007,7 @@ void drawInventoryUiDetailPanel(
     std::string detailTitle = "Empty";
     if (entry.item != nullptr) {
         const bool broken = stats ? stats->broken : entry.item->durability == 0;
-        const std::string displayName = itemDisplayName(entry.item->name, broken);
-        if (!stats && entry.stackCount > 1) {
-            std::snprintf(buffer, sizeof(buffer), "%s x%d", displayName.c_str(), entry.stackCount);
-            detailTitle = buffer;
-        } else {
-            detailTitle = displayName;
-        }
+        detailTitle = itemDisplayName(entry.item->name, broken);
     }
 
     if (entry.item == nullptr) {
@@ -1738,12 +2020,17 @@ void drawInventoryUiDetailPanel(
         renderer,
         panel,
         detailTitle,
-        options.showProtectionLabel && stats && stats->protectionEnabled,
+        entry.item->category,
         entry.item->rarity,
         options.animationSeconds);
 
     const bool broken = stats ? stats->broken : entry.item->durability == 0;
-    drawInventoryDetailImage(renderer, panel, detailLineY, *entry.item, broken);
+    drawInventoryDetailImage(
+        renderer,
+        panel,
+        detailLineY,
+        *entry.item,
+        broken);
     drawUiDetailText(renderer, panel, detailLineY, entry.item->description.empty() ? "-" : entry.item->description);
     drawItemEffectDetailSections(
         renderer,
@@ -1754,10 +2041,6 @@ void drawInventoryUiDetailPanel(
         encyclopedia,
         stats,
         options.unlockedRingCount);
-
-    if (!entry.item->category.empty()) {
-        drawUiDetailLine(renderer, panel, detailLineY, "分類", entry.item->category);
-    }
 
     if (stats) {
         if (stats->maxDurability < 0) {
@@ -1770,9 +2053,15 @@ void drawInventoryUiDetailPanel(
     } else {
         std::snprintf(buffer, sizeof(buffer), "%d", entry.item->durability);
     }
-    drawUiDetailLine(renderer, panel, detailLineY, "耐久力", buffer);
+    drawUiDetailLine(renderer, panel, detailLineY, "耐久力", buffer, InventoryDetailLineStyle);
 
-    drawUiDetailLine(renderer, panel, detailLineY, "重量", formatInventoryUiWeightText(*entry.item, stats));
+    drawUiDetailLine(
+        renderer,
+        panel,
+        detailLineY,
+        "重量",
+        formatInventoryUiWeightText(*entry.item, stats),
+        InventoryDetailLineStyle);
 
     if (options.showEnhanceCount && stats) {
         drawInventoryEnhancementLine(renderer, panel, detailLineY, *stats);

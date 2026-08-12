@@ -81,6 +81,7 @@ struct EnemyEvent {
     Color terrainColor{0, 0, 0, 0};
     int healAmount = 0;
     bool critical = false;
+    bool frontGuarded = false;
     bool weakPointHit = false;
     bool ringItemImpact = false;
     bool suppressRewards = false;
@@ -89,6 +90,7 @@ struct EnemyEvent {
     std::string objectDropProfile;
     int objectDropCount = 0;
     std::optional<ItemInstance> objectDropInstance;
+    std::optional<ItemData> objectDropRuntimeItem;
     MaterialType materialDropType = MaterialType::Count;
     int materialDropCount = 0;
 };
@@ -160,11 +162,6 @@ struct EnemyMagicHitSpec {
     double statusValue = 1.0;
     double statusDuration = 0.0;
     double statusChance = 100.0;
-    std::string consumeStateForBonus;
-    int consumeStateBonusDamage = 0;
-    std::string consumeStateBonusDamageType;
-    std::string consumeStateBonusEffectId;
-    int* outConsumedStateCount = nullptr;
     Vec2 knockbackDirection{};
     float knockbackStrength = 0.0f;
     int maxHits = 0;
@@ -257,6 +254,7 @@ public:
         const ObjectCatalog& objectCatalog,
         WorldDropSystem& worldDrops,
         const std::function<bool(int, Vec2)>& grantMoney,
+        const std::function<int(int, Vec2)>& takeMoney,
         Vec2 playerLight,
         const std::vector<LightSource>& extraLights,
         const EffectDispatcher& effectDispatcher,
@@ -271,6 +269,7 @@ public:
     void render(
         Renderer& renderer,
         const TileMap& map,
+        const ObjectCatalog& objectCatalog,
         Vec2 playerLight,
         const std::vector<LightSource>& extraLights,
         int highlightedEnemyId = 0,
@@ -280,6 +279,7 @@ public:
         std::vector<DepthRenderEntry>& entries,
         Renderer& renderer,
         const TileMap& map,
+        const ObjectCatalog& objectCatalog,
         Vec2 playerLight,
         const std::vector<LightSource>& extraLights,
         int highlightedEnemyId = 0,
@@ -353,10 +353,7 @@ public:
         float strength,
         float dt,
         std::string_view source,
-        SpellRingSystem& spellRing,
-        int dryWetBonusDamage = 0,
-        int* outHotCount = nullptr,
-        int* outDriedWetCount = nullptr);
+        int* outHotCount = nullptr);
     int applyMagicArea(const EnemyMagicHitSpec& spec, SpellRingSystem& spellRing);
     bool applyMagicNearest(Vec2 origin, float range, EnemyMagicHitSpec spec, SpellRingSystem& spellRing, Vec2* outTargetPosition = nullptr);
     void applyExplosionDamage(Vec2 position, float radius, SpellRingSystem& spellRing, int damage, int excludedEnemyRuntimeId = 0);
@@ -525,7 +522,9 @@ private:
     bool updateBossActionSequence(Enemy& enemy, Player& player, TileMap& map, ProjectileSystem& projectiles, float dt);
     void rebuildFlowField(TileMap& map, Vec2 playerPosition);
     Vec2 flowDirectionFor(TileMap& map, Vec2 enemyPosition, Vec2 playerPosition) const;
-    Vec2 fleeDirectionFor(TileMap& map, const Enemy& enemy, Vec2 playerPosition, Vec2 jitterDirection) const;
+    Vec2 updateFleeDirection(TileMap& map, Enemy& enemy, Vec2 playerPosition, float dt);
+    bool planFleeWaypoint(TileMap& map, const Enemy& enemy, Vec2 playerPosition, Vec2& outWaypoint) const;
+    void updateFleeProgress(Enemy& enemy, Vec2 actualMovement, float expectedDistance, float dt);
     Vec2 separationFor(const Enemy& enemy) const;
     void moveWithCollision(Enemy& enemy, TileMap& map, Vec2 desiredVelocity, float dt);
     bool resolvePlayerOverlap(Player& player, Enemy& enemy, TileMap& map, const RuntimeBalance& balance);

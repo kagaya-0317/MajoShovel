@@ -84,6 +84,9 @@ class InventorySystem {
 public:
     bool canAddObjectItem(const ObjectCatalog& catalog, std::string_view objectId) const;
     bool addObjectItem(const ObjectCatalog& catalog, std::string_view objectId, InventoryAddResult* outResult = nullptr);
+    // Used when the source container already guarantees stack representation.
+    bool canAddObjectStack(std::string_view objectId, int count = 1) const;
+    bool addObjectStack(const ItemData& item, int count, InventoryAddResult* outResult = nullptr);
     bool addRuntimeObjectItem(const ItemData& item, InventoryAddResult* outResult = nullptr);
     bool sortByItemOrder(const ObjectCatalog& catalog);
     void updateShortcuts(
@@ -133,7 +136,12 @@ public:
         float animationSeconds = 0.0f,
         int unlockedRingCount = SpellRingCount) const;
     UiRect shortcutHudPanelRect(int screenWidth, int screenHeight) const;
-    void renderShortcutHud(Renderer& renderer, const SpellRingSystem& spellRing, int screenWidth, int screenHeight) const;
+    void renderShortcutHud(
+        Renderer& renderer,
+        const SpellRingSystem& spellRing,
+        const EncyclopediaSystem& encyclopedia,
+        int screenWidth,
+        int screenHeight) const;
     bool isOpen() const { return open_; }
     void setOpen(bool open);
     void cancelGrab();
@@ -341,7 +349,7 @@ private:
     void removePackedSlotAtPackedIndex(int packedIndex) const;
     std::string allocateInstanceId();
     InventoryObjectInstance createObjectInstance(const ItemData& item);
-    void toggleSelectedProtection();
+    bool toggleSelectedProtection();
     void openSlotCommandMenu(int slotIndex, bool itemUseEnabled = true, bool itemDiscardEnabled = true);
     void resetSlotPointerPress();
     void queueRingEquipFx(Vec2 sourceScreen, const SpellRingAddResult& result);

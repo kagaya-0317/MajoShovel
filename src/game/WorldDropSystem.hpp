@@ -142,6 +142,12 @@ public:
         std::string_view targetFilter,
         WorldDropItem& outDrop,
         const CollisionRect* allowedBounds = nullptr);
+    const WorldDropItem* nearestStealableDrop(
+        const ObjectCatalog& catalog,
+        Vec2 center,
+        float radius,
+        std::string_view targetFilter,
+        const CollisionRect* allowedBounds = nullptr) const;
     int pullNearbyDrops(
         Vec2 center,
         float dt,

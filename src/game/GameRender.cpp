@@ -136,6 +136,13 @@ constexpr float RingStatusHudCooldownOuterRadius = 43.0f;
 constexpr Vec2 RingStatusHudTextPos{104.0f, 20.0f};
 constexpr float RingStatusHudLineGap = 22.0f;
 constexpr UiRect RingStatusHudWeightGaugeRect{{104.0f, 80.0f}, {144.0f, 3.0f}};
+constexpr Vec2 RingManagementWeightGaugeSize{220.0f, 4.0f};
+constexpr float RingManagementWeightGaugeOffsetY = 26.0f;
+constexpr float RingManagementWeightStateLineOffsetY = 40.0f;
+constexpr float RingDetailLabelWidth = 106.0f;
+constexpr float RingDetailWeightGaugeOffsetY = 26.0f;
+constexpr float RingDetailWeightGaugeHeight = 4.0f;
+constexpr float RingDetailWeightGaugeBottomGap = 10.0f;
 constexpr Color RingStatusHudNameColor{255, 239, 172, 255};
 constexpr Color RingStatusHudInactiveNameColor{246, 248, 255, 255};
 constexpr Color RingStatusHudItemColor{232, 236, 244, 255};
@@ -144,10 +151,10 @@ constexpr Color RingStatusHudCooldownCoolStartColor{255, 202, 64, 248};
 constexpr Color RingStatusHudCooldownCoolEndColor{255, 255, 246, 252};
 constexpr Color RingStatusHudCooldownReadyStartColor{142, 232, 255, 248};
 constexpr Color RingStatusHudCooldownReadyEndColor{255, 255, 255, 252};
-constexpr Color RingStatusHudWeightGaugeBackColor{6, 15, 35, 168};
-constexpr Color RingStatusHudWeightGaugeFillColor{84, 218, 255, 238};
-constexpr Color RingStatusHudWeightGaugeOverColor{255, 72, 84, 238};
-constexpr Color RingStatusHudWeightGaugeLimitColor{255, 248, 190, 245};
+constexpr Color RingWeightGaugeBackColor{6, 15, 35, 168};
+constexpr Color RingWeightGaugeFillColor{84, 218, 255, 238};
+constexpr Color RingWeightGaugeOverColor{255, 72, 84, 238};
+constexpr Color RingWeightGaugeLimitColor{255, 248, 190, 245};
 constexpr float RingWeightOverloadEpsilon = 0.0001f;
 constexpr Color RingWeightOverloadedTextColor{255, 112, 112, 255};
 constexpr std::string_view RingStatusHudChargeReadySe = "se.ring.charge_ready";
@@ -346,13 +353,13 @@ void drawRingStatusHudCooldown(Renderer& renderer, Vec2 panelPos, float cooldown
         withAlpha(ready ? RingStatusHudCooldownReadyEndColor : RingStatusHudCooldownCoolEndColor, 255.0f * alphaScale));
 }
 
-void drawRingStatusHudWeightGauge(Renderer& renderer, Vec2 panelPos, float weight, float limit)
+void drawRingWeightGauge(Renderer& renderer, UiRect gauge, float weight, float limit)
 {
-    const UiRect gauge{
-        panelPos + RingStatusHudWeightGaugeRect.pos,
-        RingStatusHudWeightGaugeRect.size,
-    };
-    renderer.fillRect(gauge.pos, gauge.size, RingStatusHudWeightGaugeBackColor);
+    if (gauge.size.x <= 0.0f || gauge.size.y <= 0.0f) {
+        return;
+    }
+
+    renderer.fillRect(gauge.pos, gauge.size, RingWeightGaugeBackColor);
 
     const float safeLimit = std::max(0.001f, limit);
     const float ratio = std::max(0.0f, weight / safeLimit);
@@ -360,16 +367,16 @@ void drawRingStatusHudWeightGauge(Renderer& renderer, Vec2 panelPos, float weigh
     const float limitX = gauge.pos.x + gauge.size.x / GaugeMaxRatio;
     const float blueWidth = gauge.size.x * clamp(std::min(ratio, 1.0f) / GaugeMaxRatio, 0.0f, 1.0f);
     if (blueWidth > 0.0f) {
-        renderer.fillRect(gauge.pos, {blueWidth, gauge.size.y}, RingStatusHudWeightGaugeFillColor);
+        renderer.fillRect(gauge.pos, {blueWidth, gauge.size.y}, RingWeightGaugeFillColor);
     }
 
     const float overRatio = std::max(0.0f, ratio - (1.0f + RingWeightOverloadEpsilon));
     const float overWidth = gauge.size.x * clamp(overRatio / GaugeMaxRatio, 0.0f, 1.0f);
     if (overWidth > 0.0f) {
-        renderer.fillRect({limitX, gauge.pos.y}, {overWidth, gauge.size.y}, RingStatusHudWeightGaugeOverColor);
+        renderer.fillRect({limitX, gauge.pos.y}, {overWidth, gauge.size.y}, RingWeightGaugeOverColor);
     }
 
-    renderer.fillRect({limitX - 0.5f, gauge.pos.y - 2.0f}, {1.0f, gauge.size.y + 4.0f}, RingStatusHudWeightGaugeLimitColor);
+    renderer.fillRect({limitX - 0.5f, gauge.pos.y - 2.0f}, {1.0f, gauge.size.y + 4.0f}, RingWeightGaugeLimitColor);
 }
 
 bool ringStatusHudLeftCircleContains(UiRect panel, Vec2 point)
@@ -640,7 +647,6 @@ void drawRingManagementWeightSummary(
     int ringIndex)
 {
     constexpr Color NormalColor{188, 202, 224, 255};
-    constexpr float StateLineOffsetY = 30.0f;
     constexpr int TextScale = 2;
 
     const RingWeightUiState state = ringWeightUiStateForRing(spellRing, ringIndex);
@@ -648,7 +654,16 @@ void drawRingManagementWeightSummary(
     char buffer[64];
     std::snprintf(buffer, sizeof(buffer), "重量 %.1f / %.1fkg", state.totalWeight, state.maxWeight);
     renderer.drawText(pos, buffer, color, TextScale);
-    renderer.drawText(pos + Vec2{0.0f, StateLineOffsetY}, ringWeightStateLabel(state), color, TextScale);
+    drawRingWeightGauge(
+        renderer,
+        {pos + Vec2{0.0f, RingManagementWeightGaugeOffsetY}, RingManagementWeightGaugeSize},
+        state.totalWeight,
+        state.maxWeight);
+    renderer.drawText(
+        pos + Vec2{0.0f, RingManagementWeightStateLineOffsetY},
+        ringWeightStateLabel(state),
+        color,
+        TextScale);
 }
 
 void drawRingDetailLineWithModifier(
@@ -661,7 +676,6 @@ void drawRingDetailLineWithModifier(
     Color valueColor = ui::Text,
     Color labelColor = ui::TextMuted)
 {
-    constexpr float LabelWidth = 106.0f;
     constexpr float MinLineHeight = 31.0f;
     constexpr float LineGap = 4.0f;
     constexpr float ModifierGap = 7.0f;
@@ -669,7 +683,7 @@ void drawRingDetailLineWithModifier(
     constexpr Color ModifierColor{255, 230, 150, 255};
 
     const float labelX = panel.pos.x + ui::SubPanelPadding.x;
-    const float valueX = labelX + LabelWidth;
+    const float valueX = labelX + RingDetailLabelWidth;
     const float right = panel.pos.x + panel.size.x - ui::SubPanelPadding.x;
     const float modifierWidth = modifier.empty() ? 0.0f : renderer.measureText(modifier, TextScale).x + ModifierGap;
     const float valueMaxWidth = std::max(0.0f, right - valueX - modifierWidth);
@@ -738,6 +752,7 @@ void drawRingDetailPanel(
         percentModifierSuffix(ringModifiers.ringSpeedMul));
 
     const RingWeightUiState weightState = ringWeightUiStateForRing(spellRing, ringIndex);
+    const float weightLineY = y;
     std::snprintf(
         buffer,
         sizeof(buffer),
@@ -751,6 +766,16 @@ void drawRingDetailPanel(
         "重量",
         buffer,
         weightModifierSuffix(ringModifiers.ringWeightLimitAdd));
+
+    const float weightGaugeLeft = panel.pos.x + ui::SubPanelPadding.x + RingDetailLabelWidth;
+    const float weightGaugeRight = panel.pos.x + panel.size.x - ui::SubPanelPadding.x;
+    drawRingWeightGauge(
+        renderer,
+        {{weightGaugeLeft, weightLineY + RingDetailWeightGaugeOffsetY},
+         {std::max(0.0f, weightGaugeRight - weightGaugeLeft), RingDetailWeightGaugeHeight}},
+        weightState.totalWeight,
+        weightState.maxWeight);
+    y += RingDetailWeightGaugeBottomGap;
 
     const Color stateColor = weightState.overloaded ? RingWeightOverloadedTextColor : ui::Text;
     drawRingDetailLineWithModifier(
@@ -1494,6 +1519,7 @@ void drawRingPlaceWindow(
     int unlockedRingCount)
 {
     const UiRect panel = ringPlaceWindowRect();
+    UiModalNavigationScope navigationScope(panel);
     UiWindowScope placeWindow(
         renderer,
         "ring.place",
@@ -1508,10 +1534,8 @@ void drawRingPlaceWindow(
         const bool hasItem = entry.item != nullptr;
         const bool enabled = ringPlaceSlotEnabled(inventory, spellRing, i, localAngle);
         InventoryUiSlotStyle style{i == selection && enabled, hasItem && !enabled, RingPlaceSlotImageMaxSize};
-        if (entry.item != nullptr && entry.instance == nullptr && entry.stackCount > 1) {
-            style.showTopRightCount = true;
-            style.topRightCount = entry.stackCount;
-        }
+        applyInventoryUiPowerBadgeDiscovery(style, encyclopedia);
+        applyInventoryUiStackCount(style, entry);
         drawInventoryUiSlot(renderer, ringPlaceSlotRect(i), entry, style);
     }
 
@@ -1546,6 +1570,7 @@ void drawRingDiscardConfirmDialog(
     }
 
     const UiRect panel = ringDiscardConfirmRect();
+    UiModalNavigationScope navigationScope(panel);
     UiWindowScope window(
         renderer,
         "ring.discard.confirm",
@@ -2186,7 +2211,7 @@ constexpr int OptionsPageVideo = 0;
 constexpr int OptionsPageAudio = 1;
 constexpr int OptionsPageOperation = 2;
 constexpr int OptionsPageCount = 3;
-constexpr int OperationSettingsCategoryCount = 4;
+constexpr int OperationSettingsCategoryCount = 3;
 constexpr int AudioSettingsRowCount = 3;
 constexpr int VideoSettingsRowCount = 7;
 constexpr int VideoSettingsRowWindowMode = 0;
@@ -2196,9 +2221,25 @@ constexpr int VideoSettingsRowInputIcons = 3;
 constexpr int VideoSettingsRowScreenShake = 4;
 constexpr int VideoSettingsRowLightweight = 5;
 constexpr int VideoSettingsRowVSync = 6;
+
+struct OptionsSliderUiState {
+    std::array<UiSliderState, AudioSettingsRowCount> audio{};
+    UiSliderState brightness{};
+};
+
+OptionsSliderUiState& optionsSliderUiState()
+{
+    static OptionsSliderUiState state;
+    return state;
+}
+
 constexpr float OptionsContentYOffset = -16.0f;
 constexpr float OptionsStandardContentYOffset = OptionsContentYOffset + 8.0f;
 constexpr float OptionsStandardContentHeightBonus = 16.0f;
+constexpr float OptionsDetailWindowHeightExtension = 30.0f;
+constexpr float OptionsSettingsRowHeight = 38.0f * 1.2f;
+constexpr float OptionsSettingsRowGap = 4.0f;
+constexpr float OperationSettingsTextOffsetY = 2.0f;
 
 struct OperationSettingsActionRow {
     InputAction action;
@@ -2234,7 +2275,6 @@ constexpr const char* OperationSettingsCategoryLabels[OperationSettingsCategoryC
     "基本",
     "リング/アイテム",
     "ショートカット",
-    "開発",
 };
 
 constexpr std::array<UiCommandMenuItem, 4> OperationSettingsCommandItems{{
@@ -2280,12 +2320,6 @@ constexpr OperationSettingsActionRow OperationSettingsActionRows[] = {
     {InputAction::ShortcutCursorRight, "ショートカット右", 2},
     {InputAction::PreviousShortcutRow, "前のショートカット行", 2},
     {InputAction::NextShortcutRow, "次のショートカット行", 2},
-    {InputAction::ToggleDebug, "デバッグ表示", 3},
-    {InputAction::ToggleDebugPause, "デバッグ停止", 3},
-    {InputAction::TestRestart, "テスト再起動", 3},
-    {InputAction::ToggleTestFreeze, "テスト停止", 3},
-    {InputAction::OpenConsole, "コンソール", 3},
-    {InputAction::ToggleAutoReloadBlock, "自動リロード停止", 3},
 };
 
 UiRect optionsPanelRect()
@@ -2337,16 +2371,26 @@ UiRect optionsRightHelpWindowRect()
     return {{
         panel.pos.x + 650.0f,
         panel.pos.y + 166.0f + OptionsStandardContentYOffset,
-    }, {284.0f, 332.0f + OptionsStandardContentHeightBonus}};
+    }, {
+        284.0f,
+        332.0f + OptionsStandardContentHeightBonus + OptionsDetailWindowHeightExtension,
+    }};
+}
+
+float optionsDetailWindowBottomY()
+{
+    const UiRect detail = optionsRightHelpWindowRect();
+    return detail.pos.y + detail.size.y;
 }
 
 UiRect operationSettingsTableRect()
 {
     const UiRect panel = optionsPanelRect();
-    return {{
+    const Vec2 position{
         panel.pos.x + 46.0f,
         panel.pos.y + 220.0f + OptionsContentYOffset,
-    }, {580.0f, 278.0f + 24.0f}};
+    };
+    return {position, {580.0f, optionsDetailWindowBottomY() - position.y}};
 }
 
 UiRect operationSettingsTabRect(int index)
@@ -2365,10 +2409,11 @@ UiRect operationSettingsTabRect(int index)
 UiRect operationSettingsHelpWindowRect()
 {
     const UiRect panel = optionsPanelRect();
-    return {{
+    const Vec2 position{
         panel.pos.x + 650.0f,
         panel.pos.y + 220.0f + OptionsContentYOffset,
-    }, {284.0f, 278.0f + 24.0f}};
+    };
+    return {position, {284.0f, optionsDetailWindowBottomY() - position.y}};
 }
 
 UiRect optionsFooterButtonRect(int index, int count, float width = 225.0f)
@@ -2390,28 +2435,44 @@ UiRect optionSettingsContentRect()
     return optionsLeftContentRect();
 }
 
-UiRect audioSettingsRowRect(int index)
+UiRect optionSettingsRowRect(int index)
 {
     const UiRect content = optionSettingsContentRect();
-    return {{content.pos.x, content.pos.y + static_cast<float>(index) * 60.0f}, {content.size.x, 50.0f}};
+    const float pitch = OptionsSettingsRowHeight + OptionsSettingsRowGap;
+    return {{
+        content.pos.x,
+        content.pos.y + static_cast<float>(index) * pitch,
+    }, {content.size.x, OptionsSettingsRowHeight}};
+}
+
+UiRect audioSettingsRowRect(int index)
+{
+    return optionSettingsRowRect(index);
 }
 
 UiRect audioSettingsSliderRect(int index)
 {
     const UiRect row = audioSettingsRowRect(index);
-    return {{row.pos.x + 202.0f, row.pos.y + 15.0f}, {280.0f, 20.0f}};
+    constexpr float SliderHeight = 20.0f;
+    return {{
+        row.pos.x + 202.0f,
+        row.pos.y + (row.size.y - SliderHeight) * 0.5f,
+    }, {280.0f, SliderHeight}};
 }
 
 UiRect videoSettingsRowRect(int index)
 {
-    const UiRect content = optionSettingsContentRect();
-    return {{content.pos.x, content.pos.y + static_cast<float>(index) * 42.0f}, {content.size.x, 38.0f}};
+    return optionSettingsRowRect(index);
 }
 
 UiRect videoBrightnessSliderRect()
 {
     const UiRect row = videoSettingsRowRect(VideoSettingsRowBrightness);
-    return {{row.pos.x + 202.0f, row.pos.y + 11.0f}, {250.0f, 16.0f}};
+    constexpr float SliderHeight = 16.0f;
+    return {{
+        row.pos.x + 202.0f,
+        row.pos.y + (row.size.y - SliderHeight) * 0.5f,
+    }, {250.0f, SliderHeight}};
 }
 
 UiRect optionsHelpWindowRect()
@@ -2498,7 +2559,6 @@ UiVerticalTabsStyle optionsVerticalTabStyle()
     style.textPaddingX = 18.0f;
     style.valuePaddingX = 18.0f;
     style.valueGap = 12.0f;
-    style.tabs.activeScale = 1.0f;
     style.tabs.imageOutset = 16.0f;
     return style;
 }
@@ -2508,7 +2568,8 @@ struct UiVerticalTabPressResult {
     bool wasSelected = false;
 };
 
-UiVerticalTabPressResult pressedVerticalTab(
+UiVerticalTabPressResult updateOptionsVerticalTab(
+    UiTabsState& state,
     UiContext& ui,
     const UiVerticalTabItem* items,
     const UiRect* rects,
@@ -2516,14 +2577,23 @@ UiVerticalTabPressResult pressedVerticalTab(
     int selectedIndex)
 {
     if (items == nullptr || rects == nullptr || itemCount <= 0) {
+        state = {};
         return {};
     }
-    for (int i = 0; i < itemCount; ++i) {
-        if (items[i].enabled && ui.pressed(rects[i])) {
-            return {i, i == selectedIndex};
-        }
-    }
-    return {};
+
+    const int clampedSelection = std::clamp(selectedIndex, 0, itemCount - 1);
+    state.focusedIndex = clampedSelection;
+    UiTabsInput input{};
+    const int pressedIndex = updateUiVerticalTabs(
+        state,
+        ui,
+        input,
+        clampedSelection,
+        items,
+        itemCount,
+        rects,
+        optionsVerticalTabStyle());
+    return {pressedIndex, pressedIndex == clampedSelection};
 }
 
 std::array<UiRect, AudioSettingsRowCount> audioSettingsRowRects()
@@ -2580,6 +2650,25 @@ void setAudioSettingsRowValue(GameSettings& settings, int row, float value)
     default:
         break;
     }
+}
+
+UiSliderSpec audioSettingsSliderSpec()
+{
+    return {
+        .minValue = 0.0f,
+        .maxValue = 100.0f,
+        .step = 5.0f,
+    };
+}
+
+UiSliderStyle audioSettingsSliderStyle(int row)
+{
+    UiSliderStyle style;
+    style.activeTrack = row == 0
+        ? Color{132, 230, 250, 255}
+        : (row == 1 ? Color{160, 206, 255, 255} : Color{255, 206, 132, 255});
+    style.thumb = style.activeTrack;
+    return style;
 }
 
 std::string volumePercentText(float value)
@@ -2664,10 +2753,23 @@ float clampedScreenBrightness(float brightness)
     return clamp(brightness, MinScreenBrightness, MaxScreenBrightness);
 }
 
-float screenBrightnessGaugeValue(float brightness)
+UiSliderSpec screenBrightnessSliderSpec()
 {
-    const float range = std::max(0.001f, MaxScreenBrightness - MinScreenBrightness);
-    return (clampedScreenBrightness(brightness) - MinScreenBrightness) / range;
+    return {
+        .minValue = MinScreenBrightness * 100.0f,
+        .maxValue = MaxScreenBrightness * 100.0f,
+        .step = 5.0f,
+        .showReference = true,
+        .referenceValue = 100.0f,
+    };
+}
+
+UiSliderStyle screenBrightnessSliderStyle()
+{
+    UiSliderStyle style;
+    style.activeTrack = {236, 220, 150, 255};
+    style.thumb = style.activeTrack;
+    return style;
 }
 
 std::string screenBrightnessPercentText(float brightness)
@@ -2911,18 +3013,6 @@ const char* operationSettingsActionHelpText(InputAction action)
         return "アイテムショートカットの表示行を次へ切り替える";
     case InputAction::ToggleShortcutRow:
         return "ショートカットの表示行を切り替えます。";
-    case InputAction::ToggleDebug:
-        return "開発用のデバッグ表示を切り替えます。";
-    case InputAction::ToggleDebugPause:
-        return "開発用のデバッグ停止を切り替えます。";
-    case InputAction::TestRestart:
-        return "テストプレイ中にゲームを再起動します。通常起動では無効です。";
-    case InputAction::ToggleTestFreeze:
-        return "テスト用の自動進行停止を切り替えます。";
-    case InputAction::OpenConsole:
-        return "開発用のコマンドコンソールを開きます。";
-    case InputAction::ToggleAutoReloadBlock:
-        return "開発中の自動リロード停止を切り替えます。";
     default:
         return "";
     }
@@ -3192,7 +3282,8 @@ void drawOperationSettingsCellText(
     const Vec2 textSize = renderer.measureText(text, scale);
     const Vec2 textPos{
         cell.pos.x + paddingX,
-        cell.pos.y + std::max(0.0f, (cell.size.y - textSize.y) * 0.5f),
+        cell.pos.y + std::max(0.0f, (cell.size.y - textSize.y) * 0.5f) +
+            OperationSettingsTextOffsetY,
     };
     renderer.drawText(textPos, text, color, scale);
 }
@@ -3218,7 +3309,8 @@ void drawOperationSettingsBindingCell(
     const Vec2 size = measureInputHelpText(renderer, text, helpStyle);
     const Vec2 pos{
         cell.pos.x + std::max(paddingX, (cell.size.x - size.x) * 0.5f),
-        cell.pos.y + std::max(0.0f, (cell.size.y - size.y) * 0.5f),
+        cell.pos.y + std::max(0.0f, (cell.size.y - size.y) * 0.5f) +
+            OperationSettingsTextOffsetY,
     };
     drawInputHelpText(renderer, pos, text, helpStyle);
 }
@@ -3238,7 +3330,12 @@ bool moveOperationSettingsTableColumn(UiSelectableTableState& state, int delta)
     return state.selectedColumn != previous;
 }
 
-UiSelectableTableResult updateOperationSettingsTableClickSelection(
+struct OperationSettingsTableUpdateResult {
+    UiSelectableTableResult selection{};
+    int categoryDelta = 0;
+};
+
+OperationSettingsTableUpdateResult updateOperationSettingsTableClickSelection(
     UiSelectableTableState& state,
     UiContext& ui,
     const Input& input,
@@ -3246,9 +3343,13 @@ UiSelectableTableResult updateOperationSettingsTableClickSelection(
     int rowCount,
     const UiSelectableTableColumn* columns,
     int columnCount,
-    const UiSelectableTableStyle& style)
+    const UiSelectableTableStyle& style,
+    int& hoveredRow,
+    int& hoveredColumn)
 {
-    UiSelectableTableResult result;
+    OperationSettingsTableUpdateResult result;
+    hoveredRow = -1;
+    hoveredColumn = -1;
     if (rowCount <= 0 || columns == nullptr || columnCount <= 0) {
         state.selectedRow = 0;
         state.selectedColumn = OperationSettingsColumnKeyboardMouse;
@@ -3276,20 +3377,26 @@ UiSelectableTableResult updateOperationSettingsTableClickSelection(
     const int previousRow = state.selectedRow;
     const int previousColumn = state.selectedColumn;
     bool keyboardSelectionChanged = false;
+    bool navigationFocusedTableCell = false;
     for (int row = 0; row < rowCount; ++row) {
         const UiRect rowRect = uiSelectableTableRowRect(layout, row, style);
         if (!uiScrollAreaRectVisible(layout.scroll, rowRect)) {
             continue;
         }
         for (int column = OperationSettingsColumnAction; column <= OperationSettingsColumnGamepad; ++column) {
+            const UiRect cellRect = uiSelectableTableCellRect(layout, columns, columnCount, row, column, style);
+            if (columns[column].enabled && ui.hovered(cellRect)) {
+                hoveredRow = row;
+                hoveredColumn = column;
+            }
             if (!columns[column].enabled) {
                 continue;
             }
-            const UiRect cellRect = uiSelectableTableCellRect(layout, columns, columnCount, row, column, style);
             if (ui.navigationFocused(cellRect)) {
                 state.selectedRow = row;
                 state.selectedColumn = std::max(OperationSettingsColumnKeyboardMouse, column);
                 keyboardSelectionChanged = true;
+                navigationFocusedTableCell = true;
             }
         }
     }
@@ -3301,11 +3408,22 @@ UiSelectableTableResult updateOperationSettingsTableClickSelection(
         state.selectedRow = (state.selectedRow + 1) % rowCount;
         keyboardSelectionChanged = true;
     }
-    if (!ui.navigationActive() && input.pressed(InputAction::MoveLeft)) {
-        keyboardSelectionChanged = moveOperationSettingsTableColumn(state, -1) || keyboardSelectionChanged;
-    }
-    if (!ui.navigationActive() && input.pressed(InputAction::MoveRight)) {
-        keyboardSelectionChanged = moveOperationSettingsTableColumn(state, 1) || keyboardSelectionChanged;
+    const int horizontalDelta =
+        (input.pressed(InputAction::MoveRight) ? 1 : 0) -
+        (input.pressed(InputAction::MoveLeft) ? 1 : 0);
+    if (horizontalDelta != 0) {
+        if (ui.navigationActive()) {
+            const bool stayedAtBoundary = state.selectedColumn == previousColumn &&
+                ((horizontalDelta < 0 && previousColumn == OperationSettingsColumnKeyboardMouse) ||
+                    (horizontalDelta > 0 && previousColumn == OperationSettingsColumnGamepad));
+            if (navigationFocusedTableCell && stayedAtBoundary) {
+                result.categoryDelta = horizontalDelta;
+            }
+        } else if (!moveOperationSettingsTableColumn(state, horizontalDelta)) {
+            result.categoryDelta = horizontalDelta;
+        } else {
+            keyboardSelectionChanged = true;
+        }
     }
 
     for (int row = 0; row < rowCount; ++row) {
@@ -3318,24 +3436,24 @@ UiSelectableTableResult updateOperationSettingsTableClickSelection(
             if (ui.pressed(cellRect)) {
                 const bool sameRow = state.selectedRow == row;
                 state.selectedRow = row;
-                result.pressedRow = row;
+                result.selection.pressedRow = row;
                 if (column >= OperationSettingsColumnKeyboardMouse) {
                     if (sameRow && state.selectedColumn == column) {
-                        result.pressedColumn = column;
+                        result.selection.pressedColumn = column;
                     }
                     state.selectedColumn = column;
                 } else {
-                    result.pressedColumn = OperationSettingsColumnAction;
+                    result.selection.pressedColumn = OperationSettingsColumnAction;
                 }
             }
         }
     }
 
-    result.selectionChanged = state.selectedRow != previousRow || state.selectedColumn != previousColumn;
+    result.selection.selectionChanged = state.selectedRow != previousRow || state.selectedColumn != previousColumn;
     ui.emitCursorMoveIfChanged(
         previousRow * columnCount + previousColumn,
         state.selectedRow * columnCount + state.selectedColumn);
-    if (keyboardSelectionChanged || result.pressedRow >= 0) {
+    if (keyboardSelectionChanged || result.selection.pressedRow >= 0) {
         keepUiSelectableTableCellVisible(rect, state.selectedRow, rowCount, state.scrollOffset, style);
     }
     return result;
@@ -3450,14 +3568,16 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         case RingPresetMenuAction::None:
             break;
         }
-        ui.emitSound(succeeded ? UiSoundEvent::Confirm : UiSoundEvent::Cancel);
+        ui.emitActionResult(succeeded);
     };
     const int presetSlotCount = unlockedRingPresetSlotCount();
     const auto activateRingPresetButton = [this,
+                                           &ui,
                                            &clearRingTransientUi,
                                            &performRingPresetAction,
                                            presetSlotCount](RingPresetMenuAction action, UiRect buttonRect) {
         if (presetSlotCount <= 0) {
+            ui.rejectAction();
             return;
         }
         if (presetSlotCount == 1) {
@@ -3609,7 +3729,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
                 discardRequests,
                 ringStatus_);
             (void)discardRequests;
-            ui.emitSound(discarded ? UiSoundEvent::ItemUse : UiSoundEvent::Cancel);
+            ui.emitActionResult(discarded, UiSoundEvent::ItemUse);
             ringDiscardConfirmItemIndex_ = -1;
         } else if (result == UiConfirmDialogResult::Cancelled) {
             ringDiscardConfirmItemIndex_ = -1;
@@ -3660,6 +3780,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
                 ringStatus_.clear();
             } else {
                 ringStatus_ = ringPlacementUnavailableStatus(inventory_, spellRing_);
+                ui.rejectAction();
             }
         } else if (ringCommandItemIndex_ >= 0) {
             ringSlotSelection_ = ringCommandItemIndex_;
@@ -3671,16 +3792,16 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
             case RingCommandAction::Move:
                 commandSucceeded = beginRingItemMove(ringSlotSelection_);
                 if (!commandSucceeded) {
-                    ui.emitSound(UiSoundEvent::Cancel);
+                    ui.rejectAction();
                 }
                 break;
             case RingCommandAction::Remove:
                 commandSucceeded = removeRingItemToInventory(items, ringSlotSelection_, inventory_, objectCatalog_, ringStatus_);
-                ui.emitSound(commandSucceeded ? UiSoundEvent::ItemMove : UiSoundEvent::Cancel);
+                ui.emitActionResult(commandSucceeded, UiSoundEvent::ItemMove);
                 break;
             case RingCommandAction::ToggleProtection:
                 commandSucceeded = toggleRingItemProtection(items, ringSlotSelection_, ringStatus_);
-                ui.emitSound(commandSucceeded ? UiSoundEvent::Confirm : UiSoundEvent::Cancel);
+                ui.emitActionResult(commandSucceeded);
                 break;
             case RingCommandAction::Discard:
             {
@@ -3707,11 +3828,13 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
                     if (commandSucceeded) {
                         spawnInventoryDiscardRequests(std::move(discardRequests));
                     }
-                    ui.emitSound(commandSucceeded ? UiSoundEvent::ItemUse : UiSoundEvent::Cancel);
+                    ui.emitActionResult(commandSucceeded, UiSoundEvent::ItemUse);
                 }
                 break;
             }
             }
+        } else {
+            ui.rejectAction();
         }
         ringCommandItemIndex_ = -1;
         ringCommandPlaceActive_ = false;
@@ -3733,6 +3856,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         if (firstSlot < 0) {
             ringPlaceModeActive_ = false;
             ringStatus_ = ringPlacementUnavailableStatus(inventory_, spellRing_);
+            ui.rejectAction();
             ui.block(ringPanelRect());
             return;
         }
@@ -3751,7 +3875,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         const int previousRingPlaceSelection = ringPlaceSelection_;
         const auto tryPlaceSelection = [&]() {
             if (!ringPlaceSlotEnabled(inventory_, spellRing_, ringPlaceSelection_, ringPlaceTargetAngle_)) {
-                ui.emitSound(UiSoundEvent::Cancel);
+                ui.rejectAction();
                 ringStatus_ = "このアイテムは配置できないよ";
                 return;
             }
@@ -3768,7 +3892,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
                 ringStatus_ = "リングに配置したよ";
                 ui.emitSound(UiSoundEvent::Equip);
             } else {
-                ui.emitSound(UiSoundEvent::Cancel);
+                ui.rejectAction();
                 ringStatus_ = ringPlacementUnavailableStatus(inventory_, spellRing_);
             }
         };
@@ -3810,14 +3934,13 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
             if (enabled && ui.selectionFocused(rect)) {
                 ringPlaceSelection_ = i;
             }
-            if (input.mouseLeftPressed() && rect.contains(ui.mouse()) && !ui.pointerConsumed()) {
-                ui.consumePointer();
+            if (ui.pressed(rect)) {
                 if (enabled) {
                     ringPlaceSelection_ = i;
                     ui.emitCursorMoveIfChanged(previousRingPlaceSelection, ringPlaceSelection_);
                     tryPlaceSelection();
                 } else if (inventory_.hasScreenItemAt(i)) {
-                    ui.emitSound(UiSoundEvent::Cancel);
+                    ui.rejectAction();
                     ringStatus_ = "このアイテムは配置できないよ";
                 }
                 ui.block(ringPanelRect());
@@ -3873,7 +3996,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
                 ui.emitSound(UiSoundEvent::ItemMove);
                 ringStatus_.clear();
             } else {
-                ui.emitSound(UiSoundEvent::Cancel);
+                ui.rejectAction();
                 ringStatus_ = "その位置には移動できないよ";
             }
         }
@@ -3894,12 +4017,11 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         };
         ringTabRects[static_cast<std::size_t>(i)] = ringTabRect(i, ringCount);
     }
-    UiTabsInput ringTabsInput{};
-    ringTabsInput.focusDelta = input.activeRingDelta();
+    UiTabsInput ringTabsInput = makeUiCycleTabsInput(input, ringCount);
     if (ringTabsInput.focusDelta != 0) {
         ringTabsInput.directFocusIndex = spellRing_.activeRingIndex();
     }
-    ringTabsInput.commit = ringTabsInput.focusDelta != 0 ||
+    ringTabsInput.commit = ringTabsInput.commit ||
         (!ui.navigationActive() && (input.confirmPressed() || input.useItemPressed()));
     const int ringTabSelection = updateUiTabs(
         ringTabs_,
@@ -3948,7 +4070,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
             ringSlotSelection_ = std::clamp(ringSlotSelection_, 0, static_cast<int>(items.size()) - 1);
             ringStatus_ = "等間隔に整列したよ";
         } else {
-            ui.emitSound(UiSoundEvent::Cancel);
+            ui.rejectAction();
             ringStatus_ = "アイテム未配置だよ";
         }
         ui.block(ringPanelRect());
@@ -3964,9 +4086,9 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         ringItemMoveModeActive_ = false;
         ringItemMoveIndex_ = -1;
         ringDetailShowsRing_ = false;
-        ui.emitSound(removeAllRingItemsToInventory(items, ringSlotSelection_, inventory_, objectCatalog_, ringStatus_)
-            ? UiSoundEvent::ItemMove
-            : UiSoundEvent::Cancel);
+        ui.emitActionResult(
+            removeAllRingItemsToInventory(items, ringSlotSelection_, inventory_, objectCatalog_, ringStatus_),
+            UiSoundEvent::ItemMove);
         ui.block(ringPanelRect());
         return;
     }
@@ -4124,20 +4246,18 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     (void)actualRing;
 
     if (input.grabOrPlacePressed()) {
-        ui.emitSound(beginRingItemMove(ringSlotSelection_)
-            ? UiSoundEvent::ItemMove
-            : UiSoundEvent::Cancel);
+        ui.emitActionResult(beginRingItemMove(ringSlotSelection_), UiSoundEvent::ItemMove);
         return;
     }
 
     if (input.addRingPressed()) {
         ringDetailShowsRing_ = false;
         if (ringSlotSelection_ < static_cast<int>(items.size())) {
-            ui.emitSound(removeRingItemToInventory(items, ringSlotSelection_, inventory_, objectCatalog_, ringStatus_)
-                ? UiSoundEvent::ItemMove
-                : UiSoundEvent::Cancel);
+            ui.emitActionResult(
+                removeRingItemToInventory(items, ringSlotSelection_, inventory_, objectCatalog_, ringStatus_),
+                UiSoundEvent::ItemMove);
         } else {
-            ui.emitSound(UiSoundEvent::Cancel);
+            ui.rejectAction();
             ringStatus_ = "アイテム未選択";
         }
         return;
@@ -4146,11 +4266,9 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     if (input.pressed(InputAction::ToggleProtection)) {
         ringDetailShowsRing_ = false;
         if (ringSlotSelection_ < static_cast<int>(items.size())) {
-            ui.emitSound(toggleRingItemProtection(items, ringSlotSelection_, ringStatus_)
-                ? UiSoundEvent::Confirm
-                : UiSoundEvent::Cancel);
+            ui.emitActionResult(toggleRingItemProtection(items, ringSlotSelection_, ringStatus_));
         } else {
-            ui.emitSound(UiSoundEvent::Cancel);
+            ui.rejectAction();
             ringStatus_ = "アイテム未選択";
         }
         return;
@@ -4168,7 +4286,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
                 ringSlotSelection_,
                 uiCommandMenuAnchorForSlot(selectedItemRect));
         } else {
-            ui.emitSound(UiSoundEvent::Cancel);
+            ui.rejectAction();
             ringStatus_ = "アイテム未選択";
         }
     }
@@ -4177,6 +4295,11 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
 void Game::prepareOptionsMenu()
 {
     optionsPage_ = OptionsPageVideo;
+    audioSettingsTabs_ = {};
+    videoSettingsTabs_ = {};
+    optionsSliderUiState() = {};
+    operationSettingsHoveredRow_ = -1;
+    operationSettingsHoveredColumn_ = -1;
     closeUiCommandMenu(operationSettingsCommandMenu_);
     operationSettingsCapture_.cancel();
     operationSettingsConflictConfirm_ = {};
@@ -4399,6 +4522,12 @@ bool Game::handleOperationSettingsEvent(const SDL_Event& event)
 
 void Game::updateOperationSettings(const Input& input, UiContext& ui)
 {
+    const int previousHoveredCell =
+        operationSettingsHoveredRow_ >= 0 && operationSettingsHoveredColumn_ >= 0
+        ? operationSettingsHoveredRow_ * OperationSettingsColumnCount + operationSettingsHoveredColumn_
+        : -1;
+    operationSettingsHoveredRow_ = -1;
+    operationSettingsHoveredColumn_ = -1;
     if (!optionsSettingsLoaded_ || !operationSettingsLoaded_) {
         loadOptionsSettings();
     }
@@ -4432,10 +4561,9 @@ void Game::updateOperationSettings(const Input& input, UiContext& ui)
     }
 
     if (operationSettingsCapture_.active()) {
-        if (ui.pressed(uiCancelButtonRect(operationSettingsDialogRect()))) {
+        if (uiCancelControlRequested(input, ui, operationSettingsDialogRect())) {
             operationSettingsCapture_.cancel();
             clearOperationSettingsPendingEdit();
-            ui.emitSound(UiSoundEvent::Cancel);
             ui.block(panel);
             return;
         }
@@ -4472,15 +4600,6 @@ void Game::updateOperationSettings(const Input& input, UiContext& ui)
         return;
     }
 
-    const int categoryDelta = input.mouseWheelDelta() == 0 ? input.shortcutCursorDelta() : 0;
-    if (categoryDelta != 0) {
-        operationSettingsCategory_ =
-            (operationSettingsCategory_ + categoryDelta + OperationSettingsCategoryCount) % OperationSettingsCategoryCount;
-        operationSettingsTable_.selectedRow = 0;
-        operationSettingsTable_.scrollOffset = 0.0f;
-        ui.emitSound(UiSoundEvent::TabSwitch);
-    }
-
     std::array<UiTabItem, OperationSettingsCategoryCount> tabItems{};
     for (int i = 0; i < OperationSettingsCategoryCount; ++i) {
         tabItems[static_cast<std::size_t>(i)] = {OperationSettingsCategoryLabels[i], true};
@@ -4511,7 +4630,7 @@ void Game::updateOperationSettings(const Input& input, UiContext& ui)
     }
 
     const auto columns = operationSettingsTableColumns();
-    const UiSelectableTableResult tableResult = updateOperationSettingsTableClickSelection(
+    const OperationSettingsTableUpdateResult tableUpdate = updateOperationSettingsTableClickSelection(
         operationSettingsTable_,
         ui,
         input,
@@ -4519,7 +4638,41 @@ void Game::updateOperationSettings(const Input& input, UiContext& ui)
         static_cast<int>(rows.size()),
         columns.data(),
         static_cast<int>(columns.size()),
-        operationSettingsTableStyle());
+        operationSettingsTableStyle(),
+        operationSettingsHoveredRow_,
+        operationSettingsHoveredColumn_);
+    const UiSelectableTableResult& tableResult = tableUpdate.selection;
+    if (tableUpdate.categoryDelta != 0) {
+        operationSettingsCategory_ =
+            (operationSettingsCategory_ + tableUpdate.categoryDelta + OperationSettingsCategoryCount) %
+            OperationSettingsCategoryCount;
+        operationSettingsTable_.selectedRow = 0;
+        operationSettingsTable_.scrollOffset = 0.0f;
+        if (ui.navigationActive()) {
+            const UiSelectableTableLayout firstRowLayout = makeUiSelectableTableLayout(
+                table,
+                1,
+                operationSettingsTable_.scrollOffset,
+                operationSettingsTableStyle());
+            ui.setNavigationFocus(uiSelectableTableCellRect(
+                firstRowLayout,
+                columns.data(),
+                static_cast<int>(columns.size()),
+                operationSettingsTable_.selectedRow,
+                operationSettingsTable_.selectedColumn,
+                operationSettingsTableStyle()));
+        }
+        ui.emitSound(UiSoundEvent::TabSwitch);
+        ui.block(panel);
+        return;
+    }
+    const int hoveredCell =
+        operationSettingsHoveredRow_ >= 0 && operationSettingsHoveredColumn_ >= 0
+        ? operationSettingsHoveredRow_ * OperationSettingsColumnCount + operationSettingsHoveredColumn_
+        : -1;
+    if (hoveredCell >= 0 && hoveredCell != previousHoveredCell) {
+        ui.emitSound(UiSoundEvent::CursorMove);
+    }
 
     const bool tableCommitted =
         tableResult.pressedColumn >= OperationSettingsColumnKeyboardMouse ||
@@ -4603,16 +4756,47 @@ void Game::updateAudioSettings(const Input& input, UiContext& ui)
         applyOptionsSettings(std::string(audioSettingsRowLabel(row)) + " 音量 " + volumePercentText(audioSettingsRowValue(optionsSettings_, row)));
     };
 
+    bool keyboardAdjusted = false;
     if (settingsRowFocused && input.pressed(InputAction::MoveLeft)) {
         applyAudioRow(audioSettingsSelection_, audioSettingsRowValue(optionsSettings_, audioSettingsSelection_) - 0.05f);
         ui.emitSound(UiSoundEvent::Confirm);
+        keyboardAdjusted = true;
     }
     if (settingsRowFocused && input.pressed(InputAction::MoveRight)) {
         applyAudioRow(audioSettingsSelection_, audioSettingsRowValue(optionsSettings_, audioSettingsSelection_) + 0.05f);
         ui.emitSound(UiSoundEvent::Confirm);
+        keyboardAdjusted = true;
     }
 
-    const UiVerticalTabPressResult pressedTab = pressedVerticalTab(
+    int interactingSlider = -1;
+    OptionsSliderUiState& sliderState = optionsSliderUiState();
+    for (int row = 0; row < AudioSettingsRowCount; ++row) {
+        UiSliderState& state = sliderState.audio[static_cast<std::size_t>(row)];
+        const UiSliderResult result = updateUiSlider(
+            ui,
+            input,
+            audioSettingsSliderRect(row),
+            audioSettingsRowValue(optionsSettings_, row) * 100.0f,
+            audioSettingsSliderSpec(),
+            state);
+        if (result.changed) {
+            applyAudioRow(row, result.value / 100.0f);
+        }
+        if (result.interacting) {
+            audioSettingsSelection_ = row;
+            interactingSlider = row;
+        }
+    }
+    if (keyboardAdjusted) {
+        sliderState.audio[static_cast<std::size_t>(audioSettingsSelection_)].showValue();
+    }
+    if (interactingSlider >= 0) {
+        ui.emitCursorMoveIfChanged(previousSelection, audioSettingsSelection_);
+        return;
+    }
+
+    const UiVerticalTabPressResult pressedTab = updateOptionsVerticalTab(
+        audioSettingsTabs_,
         ui,
         tabItems.data(),
         tabRects.data(),
@@ -4622,18 +4806,6 @@ void Game::updateAudioSettings(const Input& input, UiContext& ui)
         audioSettingsSelection_ = pressedTab.index;
         ui.emitCursorMoveIfChanged(previousSelection, audioSettingsSelection_);
         return;
-    }
-
-    for (int row = 0; row < AudioSettingsRowCount; ++row) {
-        const UiRect sliderRect = audioSettingsSliderRect(row);
-        if (input.mouseLeftHeld() && sliderRect.contains(ui.mouse()) && !ui.pointerConsumed()) {
-            audioSettingsSelection_ = row;
-            const float value = clamp((ui.mouse().x - sliderRect.pos.x) / std::max(1.0f, sliderRect.size.x), 0.0f, 1.0f);
-            applyAudioRow(row, value);
-            ui.consumePointer();
-            ui.emitCursorMoveIfChanged(previousSelection, audioSettingsSelection_);
-            return;
-        }
     }
 
     ui.emitCursorMoveIfChanged(previousSelection, audioSettingsSelection_);
@@ -4678,40 +4850,50 @@ void Game::updateVideoSettings(const Input& input, UiContext& ui)
         cycleVideoSetting(optionsSettings_, row, delta);
         applyOptionsSettings(std::string(videoSettingsRowLabel(row)) + " " + videoSettingsRowValueText(optionsSettings_, row));
     };
-    const auto applyBrightnessSlider = [&](float normalizedValue) {
-        const float value = MinScreenBrightness +
-            (MaxScreenBrightness - MinScreenBrightness) * clamp(normalizedValue, 0.0f, 1.0f);
-        setScreenBrightnessValue(optionsSettings_, value);
+    const auto applyBrightnessSlider = [&](float percent) {
+        setScreenBrightnessValue(optionsSettings_, percent / 100.0f);
         applyOptionsSettings(
             std::string(videoSettingsRowLabel(VideoSettingsRowBrightness)) + " " +
             videoSettingsRowValueText(optionsSettings_, VideoSettingsRowBrightness));
     };
 
+    bool keyboardAdjustedBrightness = false;
     if (settingsRowFocused && input.pressed(InputAction::MoveLeft)) {
         applyVideoRow(videoSettingsSelection_, -1);
         ui.emitSound(UiSoundEvent::Confirm);
+        keyboardAdjustedBrightness = videoSettingsSelection_ == VideoSettingsRowBrightness;
     }
     if (settingsRowFocused &&
         (input.pressed(InputAction::MoveRight) ||
             (!ui.navigationActive() && (input.confirmPressed() || input.useItemPressed())))) {
         applyVideoRow(videoSettingsSelection_, 1);
         ui.emitSound(UiSoundEvent::Confirm);
+        keyboardAdjustedBrightness = videoSettingsSelection_ == VideoSettingsRowBrightness;
     }
 
     const UiRect brightnessSlider = videoBrightnessSliderRect();
-    if (input.mouseLeftHeld() &&
-        brightnessSlider.contains(ui.mouse()) &&
-        !ui.pointerConsumed()) {
+    OptionsSliderUiState& sliderState = optionsSliderUiState();
+    const UiSliderResult brightnessResult = updateUiSlider(
+        ui,
+        input,
+        brightnessSlider,
+        clampedScreenBrightness(optionsSettings_.presentation.brightness) * 100.0f,
+        screenBrightnessSliderSpec(),
+        sliderState.brightness);
+    if (brightnessResult.changed) {
+        applyBrightnessSlider(brightnessResult.value);
+    }
+    if (keyboardAdjustedBrightness) {
+        sliderState.brightness.showValue();
+    }
+    if (brightnessResult.interacting) {
         videoSettingsSelection_ = VideoSettingsRowBrightness;
-        applyBrightnessSlider(
-            (ui.mouse().x - brightnessSlider.pos.x) /
-            std::max(1.0f, brightnessSlider.size.x));
-        ui.consumePointer();
         ui.emitCursorMoveIfChanged(previousSelection, videoSettingsSelection_);
         return;
     }
 
-    const UiVerticalTabPressResult pressedTab = pressedVerticalTab(
+    const UiVerticalTabPressResult pressedTab = updateOptionsVerticalTab(
+        videoSettingsTabs_,
         ui,
         tabItems.data(),
         tabRects.data(),
@@ -4751,20 +4933,18 @@ void Game::updateOptionsMenu(const Input& input, UiContext& ui)
         loadOptionsSettings();
     }
 
+    const auto dismissSliderValueBubbles = [] {
+        optionsSliderUiState() = {};
+    };
     const bool operationModalOpen = optionsPage_ == OptionsPageOperation &&
         (operationSettingsCapture_.active() ||
             operationSettingsConflictConfirm_.open ||
             operationSettingsResetAllConfirm_.open);
     if (!operationModalOpen) {
-        int pageDelta = 0;
-        if (input.pressed(InputAction::PreviousActiveRing)) {
-            --pageDelta;
-        }
-        if (input.pressed(InputAction::NextActiveRing)) {
-            ++pageDelta;
-        }
+        const int pageDelta = uiCycleInputDelta(input, OptionsPageCount);
         if (pageDelta != 0) {
             optionsPage_ = (optionsPage_ + pageDelta + OptionsPageCount) % OptionsPageCount;
+            dismissSliderValueBubbles();
             optionsStatus_.clear();
             ui.emitSound(UiSoundEvent::TabSwitch);
         }
@@ -4782,6 +4962,7 @@ void Game::updateOptionsMenu(const Input& input, UiContext& ui)
             tabRects.data());
         if (selectedTab >= 0 && selectedTab != optionsPage_) {
             optionsPage_ = selectedTab;
+            dismissSliderValueBubbles();
             optionsStatus_.clear();
         }
     }
@@ -4999,12 +5180,13 @@ void Game::updateFirstItemAcquisitionNotice(const Input& input, UiContext& ui)
     if (objectNotice && input.pressed(InputAction::ToggleProtection)) {
         if (instanceProtectable) {
             const bool protectedNow = inventory_.objectInstanceProtectionEnabled(notice.instanceId).value_or(false);
-            if (inventory_.setObjectInstanceProtection(notice.instanceId, !protectedNow)) {
-                ui.emitSound(UiSoundEvent::Confirm);
+            const bool changed = inventory_.setObjectInstanceProtection(notice.instanceId, !protectedNow);
+            ui.emitActionResult(changed);
+            if (changed) {
                 notice.statusText.clear();
             }
         } else {
-            ui.emitSound(UiSoundEvent::Cancel);
+            ui.rejectAction();
             notice.statusText = "個体アイテムのみ保護できます";
         }
     }
@@ -5026,7 +5208,7 @@ void Game::updateFirstItemAcquisitionNotice(const Input& input, UiContext& ui)
             closeFirstItemAcquisitionNotice();
             return;
         }
-        ui.emitSound(UiSoundEvent::Cancel);
+        ui.rejectAction();
         notice.statusText = status.empty() ? "リングへ配置できないよ" : status;
     }
 
@@ -5094,7 +5276,7 @@ bool Game::updateRingStatusHud(UiContext& ui, float dt)
             switchActiveRingWithLog(ringIndex - spellRing_.activeRingIndex());
         } else if (ringStatusHudLeftCircleContains(panel, pointer)) {
             if (!spellRing_.tryThrowActiveRing(player_, balance_)) {
-                ui.emitSound(UiSoundEvent::Cancel);
+                ui.rejectAction();
             }
         }
         break;
@@ -5332,7 +5514,7 @@ void Game::renderTitleScreen(Renderer& renderer) const
     if (titleMenuPage_ == TitleMenuPage::Options) {
         UiCancelControlScope cancelScope(titleCancelState_);
         const char* help = optionsPage_ == OptionsPageOperation
-            ? "Z/X 設定切替  {shortcut} 分類切替  ↑/↓ 行選択  ←/→ 列選択  F/Enter 割当操作  Esc 戻る"
+            ? "Z/X 設定切替  ↑/↓ 行選択  ←/→ 列選択（端で分類切替）  F/Enter 割当操作  Esc 戻る"
             : (optionsPage_ == OptionsPageAudio
                 ? "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 音量変更  Esc 戻る"
                 : "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 変更  F/Enter 切替  Esc 戻る");
@@ -5395,6 +5577,10 @@ void Game::renderTitleScreen(Renderer& renderer) const
     promptStyle.iconHeight = 36.0f;
     const UiRect promptRect = titleStartPromptRect();
     registerUiNavigationTarget(promptRect, UiNavigationRole::Control, true);
+    UiControlMotionScope promptMotion(
+        renderer,
+        promptRect,
+        UiControlMotion::HoverAndPress);
     const Vec2 promptSize = measureInputHelpText(renderer, prompt, promptStyle);
     drawInputHelpText(
         renderer,
@@ -5702,6 +5888,10 @@ void Game::renderRingStatusHud(Renderer& renderer) const
     char buffer[96];
     for (int ringIndex = 0; ringIndex < unlockedRingCount; ++ringIndex) {
         const UiRect panel = ringStatusHudRect(ringIndex, unlockedRingCount);
+        UiControlMotionScope panelMotion(
+            renderer,
+            panel,
+            UiControlMotion::HoverAndPress);
         const bool active = ringIndex == spellRing_.activeRingIndex();
 
         if (canDrawImage) {
@@ -5745,7 +5935,11 @@ void Game::renderRingStatusHud(Renderer& renderer) const
             buffer,
             RingStatusHudWeightColor,
             2);
-        drawRingStatusHudWeightGauge(renderer, panel.pos, weight, weightLimit);
+        drawRingWeightGauge(
+            renderer,
+            {panel.pos + RingStatusHudWeightGaugeRect.pos, RingStatusHudWeightGaugeRect.size},
+            weight,
+            weightLimit);
     }
 }
 
@@ -5765,8 +5959,15 @@ void Game::renderFirstItemAcquisitionNotice(Renderer& renderer, float animationS
     renderer.setScreenSpace();
     const UiRect screen{{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}};
     const UiRect panel = firstItemAcquisitionNoticeRect(camera_.width(), camera_.height());
+    UiModalNavigationScope navigationScope(panel);
     const std::optional<bool> protection =
         objectNotice && notice.protectable ? inventory_.objectInstanceProtectionEnabled(notice.instanceId) : std::nullopt;
+    std::optional<InventoryUiItemStats> itemStats;
+    if (objectNotice) {
+        if (const InventoryObjectInstance* instance = inventory_.objectInstanceById(notice.instanceId)) {
+            itemStats = inventoryUiStatsFromInstance(instance->instance);
+        }
+    }
     const bool canProtect = protection.has_value();
     const char* helpText = objectNotice
         ? (canProtect
@@ -5783,7 +5984,7 @@ void Game::renderFirstItemAcquisitionNotice(Renderer& renderer, float animationS
         baseBookshelfActive_ ||
         baseMiningStartChoiceActive_ ||
         baseResultDialog_.open ||
-        baseStorageQuantityDialog_.open ||
+        baseQuantityDialog_.open ||
         baseRegenerateConfirm_.open ||
         baseBrokenRingDepartureConfirm_.open);
     const bool noticeOverlapsUi =
@@ -5822,10 +6023,16 @@ void Game::renderFirstItemAcquisitionNotice(Renderer& renderer, float animationS
     if (objectNotice) {
         ObjectImageDrawOptions imageOptions;
         imageOptions.allowUpscale = true;
-        imageOptions.selectedOutlineEnabled = protection.value_or(false);
         if (!drawItemImage(renderer, *object, imageCenter, {100.0f, 100.0f}, imageOptions)) {
             renderer.fillCircle(imageCenter, 38.0f, inventoryUiObjectColor(*object));
             renderer.drawCircle(imageCenter, 42.0f, {255, 255, 255, 210});
+        }
+        if (protection.value_or(false)) {
+            constexpr Vec2 ProtectionIconAreaSize{100.0f, 100.0f};
+            drawInventoryUiProtectionIcon(
+                renderer,
+                {imageCenter - ProtectionIconAreaSize * 0.5f, ProtectionIconAreaSize},
+                InventoryUiProtectionIconStyle{.size = 24.0f});
         }
     } else if (notice.kind == AcquisitionNoticeKind::Material) {
         if (!drawWorldIcon(renderer, materialWorldIcon(notice.materialType), imageCenter, {92.0f, 92.0f})) {
@@ -5844,13 +6051,9 @@ void Game::renderFirstItemAcquisitionNotice(Renderer& renderer, float animationS
     std::string rawNameText;
     std::string descriptionText;
     std::string subText;
-    std::optional<InventoryUiItemStats> itemStats;
     if (objectNotice) {
         rawNameText = object->name;
         descriptionText = object->description.empty() ? "-" : object->description;
-        if (const InventoryObjectInstance* instance = inventory_.objectInstanceById(notice.instanceId)) {
-            itemStats = inventoryUiStatsFromInstance(instance->instance);
-        }
     } else if (notice.kind == AcquisitionNoticeKind::Material) {
         rawNameText = std::string(materialTypeDisplayName(notice.materialType)) + " x" + std::to_string(std::max(1, notice.amount));
         descriptionText = "魔女からのお礼";
@@ -5933,7 +6136,7 @@ void Game::renderFirstItemAcquisitionNotice(Renderer& renderer, float animationS
             {255, 210, 160, 255},
             2);
     }
-    drawUiButton(renderer, okButton, "OK", true, uiActionButtonStyle());
+    drawUiButton(renderer, okButton, "OK", false, uiActionButtonStyle());
 }
 
 void Game::appendCaptureAbsorbRenderEntries(
@@ -6168,6 +6371,10 @@ void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSourc
     renderer.setScreenSpace();
 
     const UiRect minimapRect = dungeonMinimapRect();
+    UiControlMotionScope minimapMotion(
+        renderer,
+        minimapRect,
+        UiControlMotion::HoverAndPress);
     const float minimapDiameter = minimapRect.size.x;
     const float minimapRadius = minimapDiameter * 0.5f;
     const float contentRadius = std::max(32.0f, minimapRadius - DungeonMinimapEdgeInset);
@@ -6421,6 +6628,7 @@ void Game::renderDungeonMapOverlay(Renderer& renderer, const std::vector<LightSo
     drawUiModalBackdrop(renderer, {{0.0f, 0.0f}, {screenWidth, screenHeight}}, {0, 0, 0, 176});
 
     const UiRect panel = dungeonMapOverlayPanelRect();
+    UiExclusiveNavigationScope navigationScope(panel);
     UiWindowScope window(
         renderer,
         "dungeon.map_overlay",
@@ -6651,12 +6859,14 @@ void Game::renderDungeonMapOverlay(Renderer& renderer, const std::vector<LightSo
     if (maxScroll.y > 0.0f) {
         const UiRect track = dungeonMapOverlayVerticalScrollTrackRect();
         const UiRect thumb = dungeonMapOverlayVerticalScrollThumbRect();
+        UiControlMotionScope motion(renderer, track, UiControlMotion::HoverAndPress);
         renderer.fillRect(track.pos, track.size, {0, 0, 0, 96});
         renderer.fillRect(thumb.pos, thumb.size, {154, 178, 208, 190});
     }
     if (maxScroll.x > 0.0f) {
         const UiRect track = dungeonMapOverlayHorizontalScrollTrackRect();
         const UiRect thumb = dungeonMapOverlayHorizontalScrollThumbRect();
+        UiControlMotionScope motion(renderer, track, UiControlMotion::HoverAndPress);
         renderer.fillRect(track.pos, track.size, {0, 0, 0, 96});
         renderer.fillRect(thumb.pos, thumb.size, {154, 178, 208, 190});
     }
@@ -6937,11 +7147,7 @@ void Game::renderWorldLoadingScreen(Renderer& renderer, float totalSeconds) cons
     loadingGaugeStyle.trackInner = {30, 38, 52, 220};
     loadingGaugeStyle.trackOuter = {218, 228, 244, 78};
     loadingGaugeStyle.shadow = {0, 0, 0, 105};
-    loadingGaugeStyle.tick = {255, 255, 255, 32};
     loadingGaugeStyle.highlight = {255, 255, 255, 118};
-    loadingGaugeStyle.capGlow = {132, 230, 250, 78};
-    loadingGaugeStyle.capCore = {246, 252, 255, 225};
-    loadingGaugeStyle.tickCount = 8;
     loadingGaugeStyle.shimmer = {255, 255, 255, 76};
     loadingGaugeStyle.shimmerPhase =
         std::fmod(std::max(0.0f, totalSeconds) * 116.0f, BarW + loadingGaugeStyle.shimmerWidth) /
@@ -7056,8 +7262,14 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     drawMagicOrbitPath(renderer, orbitPath, orbitCenter, orbitOptions);
     for (int i = 0; i < static_cast<int>(items.size()); ++i) {
         const SpellRingItem& item = items[static_cast<std::size_t>(i)];
+        const UiRect itemRect = ringItemUiRect(
+            item,
+            spellRing_,
+            balance_,
+            i,
+            static_cast<int>(items.size()));
         registerUiNavigationTarget(
-            ringItemUiRect(item, spellRing_, balance_, i, static_cast<int>(items.size())),
+            itemRect,
             UiNavigationRole::Control,
             i == ringSlotSelection_);
         float displayAngle = item.localAngle;
@@ -7080,14 +7292,16 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
         if (lengthSquared(forward) <= 0.0001f) {
             forward = {1.0f, 0.0f};
         }
-        const bool selected = i == ringSlotSelection_;
+        const bool current = i == ringSlotSelection_;
+        const bool selected = uiControlVisualState(itemRect).selected;
         const bool moveMode = ringItemMoveModeActive_ && i == ringItemMoveIndex_;
-        const bool invalidDragPosition = selected && ringDragActive_ && !spellRing_.canPlaceItemAtAngle(i, displayAngle);
+        const bool emphasized = selected || moveMode;
+        const bool invalidDragPosition = current && ringDragActive_ && !spellRing_.canPlaceItemAtAngle(i, displayAngle);
         const ItemData* object = objectForRingItem(objectCatalog_, item);
         if (previewStyle.radialGuides && activeShape != RingShape::FigureEight) {
             const Color angleLineColor = moveMode
                 ? Color{255, 142, 42, 150}
-                : (selected ? Color{255, 230, 150, 120} : Color{94, 102, 128, 85});
+                : (emphasized ? Color{255, 230, 150, 120} : Color{94, 102, 128, 85});
             const Vec2 radial = itemAnchor - orbitCenter;
             Vec2 tangent = normalize(Vec2{-radial.y, radial.x});
             if (lengthSquared(tangent) <= 0.0001f) {
@@ -7097,13 +7311,31 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
             renderer.drawLine(orbitCenter + tangent * AngleLineHalfWidthPx, itemAnchor + tangent * AngleLineHalfWidthPx, angleLineColor);
             renderer.drawLine(orbitCenter - tangent * AngleLineHalfWidthPx, itemAnchor - tangent * AngleLineHalfWidthPx, angleLineColor);
         }
-        drawRingItemShape(renderer, displayItem, object, itemCenter, outward, forward, totalTime, selected, invalidDragPosition, moveMode);
-        std::snprintf(buffer, sizeof(buffer), "%d", i + 1);
-        renderer.drawText(
-            itemCenter + Vec2{-5.0f, 22.0f},
-            buffer,
-            moveMode ? Color{255, 170, 82, 255} : (selected ? Color{255, 230, 150, 255} : Color{174, 182, 198, 255}),
-            1);
+        {
+            UiControlMotionScope motion(renderer, itemRect, UiControlMotion::PressOnly);
+            drawRingItemShape(
+                renderer,
+                displayItem,
+                object,
+                itemCenter,
+                outward,
+                forward,
+                totalTime,
+                emphasized,
+                invalidDragPosition,
+                moveMode,
+                true,
+                1.0f,
+                &encyclopedia_);
+            std::snprintf(buffer, sizeof(buffer), "%d", i + 1);
+            renderer.drawText(
+                itemCenter + Vec2{-5.0f, 22.0f},
+                buffer,
+                moveMode
+                    ? Color{255, 170, 82, 255}
+                    : (selected ? Color{255, 230, 150, 255} : Color{174, 182, 198, 255}),
+                1);
+        }
     }
 
     if (ringItemMoveModeActive_ &&
@@ -7284,7 +7516,8 @@ void Game::renderOperationSettings(Renderer& renderer) const
         const Vec2 textSize = renderer.measureText(columns[static_cast<std::size_t>(column)].label, tableStyle.headerTextScale);
         const Vec2 textPos{
             cell.pos.x + std::max(0.0f, (cell.size.x - textSize.x) * 0.5f),
-            cell.pos.y + std::max(0.0f, (cell.size.y - textSize.y) * 0.5f),
+            cell.pos.y + std::max(0.0f, (cell.size.y - textSize.y) * 0.5f) +
+                OperationSettingsTextOffsetY,
         };
         renderer.drawText(textPos, columns[static_cast<std::size_t>(column)].label, tableStyle.headerText, tableStyle.headerTextScale);
     }
@@ -7295,8 +7528,20 @@ void Game::renderOperationSettings(Renderer& renderer) const
         if (!uiScrollAreaRectVisible(tableLayout.scroll, rowRect)) {
             continue;
         }
-        const bool selectedRow = row == operationSettingsTable_.selectedRow;
-        if (selectedRow) {
+        bool focusedRow = false;
+        for (int column = OperationSettingsColumnKeyboardMouse;
+             column <= OperationSettingsColumnGamepad;
+             ++column) {
+            const UiRect cell = uiSelectableTableCellRect(
+                tableLayout,
+                columns.data(),
+                static_cast<int>(columns.size()),
+                row,
+                column,
+                tableStyle);
+            focusedRow = focusedRow || uiControlVisualState(cell).selected;
+        }
+        if (focusedRow) {
             renderer.fillRect(rowRect.pos, rowRect.size, tableStyle.rowFillHot);
         }
         for (int column = 0; column < OperationSettingsColumnCount; ++column) {
@@ -7307,14 +7552,21 @@ void Game::renderOperationSettings(Renderer& renderer) const
                 row,
                 column,
                 tableStyle);
-            const bool selectedCell = selectedRow && column == operationSettingsTable_.selectedColumn;
+            const bool preferredCell = row == operationSettingsTable_.selectedRow &&
+                column == operationSettingsTable_.selectedColumn;
+            const bool focusedCell = uiControlVisualState(cell).selected;
             if (columns[static_cast<std::size_t>(column)].enabled) {
                 registerUiNavigationTarget(
                     cell,
                     UiNavigationRole::Control,
-                    selectedCell);
+                    preferredCell);
             }
-            if (selectedCell) {
+            UiControlMotionScope motion(
+                renderer,
+                cell,
+                UiControlMotion::PressOnly,
+                columns[static_cast<std::size_t>(column)].enabled);
+            if (focusedCell) {
                 renderer.fillRect(cell.pos, cell.size, Color{56, 76, 154, 190});
             }
             if (column == OperationSettingsColumnAction) {
@@ -7380,6 +7632,7 @@ void Game::renderOperationSettings(Renderer& renderer) const
             {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
             {0, 0, 0, 120});
         const UiRect dialog = operationSettingsDialogRect();
+        UiExclusiveNavigationScope navigationScope(dialog);
         UiWindowScope captureWindow(
             renderer,
             "operation_settings.capture",
@@ -7422,12 +7675,13 @@ void Game::renderOperationSettings(Renderer& renderer) const
 
 void Game::renderAudioSettings(Renderer& renderer) const
 {
+    const OptionsSliderUiState& sliderState = optionsSliderUiState();
     const auto values = audioSettingsRowValueTexts(optionsSettings_);
     const auto tabItems = audioSettingsTabItems(values);
     const auto tabRects = audioSettingsRowRects();
     drawUiVerticalTabs(
         renderer,
-        UiTabsState{},
+        audioSettingsTabs_,
         audioSettingsSelection_,
         tabItems.data(),
         static_cast<int>(tabItems.size()),
@@ -7435,13 +7689,15 @@ void Game::renderAudioSettings(Renderer& renderer) const
         optionsVerticalTabStyle());
 
     for (int row = 0; row < AudioSettingsRowCount; ++row) {
-        const float value = audioSettingsRowValue(optionsSettings_, row);
+        const float value = audioSettingsRowValue(optionsSettings_, row) * 100.0f;
         const UiRect slider = audioSettingsSliderRect(row);
-        UiGaugeStyle gaugeStyle;
-        gaugeStyle.tickCount = 10;
-        gaugeStyle.fill.start = row == 0 ? Color{132, 230, 250, 230} : (row == 1 ? Color{160, 206, 255, 230} : Color{255, 206, 132, 230});
-        gaugeStyle.fill.end = row == 0 ? Color{190, 246, 220, 230} : (row == 1 ? Color{132, 230, 250, 230} : Color{255, 230, 150, 230});
-        drawUiGauge(renderer, slider, value, gaugeStyle);
+        drawUiSlider(
+            renderer,
+            slider,
+            value,
+            audioSettingsSliderSpec(),
+            sliderState.audio[static_cast<std::size_t>(row)],
+            audioSettingsSliderStyle(row));
     }
 
     drawOptionsHelpWindow(
@@ -7464,27 +7720,26 @@ void Game::renderAudioSettings(Renderer& renderer) const
 
 void Game::renderVideoSettings(Renderer& renderer) const
 {
+    const OptionsSliderUiState& sliderState = optionsSliderUiState();
     const auto values = videoSettingsRowValueTexts(optionsSettings_);
     const auto tabItems = videoSettingsTabItems(values);
     const auto tabRects = videoSettingsRowRects();
     drawUiVerticalTabs(
         renderer,
-        UiTabsState{},
+        videoSettingsTabs_,
         videoSettingsSelection_,
         tabItems.data(),
         static_cast<int>(tabItems.size()),
         tabRects.data(),
         optionsVerticalTabStyle());
 
-    UiGaugeStyle brightnessGaugeStyle;
-    brightnessGaugeStyle.tickCount = 6;
-    brightnessGaugeStyle.fill.start = Color{236, 220, 150, 230};
-    brightnessGaugeStyle.fill.end = Color{255, 246, 210, 230};
-    drawUiGauge(
+    drawUiSlider(
         renderer,
         videoBrightnessSliderRect(),
-        screenBrightnessGaugeValue(optionsSettings_.presentation.brightness),
-        brightnessGaugeStyle);
+        clampedScreenBrightness(optionsSettings_.presentation.brightness) * 100.0f,
+        screenBrightnessSliderSpec(),
+        sliderState.brightness,
+        screenBrightnessSliderStyle());
 
     drawOptionsHelpWindow(
         renderer,
@@ -7543,7 +7798,7 @@ void Game::renderPauseMenu(Renderer& renderer) const
             ? "Z/X 選択リング切替  Esc 戻る"
             : (pausePage_ == PauseMenuPage::Options
                 ? (optionsPage_ == OptionsPageOperation
-                    ? "Z/X 設定切替  {shortcut} 分類切替  ↑/↓ 行選択  ←/→ 列選択  F/Enter 割当操作  Esc 戻る"
+                    ? "Z/X 設定切替  ↑/↓ 行選択  ←/→ 列選択（端で分類切替）  F/Enter 割当操作  Esc 戻る"
                     : (optionsPage_ == OptionsPageAudio
                         ? "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 音量変更  Esc 戻る"
                         : "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 変更  F/Enter 切替  Esc 戻る"))
@@ -7589,7 +7844,6 @@ void Game::renderPauseMenu(Renderer& renderer) const
         hpGaugeStyle.trackInner = {58, 24, 32, 220};
         hpGaugeStyle.trackOuter = {255, 220, 224, 82};
         hpGaugeStyle.highlight = {255, 244, 244, 92};
-        hpGaugeStyle.capGlow = {255, 116, 128, 58};
         hpGaugeStyle.trackInnerInset = 4.0f;
         hpGaugeStyle.shadowOffsetY = 2.0f;
         hpGaugeStyle.shadowExtra = 5.0f;
@@ -7620,7 +7874,6 @@ void Game::renderPauseMenu(Renderer& renderer) const
         expGaugeStyle.trackInner = {24, 40, 74, 220};
         expGaugeStyle.trackOuter = {206, 222, 255, 82};
         expGaugeStyle.highlight = {236, 248, 255, 92};
-        expGaugeStyle.capGlow = {132, 230, 250, 58};
         expGaugeStyle.trackInnerInset = 4.0f;
         expGaugeStyle.shadowOffsetY = 2.0f;
         expGaugeStyle.shadowExtra = 5.0f;
@@ -7994,7 +8247,7 @@ void Game::renderAstralResultScreen(Renderer& renderer) const
     }
     renderer.drawText(panel.pos + Vec2{136.0f, y}, buffer, {255, 230, 150, 255}, 2);
 
-    drawUiButton(renderer, stageClearItemRect(0), "拠点へ戻る", astralResultSelection_ == 0, uiActionButtonStyle());
+    drawUiButton(renderer, stageClearItemRect(0), "拠点へ戻る", false, uiActionButtonStyle());
 }
 
 void Game::renderBossDefeatPresentation(Renderer& renderer) const
@@ -8983,7 +9236,7 @@ void Game::render(Renderer& renderer, const Time& time)
             }
         }
         std::size_t firstEntry = worldDepthEntries.size();
-        enemies_.appendRenderEntries(worldDepthEntries, renderer, tileMap_, playerLightCenter, itemLights, 0, &encyclopedia_);
+        enemies_.appendRenderEntries(worldDepthEntries, renderer, tileMap_, objectCatalog_, playerLightCenter, itemLights, 0, &encyclopedia_);
         tagDepthRenderEntries(worldDepthEntries, firstEntry, "WorldDepth.draw.enemy");
         firstEntry = worldDepthEntries.size();
         appendDungeonStoryPresentationRenderEntries(worldDepthEntries, renderer, totalSeconds);
@@ -9108,7 +9361,12 @@ void Game::render(Renderer& renderer, const Time& time)
                     unlockedRingCount());
                 renderLevelUpOverlay(renderer);
                 if (mode_ == ScreenMode::Playing) {
-                    inventory_.renderShortcutHud(renderer, spellRing_, camera_.width(), camera_.height());
+                    inventory_.renderShortcutHud(
+                        renderer,
+                        spellRing_,
+                        encyclopedia_,
+                        camera_.width(),
+                        camera_.height());
                     renderRingEquipFx(renderer);
                     renderDungeonControlHelp(renderer);
                 } else if (mode_ == ScreenMode::Inventory && pauseReturnMode_ != ScreenMode::Base) {
@@ -9209,7 +9467,12 @@ void Game::render(Renderer& renderer, const Time& time)
                     }
                 }
 
-                encyclopedia_.renderPopups(renderer, camera_, objectCatalog_, encyclopediaAvoidRects);
+                encyclopedia_.renderPopups(
+                    renderer,
+                    camera_,
+                    objectCatalog_,
+                    player_.position,
+                    encyclopediaAvoidRects);
             }
         }
         {

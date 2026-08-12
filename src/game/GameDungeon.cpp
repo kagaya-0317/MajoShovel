@@ -1532,6 +1532,10 @@ enum class DungeonEventHitRequirement {
     HeavyImpact,
 };
 
+constexpr int GlowingRockTargetHitCount = 8;
+constexpr int HeavyRockTargetHitCount = 30;
+constexpr int NestTargetHitCount = 40;
+
 struct DungeonEventRingHit {
     SpellRingItem* item = nullptr;
     int damage = 0;
@@ -1607,29 +1611,144 @@ bool dungeonEventItemLightsFire(const ObjectCatalog& catalog, const SpellRingIte
     return dungeonEventItemEffectMatches(catalog, item, {"cast_fire"}, true);
 }
 
-int dungeonEventObjectHitDamageFor(const ObjectCatalog& catalog, const SpellRingItem& item, DungeonEventHitRequirement requirement)
+int dungeonEventObjectHitDamageForStats(
+    int attackPower,
+    int digPower,
+    std::string_view damageType,
+    float weight,
+    DungeonEventHitRequirement requirement)
 {
     switch (requirement) {
     case DungeonEventHitRequirement::AnyContact:
-        return std::max({1, item.damage, item.digPower});
-    case DungeonEventHitRequirement::Thunder:
-        return dungeonEventItemConductsThunder(catalog, item) ? 1 : 0;
-    case DungeonEventHitRequirement::Fire:
-        return dungeonEventItemLightsFire(catalog, item) ? 1 : 0;
+        return std::max({1, attackPower, digPower});
     case DungeonEventHitRequirement::HeavyImpact: {
-        int damage = std::max({0, item.damage, item.digPower});
+        int damage = std::max({0, attackPower, digPower});
         if (damage <= 0) {
             return 0;
         }
-        if (item.damageType == "blunt" || item.weight >= 3.0f) {
+        if (damageType == "blunt" || weight >= 3.0f) {
             damage += 2;
         }
         return std::max(1, damage);
     }
     case DungeonEventHitRequirement::AnyDamage:
+        return std::max({0, attackPower, digPower});
+    case DungeonEventHitRequirement::Thunder:
+    case DungeonEventHitRequirement::Fire:
         break;
     }
-    return std::max({0, item.damage, item.digPower});
+    return 0;
+}
+
+int dungeonEventObjectHitDamageFor(const ObjectCatalog& catalog, const SpellRingItem& item, DungeonEventHitRequirement requirement)
+{
+    if (requirement == DungeonEventHitRequirement::Thunder) {
+        return dungeonEventItemConductsThunder(catalog, item) ? 1 : 0;
+    }
+    if (requirement == DungeonEventHitRequirement::Fire) {
+        return dungeonEventItemLightsFire(catalog, item) ? 1 : 0;
+    }
+    return dungeonEventObjectHitDamageForStats(
+        item.damage,
+        item.digPower,
+        item.damageType,
+        item.weight,
+        requirement);
+}
+
+struct DungeonEventDurabilityTuning {
+    DungeonEventHitRequirement requirement = DungeonEventHitRequirement::AnyDamage;
+    int targetHitCount = 1;
+};
+
+std::optional<DungeonEventDurabilityTuning> dungeonEventDurabilityTuningFor(Game::DungeonEventKind kind)
+{
+    switch (kind) {
+    case Game::DungeonEventKind::GlowingRockRoom:
+        return DungeonEventDurabilityTuning{DungeonEventHitRequirement::AnyDamage, GlowingRockTargetHitCount};
+    case Game::DungeonEventKind::HeavyRockWitch:
+        return DungeonEventDurabilityTuning{DungeonEventHitRequirement::HeavyImpact, HeavyRockTargetHitCount};
+    case Game::DungeonEventKind::NestRoom:
+        return DungeonEventDurabilityTuning{DungeonEventHitRequirement::AnyContact, NestTargetHitCount};
+    default:
+        return std::nullopt;
+    }
+}
+
+int dungeonEventReferenceHitDamage(
+    const ObjectCatalog& catalog,
+    std::string_view stageId,
+    int depthRank,
+    DungeonEventHitRequirement requirement)
+{
+    struct WeightedDamage {
+        int damage = 0;
+        double weight = 0.0;
+    };
+
+    std::vector<WeightedDamage> candidates;
+    double totalWeight = 0.0;
+    const bool roguelike = stageId == "stage_04_astral_mine";
+    const int targetLevel = roguelikeTargetItemLevelForSectionRank(std::max(1, depthRank));
+    for (const ObjectDefinition& object : catalog.objects) {
+        if (object.category != CategoryDig || objectExcludedFromRandomLoot(object)) {
+            continue;
+        }
+
+        const int damage = dungeonEventObjectHitDamageForStats(
+            object.attackPower,
+            object.digPower,
+            object.damageType,
+            static_cast<float>(object.weightKg),
+            requirement);
+        if (damage <= 0) {
+            continue;
+        }
+
+        const double weight = roguelike
+            ? roguelikeLootWeightForObject(object, targetLevel)
+            : lootWeightFor(object, stageId, depthRank, LootChestKind::Common);
+        if (weight <= 0.0) {
+            continue;
+        }
+        candidates.push_back({damage, weight});
+        totalWeight += weight;
+    }
+
+    if (candidates.empty() || totalWeight <= 0.0) {
+        return 12;
+    }
+    std::sort(candidates.begin(), candidates.end(), [](const WeightedDamage& lhs, const WeightedDamage& rhs) {
+        return lhs.damage < rhs.damage;
+    });
+
+    const double medianWeight = totalWeight * 0.5;
+    double accumulatedWeight = 0.0;
+    for (const WeightedDamage& candidate : candidates) {
+        accumulatedWeight += candidate.weight;
+        if (accumulatedWeight >= medianWeight) {
+            return candidate.damage;
+        }
+    }
+    return candidates.back().damage;
+}
+
+int dungeonEventMaxHpForTargetHits(
+    const ObjectCatalog& catalog,
+    std::string_view stageId,
+    int depthRank,
+    Game::DungeonEventKind kind)
+{
+    const std::optional<DungeonEventDurabilityTuning> tuning = dungeonEventDurabilityTuningFor(kind);
+    if (!tuning.has_value()) {
+        return 1;
+    }
+    const int referenceDamage = dungeonEventReferenceHitDamage(
+        catalog,
+        stageId,
+        depthRank,
+        tuning->requirement);
+    return std::max(1, referenceDamage) * std::max(1, tuning->targetHitCount);
 }
 
 bool dungeonEventObjectMatchesRequest(const ItemData& item, std::string_view requestKey)
@@ -1714,22 +1833,6 @@ DungeonEventRequestItemAvailability dungeonEventRequestItemAvailability(
         return DungeonEventRequestItemAvailability::Available;
     }
     return DungeonEventRequestItemAvailability::Empty;
-}
-
-const char* dungeonEventRequestItemAvailabilityLabel(DungeonEventRequestItemAvailability availability)
-{
-    switch (availability) {
-    case DungeonEventRequestItemAvailability::RequestMismatch:
-        return "対象外";
-    case DungeonEventRequestItemAvailability::Protected:
-        return "保護中";
-    case DungeonEventRequestItemAvailability::Equipped:
-        return "装備中";
-    case DungeonEventRequestItemAvailability::Empty:
-    case DungeonEventRequestItemAvailability::Available:
-        break;
-    }
-    return "";
 }
 
 InventoryUiEntryView dungeonEventRequestItemEntry(const InventorySystem& inventory, int slotIndex)
@@ -2337,17 +2440,6 @@ int objectBreakFireDamage(double value)
 {
     const double amount = std::max(1.0, value);
     return std::clamp(static_cast<int>(std::ceil(2.0 + amount * 2.0)), 1, 12);
-}
-
-int dryWetBonusDamageFor(const std::vector<ObjectBreakEffectEntry>& effects)
-{
-    double total = 0.0;
-    for (const ObjectBreakEffectEntry& effect : effects) {
-        if (effect.effectKey == "dry_wet_bonus_damage") {
-            total += std::max(0.0, effect.value);
-        }
-    }
-    return std::max(0, static_cast<int>(std::ceil(total)));
 }
 
 int objectBreakCoinSpillAmount(const ObjectDefinition& object, double value)
@@ -3234,7 +3326,6 @@ void Game::refreshOrbitEffects()
         item.conductWaterPuddleStrength = 0.0f;
         item.waterShotInterval = 0.0f;
         item.waterShotWetDuration = 0.0f;
-        item.dryWetBonusDamage = 0;
         if (item.broken()) {
             continue;
         }
@@ -6375,6 +6466,13 @@ void Game::ensureDungeonEventEncounterPrepared(DungeonEventInstance& event)
     }
     const float tileSize = static_cast<float>(balance::TileSize);
     const DungeonTile centerTile = event.centerTile;
+    const Vec2 eventCenter = tileWorldCenter(centerTile);
+    const int eventDepthRank = currentStageIsRoguelike()
+        ? roguelikeDepthRankForWorldPosition(eventCenter)
+        : lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, eventCenter);
+    const auto eventMaxHp = [&](DungeonEventKind kind) {
+        return dungeonEventMaxHpForTargetHits(objectCatalog_, currentStageId_, eventDepthRank, kind);
+    };
     event.encounterSpawnCount = 0;
     event.spawnedEnemyRuntimeIds.clear();
     switch (event.kind) {
@@ -6453,7 +6551,7 @@ void Game::ensureDungeonEventEncounterPrepared(DungeonEventInstance& event)
                     static_cast<float>(tileMap_.worldToTile(holeWorld.x)),
                     static_cast<float>(tileMap_.worldToTile(holeWorld.y)),
                 });
-                hole.maxHp = 18;
+                hole.maxHp = eventMaxHp(DungeonEventKind::NestRoom);
                 hole.hp = hole.maxHp;
                 hole.spawnCooldown = 0.8f + static_cast<float>(i) * 0.6f;
                 event.nestHoles.push_back(std::move(hole));
@@ -6506,7 +6604,7 @@ void Game::ensureDungeonEventEncounterPrepared(DungeonEventInstance& event)
                 DungeonEventObject rock;
                 rock.kind = DungeonEventObjectKind::GlowingRock;
                 rock.tile = dungeonEventObjectTile(centerTile, angle, 2.0f);
-                rock.maxHp = 10;
+                rock.maxHp = eventMaxHp(DungeonEventKind::GlowingRockRoom);
                 rock.hp = rock.maxHp;
                 event.eventObjects.push_back(std::move(rock));
             }
@@ -6601,7 +6699,7 @@ void Game::ensureDungeonEventEncounterPrepared(DungeonEventInstance& event)
             DungeonEventObject rock;
             rock.kind = DungeonEventObjectKind::HeavyRock;
             rock.tile = dungeonEventOffsetTile(centerTile, 1, 0);
-            rock.maxHp = 34;
+            rock.maxHp = eventMaxHp(DungeonEventKind::HeavyRockWitch);
             rock.hp = rock.maxHp;
             event.eventObjects.push_back(std::move(rock));
         }
@@ -7417,7 +7515,7 @@ void Game::updateDungeonEventItemRequestUi(const Input& input, UiContext& ui)
                     objectId,
                     displayName)) {
                 dungeonEventItemRequestUi_.status = "そのアイテムは渡せなくなった";
-                ui.emitSound(UiSoundEvent::Cancel);
+                ui.rejectAction();
             } else {
                 event->deliveredObjectId = objectId;
                 event->objectiveResolved = true;
@@ -7498,12 +7596,11 @@ void Game::updateDungeonEventItemRequestUi(const Input& input, UiContext& ui)
                 1);
             ui.emitSound(UiSoundEvent::Confirm);
         } else if (availability != DungeonEventRequestItemAvailability::Empty) {
-            dungeonEventItemRequestUi_.status =
-                dungeonEventRequestItemAvailabilityLabel(availability);
-            ui.emitSound(UiSoundEvent::Cancel);
+            dungeonEventItemRequestUi_.status.clear();
+            ui.rejectAction();
         } else {
             dungeonEventItemRequestUi_.status = "アイテムが入っていない";
-            ui.emitSound(UiSoundEvent::Cancel);
+            ui.rejectAction();
         }
     }
 
@@ -7527,6 +7624,7 @@ void Game::renderDungeonEventItemRequestUi(Renderer& renderer, double totalSecon
     }
 
     const InventoryUiScreenLayout& layout = standardInventoryUiScreenLayout();
+    UiModalNavigationScope navigationScope(layout.window);
     drawUiModalBackdrop(renderer, layout.backdrop, {0, 0, 0, 176});
     UiCancelControlScope cancelScope(dungeonEventItemRequestCancelState_);
     {
@@ -7556,11 +7654,8 @@ void Game::renderDungeonEventItemRequestUi(Renderer& renderer, double totalSecon
             style.selected = slotIndex == dungeonEventItemRequestUi_.selection;
             style.disabled = disabled;
             style.imageMaxSize = layout.itemImageMaxSize;
-            style.contentAlpha = disabled ? 0.42f : 1.0f;
-            style.bottomLabel = dungeonEventRequestItemAvailabilityLabel(availability);
-            style.bottomLabelColor = disabled ? ui::TextDisabled : ui::Text;
-            style.showTopRightCount = entry.stackCount > 1;
-            style.topRightCount = entry.stackCount;
+            applyInventoryUiPowerBadgeDiscovery(style, encyclopedia_);
+            applyInventoryUiStackCount(style, entry);
             drawInventoryUiSlot(
                 renderer,
                 inventoryUiScreenSlotRect(layout, slotIndex),
@@ -7585,7 +7680,7 @@ void Game::renderDungeonEventItemRequestUi(Renderer& renderer, double totalSecon
             });
             extraLines.push_back({
                 .label = "受け渡し",
-                .value = available ? "渡せる" : dungeonEventRequestItemAvailabilityLabel(detailAvailability),
+                .value = available ? "渡せる" : "渡せない",
                 .valueColor = available ? Color{142, 238, 174, 255} : ui::TextDisabled,
             });
         }
@@ -7596,7 +7691,6 @@ void Game::renderDungeonEventItemRequestUi(Renderer& renderer, double totalSecon
             objectCatalog_,
             encyclopedia_,
             InventoryUiDetailOptions{
-                .showProtectionLabel = detailAvailability != DungeonEventRequestItemAvailability::Protected,
                 .animationSeconds = static_cast<float>(totalSeconds),
                 .unlockedRingCount = unlockedRingCount(),
             },
@@ -9926,6 +10020,14 @@ int Game::grantDungeonMoney(int amount, Vec2 origin)
     moneyGainFx_.spawn(addedAmount, origin);
     appendMoneyPickupLog(addedAmount);
     return addedAmount;
+}
+
+int Game::takeDungeonMoney(int amount, Vec2 origin)
+{
+    static_cast<void>(origin);
+    const int removedAmount = std::min(std::max(0, amount), std::max(0, money_));
+    money_ = std::max(0, money_ - removedAmount);
+    return removedAmount;
 }
 
 void Game::revealRewardNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles)
@@ -12411,7 +12513,6 @@ void Game::updateOrbitAreaEffects(float dt, std::vector<EffectDiscoveryEvent>& d
 
         if (item.hotAirRadius > 0.0f && item.hotAirStrength > 0.0f) {
             int hotCount = 0;
-            int driedWetCount = 0;
             const std::string source = item.objectId.empty()
                 ? "orbit:hot_air"
                 : "orbit:" + item.objectId;
@@ -12421,10 +12522,7 @@ void Game::updateOrbitAreaEffects(float dt, std::vector<EffectDiscoveryEvent>& d
                 item.hotAirStrength,
                 dt,
                 source,
-                spellRing_,
-                item.dryWetBonusDamage,
-                &hotCount,
-                &driedWetCount);
+                &hotCount);
             if (touched > 0) {
                 if (item.hotAirFxTimer <= 0.0f) {
                     effects_.spawnAreaPulse(item.worldPosition, item.hotAirRadius, {255, 134, 66, 132});
@@ -12434,9 +12532,6 @@ void Game::updateOrbitAreaEffects(float dt, std::vector<EffectDiscoveryEvent>& d
                     appendObjectEffectDiscovery(discoverySink, encyclopedia_, *object, "hot_air", item.worldPosition);
                     if (hotCount > 0) {
                         appendObjectEffectDiscovery(discoverySink, encyclopedia_, *object, "status_hot", item.worldPosition);
-                    }
-                    if (driedWetCount > 0 && item.dryWetBonusDamage > 0) {
-                        appendObjectEffectDiscovery(discoverySink, encyclopedia_, *object, "dry_wet_bonus_damage", item.worldPosition);
                     }
                 }
             }
@@ -14333,7 +14428,6 @@ void Game::handleRingItemBreakEvents(std::vector<EffectDiscoveryEvent>* discover
         effects_.spawnItemBreak(event.position, itemBreakVisualFor(breakSpec.kind), breakScale);
         if (object != nullptr) {
             std::mt19937& rng = lootRuntimeRng();
-            const int dryWetBonusDamage = dryWetBonusDamageFor(breakEffects);
             for (const ObjectBreakEffectEntry& effect : breakEffects) {
                 if (effect.effectKey == "break_glass_shards" ||
                     effect.effectKey == "break_ceramic_shards" ||
@@ -14364,20 +14458,9 @@ void Game::handleRingItemBreakEvents(std::vector<EffectDiscoveryEvent>* discover
                     spec.damage = objectBreakFireDamage(effect.value);
                     spec.damageType = "fire";
                     spec.effectId = "break_fire_burst";
-                    int driedWetCount = 0;
-                    if (dryWetBonusDamage > 0) {
-                        spec.consumeStateForBonus = "status_wet";
-                        spec.consumeStateBonusDamage = dryWetBonusDamage;
-                        spec.consumeStateBonusDamageType = "fire";
-                        spec.consumeStateBonusEffectId = "dry_wet_bonus_damage";
-                        spec.outConsumedStateCount = &driedWetCount;
-                    }
                     enemies_.applyMagicArea(spec, spellRing_);
                     effects_.spawnAreaPulse(event.position, spec.radius, {255, 116, 54, 150});
                     appendObjectEffectDiscovery(discoveryEvents, encyclopedia_, *object, "break_fire_burst", event.position);
-                    if (driedWetCount > 0) {
-                        appendObjectEffectDiscovery(discoveryEvents, encyclopedia_, *object, "dry_wet_bonus_damage", event.position);
-                    }
                 } else if (effect.effectKey == "water_spray") {
                     EnemyMagicHitSpec spec;
                     spec.position = event.position;

@@ -18,6 +18,13 @@ $GameExePath = $null
 $AutoReloadBlocked = $false
 $RebuildRestartExitCode = 85
 $DevAutoReloadMutex = $null
+$BuildEvidenceRoot = $null
+$BuildSequence = 0
+$PendingBuildPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+$WatcherStartedAtUtc = (Get-Process -Id $PID).StartTime.ToUniversalTime()
+
+$DevBuildLogMaxBytes = 4MB
+$DevBuildFailureHistoryCount = 4
 
 function Find-CMake {
     $cmd = Get-Command cmake -ErrorAction SilentlyContinue
@@ -106,6 +113,126 @@ function Get-RestartRequestPath {
         $base = Join-Path $Root ".local"
     }
     return Join-Path $base "MajoShovel\dev_restart_request.txt"
+}
+
+function Get-LatestBuildEvidencePath {
+    return Join-Path $BuildEvidenceRoot "latest-result.json"
+}
+
+function Initialize-BuildEvidenceStorage {
+    New-Item -ItemType Directory -Force -Path $BuildEvidenceRoot | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $BuildEvidenceRoot "failures") | Out-Null
+    Get-ChildItem -LiteralPath $BuildEvidenceRoot -Filter "current-*.log" -File -ErrorAction SilentlyContinue |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+    Remove-OldFailureBuildLogs
+}
+
+function Remove-OldFailureBuildLogs {
+    $failureDirectory = Join-Path $BuildEvidenceRoot "failures"
+    if (-not (Test-Path -LiteralPath $failureDirectory -PathType Container)) {
+        return
+    }
+    $history = @(Get-ChildItem -LiteralPath $failureDirectory -Filter "failure-*.log" -File -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTimeUtc -Descending)
+    for ($index = $DevBuildFailureHistoryCount; $index -lt $history.Count; $index++) {
+        Remove-Item -LiteralPath $history[$index].FullName -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Limit-DevBuildLogSize([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return
+    }
+    $file = Get-Item -LiteralPath $Path
+    if ($file.Length -le $DevBuildLogMaxBytes) {
+        return
+    }
+
+    $text = [System.IO.File]::ReadAllText($Path)
+    $headLength = [Math]::Min(32768, $text.Length)
+    $tailLength = [Math]::Min(900000, [Math]::Max(0, $text.Length - $headLength))
+    $marker = "`r`n[dev] ... log truncated to fixed retention limit ...`r`n"
+    $truncated = $text.Substring(0, $headLength) + $marker
+    if ($tailLength -gt 0) {
+        $truncated += $text.Substring($text.Length - $tailLength)
+    }
+    $utf8Bom = New-Object System.Text.UTF8Encoding($true)
+    [System.IO.File]::WriteAllText($Path, $truncated, $utf8Bom)
+}
+
+function New-DevBuildLog([string]$BuildId, [DateTime]$StartedAtUtc, [string[]]$RequestedPaths) {
+    $path = Join-Path $BuildEvidenceRoot "current-$BuildId.log"
+    $requestedText = if ($RequestedPaths.Count -gt 0) { $RequestedPaths -join ", " } else { "(initial/current tree)" }
+    $header = @(
+        "[dev] build id: $BuildId",
+        "[dev] started UTC: $($StartedAtUtc.ToString('o'))",
+        "[dev] source: $Root",
+        "[dev] output: $BuildPath",
+        "[dev] config: $Config",
+        "[dev] target: $TargetName",
+        "[dev] requested paths: $requestedText",
+        ""
+    ) -join [Environment]::NewLine
+    $utf8Bom = New-Object System.Text.UTF8Encoding($true)
+    [System.IO.File]::WriteAllText($path, $header, $utf8Bom)
+    return $path
+}
+
+function Add-DevBuildLogLine([string]$Path, [string]$Line) {
+    $utf8Bom = New-Object System.Text.UTF8Encoding($true)
+    [System.IO.File]::AppendAllText($Path, $Line + [Environment]::NewLine, $utf8Bom)
+}
+
+function Move-DevBuildLogToRetention([string]$CurrentLogPath, [bool]$Succeeded) {
+    Limit-DevBuildLogSize $CurrentLogPath
+    if ($Succeeded) {
+        $destination = Join-Path $BuildEvidenceRoot "last-success.log"
+        Move-Item -LiteralPath $CurrentLogPath -Destination $destination -Force
+        return $destination
+    }
+
+    $lastFailure = Join-Path $BuildEvidenceRoot "last-failure.log"
+    if (Test-Path -LiteralPath $lastFailure -PathType Leaf) {
+        $previous = Get-Item -LiteralPath $lastFailure
+        $archiveName = "failure-{0}.log" -f $previous.LastWriteTimeUtc.ToString("yyyyMMdd-HHmmss-fff")
+        Move-Item -LiteralPath $lastFailure -Destination (Join-Path $BuildEvidenceRoot "failures\$archiveName") -Force
+    }
+    Move-Item -LiteralPath $CurrentLogPath -Destination $lastFailure -Force
+    Remove-OldFailureBuildLogs
+    return $lastFailure
+}
+
+function Publish-DevBuildEvidence($Result, [string]$CurrentLogPath) {
+    try {
+        $finalLogPath = Move-DevBuildLogToRetention $CurrentLogPath ($Result.status -eq "succeeded")
+        $Result.logPath = $finalLogPath
+        $path = Get-LatestBuildEvidencePath
+        $temporaryPath = "$path.$PID.tmp"
+        $json = $Result | ConvertTo-Json -Depth 8
+        $utf8Bom = New-Object System.Text.UTF8Encoding($true)
+        [System.IO.File]::WriteAllText($temporaryPath, $json + [Environment]::NewLine, $utf8Bom)
+        Move-Item -LiteralPath $temporaryPath -Destination $path -Force
+        Write-Host "[dev] build evidence: $path"
+        return $true
+    }
+    catch {
+        Write-Host "[dev] could not publish build evidence: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Get-BuildOutputEvidence {
+    $exe = Join-Path (Get-BuildConfigPath) "$TargetName.exe"
+    if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+        return $null
+    }
+    $file = Get-MajoShovelStableFileSnapshot $exe
+    return [pscustomobject]@{
+        path = $file.fullPath
+        length = $file.length
+        lastWriteUtcTicks = $file.lastWriteUtcTicks
+        sha256 = $file.sha256
+    }
 }
 
 function Clear-BuildStatus {
@@ -250,6 +377,8 @@ if ($Jobs -le 0) {
 $DevAutoReloadMutex = Enter-MajoShovelDevAutoReloadInstanceLock $BuildPath
 $NeedsConfigure = Test-ConfigureNeeded $BuildPath
 $RunRoot = Join-Path $BuildPath ".dev-run"
+$BuildEvidenceRoot = Get-MajoShovelDevBuildEvidenceRoot $Root
+Initialize-BuildEvidenceStorage
 Clear-BuildStatus
 Clear-RestartRequest
 
@@ -359,46 +488,155 @@ function Restart-ExistingGameCopy {
     return $true
 }
 
-function Invoke-GameBuild {
+function Invoke-GameBuild([string[]]$RequestedPaths = @()) {
     $cmake = Find-CMake
+    $script:BuildSequence++
+    $startedAtUtc = [DateTime]::UtcNow
+    $buildId = "{0}-{1}-{2}" -f $startedAtUtc.ToString("yyyyMMdd-HHmmss-fff"), $PID, $script:BuildSequence
+    $currentLogPath = New-DevBuildLog $buildId $startedAtUtc $RequestedPaths
     $script:IsBuilding = $true
     $buildOperationMutex = $null
+    $inputSnapshotBefore = $null
+    $inputSnapshotAfter = $null
+    $objectWriteTimesBefore = @{}
+    $recompiledSources = @()
+    $outputEvidence = $null
+    $buildExitCode = 1
+    $failureStage = ""
+    $dependencyTrackingComplete = $true
+    $buildSucceeded = $false
     try {
         $buildOperationMutex = Enter-MajoShovelBuildOperationLock $BuildPath "[dev]"
         Wait-MajoShovelBuildOutputAvailability $BuildPath $TargetName "[dev]"
 
+        try {
+            $inputSnapshotBefore = Get-MajoShovelBuildInputSnapshot $Root
+            Add-DevBuildLogLine $currentLogPath "[dev] input fingerprint: $($inputSnapshotBefore.fingerprint)"
+        }
+        catch {
+            $failureStage = "input-snapshot"
+            Add-DevBuildLogLine $currentLogPath "[dev] input snapshot unavailable: $($_.Exception.Message)"
+            Write-Host "[dev] input snapshot unavailable; this build cannot be reused as Codex evidence."
+        }
+        $objectWriteTimesBefore = Get-MajoShovelObjectWriteTimes $BuildPath $Config $TargetName
+
+        $configureSucceeded = $true
         if ($script:NeedsConfigure) {
             Write-Host "[dev] configuring..."
-            & $cmake -S $Root -B $BuildPath -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
-            if ($LASTEXITCODE -ne 0) {
+            $configureArgs = @("-S", $Root, "-B", $BuildPath, "-DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON")
+            Add-DevBuildLogLine $currentLogPath ("[dev] configure command: " + $cmake + " " + (Join-MajoShovelCommandLineArguments $configureArgs))
+            $configureExitCode = Invoke-MajoShovelNativeCommandWithProgress $cmake $configureArgs "[dev] configuring" $Root $currentLogPath
+            if ($configureExitCode -ne 0) {
                 Write-Host "[dev] configure failed."
-                return $false
+                $buildExitCode = $configureExitCode
+                $failureStage = "configure"
+                $configureSucceeded = $false
+            } else {
+                $script:NeedsConfigure = $false
             }
-            $script:NeedsConfigure = $false
         }
 
-        Write-Host "[dev] building with $Jobs job(s)..."
-        $cleanFirst = Test-MajoShovelVisualStudioDependencyTrackingIncomplete $BuildPath $Config $TargetName
-        if ($cleanFirst) {
-            Write-Host "[dev] incomplete compiler dependency tracking detected; rebuilding once to prevent mixed object layouts."
+        if ($configureSucceeded) {
+            Write-Host "[dev] building with $Jobs job(s)..."
+            $cleanFirst = Test-MajoShovelVisualStudioDependencyTrackingIncomplete $BuildPath $Config $TargetName
+            if ($cleanFirst) {
+                Write-Host "[dev] incomplete compiler dependency tracking detected; rebuilding once to prevent mixed object layouts."
+                Add-DevBuildLogLine $currentLogPath "[dev] dependency tracking incomplete before build; using clean-first."
+            }
+            $buildArgs = Get-MajoShovelVisualStudioBuildArguments $BuildPath $Config $TargetName $Jobs $cleanFirst
+            Add-DevBuildLogLine $currentLogPath ("[dev] build command: " + $cmake + " " + (Join-MajoShovelCommandLineArguments $buildArgs))
+            $buildExitCode = Invoke-MajoShovelNativeCommandWithProgress $cmake $buildArgs "[dev] building with $Jobs job(s)" $Root $currentLogPath
+            if ($buildExitCode -ne 0) {
+                Write-Host "[dev] build failed. Fix errors and save again."
+                $failureStage = "build"
+            } elseif (Test-MajoShovelVisualStudioDependencyTrackingIncomplete $BuildPath $Config $TargetName) {
+                Write-Host "[dev] build finished, but compiler dependency tracking is still incomplete; refusing to launch a mixed binary."
+                $failureStage = "dependency-tracking"
+                $dependencyTrackingComplete = $false
+            } else {
+                $buildSucceeded = $true
+            }
         }
-        $buildArgs = Get-MajoShovelVisualStudioBuildArguments $BuildPath $Config $TargetName $Jobs $cleanFirst
-        $buildExitCode = Invoke-MajoShovelNativeCommandWithProgress $cmake $buildArgs "[dev] building with $Jobs job(s)" $Root
-        if ($buildExitCode -ne 0) {
-            Write-Host "[dev] build failed. Fix errors and save again."
-            return $false
-        }
-        if (Test-MajoShovelVisualStudioDependencyTrackingIncomplete $BuildPath $Config $TargetName) {
-            Write-Host "[dev] build finished, but compiler dependency tracking is still incomplete; refusing to launch a mixed binary."
-            return $false
-        }
-
-        return $true
+    }
+    catch {
+        $failureStage = if ([string]::IsNullOrEmpty($failureStage)) { "exception" } else { $failureStage }
+        Add-DevBuildLogLine $currentLogPath "[dev] exception: $($_.Exception.ToString())"
+        Write-Host "[dev] build exception: $($_.Exception.Message)"
     }
     finally {
+        try {
+            $inputSnapshotAfter = Get-MajoShovelBuildInputSnapshot $Root
+        }
+        catch {
+            Add-DevBuildLogLine $currentLogPath "[dev] final input snapshot unavailable: $($_.Exception.Message)"
+        }
+        try {
+            $recompiledSources = @(Get-MajoShovelRecompiledSources $Root $BuildPath $Config $TargetName $objectWriteTimesBefore)
+        }
+        catch {
+            Add-DevBuildLogLine $currentLogPath "[dev] recompiled source inspection failed: $($_.Exception.Message)"
+        }
+        try {
+            $outputEvidence = Get-BuildOutputEvidence
+        }
+        catch {
+            Add-DevBuildLogLine $currentLogPath "[dev] output inspection failed: $($_.Exception.Message)"
+        }
+
+        if ($buildSucceeded -and $null -eq $outputEvidence) {
+            $buildSucceeded = $false
+            $buildExitCode = 1
+            $failureStage = "output"
+            Add-DevBuildLogLine $currentLogPath "[dev] expected executable is missing after a successful build command."
+            Write-Host "[dev] build command succeeded, but the expected executable is missing."
+        }
+
+        $sourceChangedDuringBuild = $script:PendingBuild -or
+            $null -eq $inputSnapshotBefore -or
+            $null -eq $inputSnapshotAfter -or
+            $inputSnapshotBefore.fingerprint -ne $inputSnapshotAfter.fingerprint
+        $reusable = $buildSucceeded -and
+            $dependencyTrackingComplete -and
+            -not $sourceChangedDuringBuild -and
+            $null -ne $outputEvidence
+        $finishedAtUtc = [DateTime]::UtcNow
+        Add-DevBuildLogLine $currentLogPath ""
+        Add-DevBuildLogLine $currentLogPath "[dev] finished UTC: $($finishedAtUtc.ToString('o'))"
+        Add-DevBuildLogLine $currentLogPath "[dev] exit code: $buildExitCode"
+        Add-DevBuildLogLine $currentLogPath "[dev] status: $(if ($buildSucceeded) { 'succeeded' } else { 'failed' })"
+        Add-DevBuildLogLine $currentLogPath "[dev] source changed during build: $sourceChangedDuringBuild"
+        Add-DevBuildLogLine $currentLogPath "[dev] reusable by Codex: $reusable"
+
+        $result = [pscustomobject]@{
+            schemaVersion = 1
+            buildId = $buildId
+            watcherPid = $PID
+            watcherStartedAtUtc = $WatcherStartedAtUtc.ToString("o")
+            repositoryRoot = [System.IO.Path]::GetFullPath($Root)
+            buildPath = [System.IO.Path]::GetFullPath($BuildPath)
+            config = $Config
+            target = $TargetName
+            startedAtUtc = $startedAtUtc.ToString("o")
+            finishedAtUtc = $finishedAtUtc.ToString("o")
+            status = if ($buildSucceeded) { "succeeded" } else { "failed" }
+            exitCode = $buildExitCode
+            failureStage = $failureStage
+            dependencyTrackingComplete = $dependencyTrackingComplete
+            sourceChangedDuringBuild = $sourceChangedDuringBuild
+            reusable = $reusable
+            requestedPaths = @($RequestedPaths)
+            inputSnapshot = $inputSnapshotBefore
+            finalInputFingerprint = if ($null -ne $inputSnapshotAfter) { $inputSnapshotAfter.fingerprint } else { "" }
+            recompiledSources = @($recompiledSources)
+            output = $outputEvidence
+            logPath = ""
+        }
+        [void](Publish-DevBuildEvidence $result $currentLogPath)
         Exit-MajoShovelMutex $buildOperationMutex
         $script:IsBuilding = $false
     }
+
+    return $buildSucceeded
 }
 
 function Test-RebuildPath($path) {
@@ -408,6 +646,12 @@ function Test-RebuildPath($path) {
 
     return $fullPath.StartsWith($srcPath, [System.StringComparison]::OrdinalIgnoreCase) -or
         [System.String]::Equals($fullPath, $cmakePath, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Take-PendingBuildPaths {
+    $paths = @($script:PendingBuildPaths | Sort-Object)
+    $script:PendingBuildPaths.Clear()
+    return $paths
 }
 
 function Request-Rebuild($path) {
@@ -420,6 +664,7 @@ function Request-Rebuild($path) {
         }
 
         $script:PendingBuild = $true
+        [void]$script:PendingBuildPaths.Add((Get-MajoShovelRepositoryRelativePath $Root $fullPath))
         $script:LastChangeTime = Get-Date
         if ($script:IsBuilding) {
             Write-Host "[dev] code changed during build; queued another build: $path"
@@ -485,6 +730,7 @@ Write-Host "[dev] build output: $BuildPath"
 Write-Host "[dev] run copies: $RunRoot"
 Write-Host "[dev] build jobs: $Jobs"
 Write-Host "[dev] build config: $Config"
+Write-Host "[dev] build evidence: $BuildEvidenceRoot"
 Write-Host "[dev] auto reload block: $AutoReloadBlocked (toggle in game with F2)"
 Write-Host "[dev] code changes rebuild while the current game keeps running."
 Write-Host "[dev] successful builds wait for F5 before applying the prepared game copy."
@@ -502,8 +748,9 @@ try {
         $canRunPendingBuild = -not $AutoReloadBlocked -or -not $hasRunningGame
         if ($canRunPendingBuild -and $PendingBuild -and ((Get-Date) - $LastChangeTime).TotalMilliseconds -ge 700) {
             $PendingBuild = $false
+            $requestedPaths = @(Take-PendingBuildPaths)
             $hadRunningGame = $hasRunningGame
-            $buildSucceeded = Invoke-GameBuild
+            $buildSucceeded = Invoke-GameBuild $requestedPaths
             if ($buildSucceeded) {
                 if ($hadRunningGame) {
                     if ($PendingBuild) {
@@ -534,7 +781,9 @@ try {
                     Start-Game
                 } else {
                     Write-Host "[dev] F5 restart requested without a prepared build: building before restart..."
-                    if (Invoke-GameBuild) {
+                    $PendingBuild = $false
+                    $requestedPaths = @(Take-PendingBuildPaths)
+                    if (Invoke-GameBuild $requestedPaths) {
                         Clear-BuildStatus
                         Start-Game
                     } else {

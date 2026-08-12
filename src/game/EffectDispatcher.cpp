@@ -567,10 +567,6 @@ void applyItemParameterInvocation(const EffectInvocation& invocation)
         return;
     }
 
-    if (invocation.effect == "dry_wet_bonus_damage") {
-        const int bonusDamage = std::max(0, static_cast<int>(std::ceil(std::max(0.0, invocation.value))));
-        invocation.context->orbitItem->dryWetBonusDamage += bonusDamage;
-    }
 }
 
 void applyDigInvocation(const EffectInvocation& invocation)
@@ -920,7 +916,7 @@ void EffectDispatcher::registerFoundationHandlers(const ObjectCatalog& catalog)
         }
     }
 
-    for (std::string_view effect : {"slash_power", "item_orbit_offset", "dry_wet_bonus_damage"}) {
+    for (std::string_view effect : {"slash_power", "item_orbit_offset"}) {
         if (catalog.effectCodes.find(std::string(effect)) != catalog.effectCodes.end()) {
             registerHandler(std::string(effect), applyItemParameterInvocation);
         }

@@ -19,7 +19,7 @@ public:
 
     void initialize();
     void shutdown();
-    void toggleVisible();
+    void showAndFocus();
     void appendLog(LogLevel level, std::string_view message);
     void setDropdownSelection(std::string_view controlId, int selectedIndex);
     void setSliderValue(std::string_view controlId, int value);

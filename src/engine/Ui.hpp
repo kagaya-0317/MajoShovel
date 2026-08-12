@@ -119,6 +119,16 @@ enum class UiNavigationRole {
     Grid,
 };
 
+enum class UiControlMotion {
+    HoverAndPress,
+    PressOnly,
+};
+
+struct UiControlVisualState {
+    bool selected = false;
+    bool pressed = false;
+};
+
 class UiContext {
 public:
     UiContext(const Input& input, Renderer& renderer);
@@ -131,6 +141,9 @@ public:
     // マウスが現在の入力方式である間だけ有効になるホバー判定。
     bool hovered(UiRect rect) const;
     bool pressed(UiRect rect);
+    // 動く見た目を持つコントロール向け。hitRect は現在のポインター判定、
+    // controlRect は安定したフォーカス識別・押下アニメーションに使う。
+    bool pressed(UiRect hitRect, UiRect controlRect);
     bool pressedImage(
         UiRect rect,
         std::string_view imagePath,
@@ -142,11 +155,14 @@ public:
     void setNavigationFocus(UiRect rect);
     // マウスホバーとキーボード／ゲームパッドフォーカスを排他的に統合する。
     bool selectionFocused(UiRect rect) const;
+    bool selectionFocused(UiRect hitRect, UiRect controlRect) const;
     UiNavigationRole navigationFocusRole() const;
     void consumePointer() { pointerConsumed_ = true; }
     void consumeBackInput();
     void block(UiRect rect);
     void emitSound(UiSoundEvent event);
+    void emitActionResult(bool succeeded, UiSoundEvent successEvent = UiSoundEvent::Confirm);
+    void rejectAction();
     void emitCursorMoveIfChanged(int previousIndex, int currentIndex);
     int soundEventCount(UiSoundEvent event) const;
     bool hasSoundEvents() const;
@@ -235,18 +251,16 @@ struct UiGaugeStyle {
     Color trackInner{30, 38, 52, 220};
     Color trackOuter{218, 228, 244, 78};
     Color shadow{0, 0, 0, 105};
-    Color tick{255, 255, 255, 0};
     Color highlight{255, 255, 255, 96};
-    Color capGlow{132, 230, 250, 78};
-    Color capCore{246, 252, 255, 225};
     Color shimmer{255, 255, 255, 0};
-    Color outline{255, 255, 255, 255};
+    Color outline{180, 167, 127, 255};
+    Color outerOutline{0, 0, 0, 255};
     float cornerRadius = -1.0f;
+    float outerOutlineWidth = 2.0f;
     float trackOuterExtra = 2.0f;
     float trackInnerInset = 5.0f;
     float shadowOffsetY = 3.0f;
     float shadowExtra = 8.0f;
-    int tickCount = 0;
     float shimmerPhase = -1.0f;
     float shimmerWidth = 56.0f;
 };
@@ -254,6 +268,26 @@ struct UiGaugeStyle {
 struct UiColoredTextRun {
     std::string_view text;
     Color color = ui::Text;
+};
+
+struct UiWrappedColoredTextStyle {
+    int scale = 2;
+    std::string_view hangingIndentText;
+};
+
+struct UiDetailTextStyle {
+    Color color = ui::Text;
+    int scale = 2;
+    float bottomGap = 8.0f;
+};
+
+struct UiDetailLineStyle {
+    Color labelColor = ui::TextMuted;
+    Color valueColor = ui::Text;
+    int scale = 2;
+    float labelWidth = 106.0f;
+    float minLineHeight = 31.0f;
+    float lineGap = 4.0f;
 };
 
 enum class UiArrowDirection {
@@ -272,24 +306,47 @@ struct UiSliderSpec {
     float minValue = 0.0f;
     float maxValue = 1.0f;
     float step = 0.0f;
-    float majorTickStep = 0.0f;
     bool showReference = false;
     float referenceValue = 0.0f;
+    int valueDecimalPlaces = 0;
+    std::string_view valueSuffix;
 };
 
 struct UiSliderStyle {
-    UiGaugeStyle gauge{};
-    Color majorTick{255, 255, 255, 92};
-    Color referenceTick{255, 230, 150, 230};
+    Color track{76, 84, 104, 210};
+    Color activeTrack{132, 230, 250, 255};
+    Color thumb{132, 230, 250, 255};
+    Color thumbOutline{255, 255, 255, 96};
+    Color valueBubble{54, 58, 68, 245};
+    Color valueText{255, 255, 255, 255};
+    float trackThickness = 4.0f;
+    float thumbRadius = -1.0f;
+    bool showValueBubble = true;
+};
+
+enum class UiSliderInteractionState : unsigned char {
+    Idle,
+    ValueVisible,
+    Dragging,
 };
 
 struct UiSliderState {
-    bool dragging = false;
+    UiSliderInteractionState interaction = UiSliderInteractionState::Idle;
+
+    [[nodiscard]] bool dragging() const { return interaction == UiSliderInteractionState::Dragging; }
+    [[nodiscard]] bool valueBubbleVisible() const { return interaction != UiSliderInteractionState::Idle; }
+    void beginDrag() { interaction = UiSliderInteractionState::Dragging; }
+    void releaseDrag() { interaction = UiSliderInteractionState::ValueVisible; }
+    void showValue() { interaction = UiSliderInteractionState::ValueVisible; }
+    void dismissValue() { interaction = UiSliderInteractionState::Idle; }
 };
+
+static_assert(sizeof(UiSliderState) == sizeof(bool));
 
 struct UiSliderResult {
     float value = 0.0f;
     bool changed = false;
+    bool interacting = false;
 };
 
 struct UiCommandMenuItem {
@@ -353,7 +410,6 @@ enum class UiConfirmDialogResult {
 struct UiQuantityDialogState {
     bool open = false;
     std::string title;
-    std::string message;
     std::string unitLabel;
     int value = 1;
     int minValue = 1;
@@ -564,6 +620,27 @@ private:
     UiCancelControlState* previous_ = nullptr;
 };
 
+class UiControlMotionScope {
+public:
+    UiControlMotionScope(
+        Renderer& renderer,
+        UiRect rect,
+        UiControlMotion motion = UiControlMotion::HoverAndPress,
+        bool enabled = true);
+    ~UiControlMotionScope();
+    UiControlMotionScope(const UiControlMotionScope&) = delete;
+    UiControlMotionScope& operator=(const UiControlMotionScope&) = delete;
+
+private:
+    Renderer* renderer_ = nullptr;
+    bool transformed_ = false;
+};
+
+// 入力更新で記録された、そのフレームの排他的な選択／押下状態。
+// 永続的な selectedIndex などはナビゲーションの復帰位置にだけ使い、
+// 描画上の強調はこの状態を基準にする。
+[[nodiscard]] UiControlVisualState uiControlVisualState(UiRect rect);
+
 inline UiButtonStyle uiActionButtonStyle()
 {
     UiButtonStyle style;
@@ -591,6 +668,35 @@ public:
 
 private:
     int previousLayer_ = 0;
+};
+
+// 背面のナビゲーション対象と混ざらない、モーダル専用レイヤーを作る。
+// 実際の操作対象が一つもない場合も、無効な番兵で背面へのフォーカス漏れを防ぐ。
+class UiModalNavigationScope {
+public:
+    explicit UiModalNavigationScope(UiRect modalRect);
+    ~UiModalNavigationScope();
+
+    UiModalNavigationScope(const UiModalNavigationScope&) = delete;
+    UiModalNavigationScope& operator=(const UiModalNavigationScope&) = delete;
+
+private:
+    int previousLayer_ = 0;
+};
+
+// 方向入力そのものを数値変更やスクロールに使うモーダル向け。
+// 背面を遮断したうえで、羽ペンの表示とフォーカス移動を止める。
+class UiExclusiveNavigationScope {
+public:
+    explicit UiExclusiveNavigationScope(UiRect modalRect);
+    ~UiExclusiveNavigationScope();
+
+    UiExclusiveNavigationScope(const UiExclusiveNavigationScope&) = delete;
+    UiExclusiveNavigationScope& operator=(const UiExclusiveNavigationScope&) = delete;
+
+private:
+    int previousLayer_ = 0;
+    bool previousRegistrationEnabled_ = true;
 };
 
 void registerUiNavigationTarget(
@@ -665,6 +771,7 @@ UiRect uiBottomLeftButtonRect(UiRect panel, Vec2 size, float bodyBottomExtension
 UiRect uiBottomCenterButtonRect(UiRect panel, Vec2 size, float bodyBottomExtension = 0.0f);
 UiRect uiBottomRightButtonRect(UiRect panel, Vec2 size, float bodyBottomExtension = 0.0f);
 UiRect uiCancelButtonRect(UiRect panel);
+bool uiCancelControlRequested(const Input& input, UiContext& ui, UiRect panel);
 bool uiCancelRequested(UiCancelControlState& state, const Input& input, UiContext& ui, UiRect panel);
 
 void setUiMenuIconScaleOverrides(const std::unordered_map<std::string, float>* scaleByIconKey);
@@ -700,54 +807,57 @@ void drawUiSlider(
     UiRect rect,
     float value,
     const UiSliderSpec& spec,
+    const UiSliderState& state,
     const UiSliderStyle& style = {});
 bool tryActivateUiButton(UiContext& ui, UiButtonState state);
 UiButtonStyle uiButtonStyleForState(UiButtonStyle style, UiButtonState state);
-void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, bool hot, const UiButtonStyle& style = {});
+// preferred は、現在のフォーカス矩形が無効になったときに選ぶ初期候補。
+// 実際のフォーカス表示は UiContext が管理するナビゲーション状態から描画する。
+void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, bool preferred, const UiButtonStyle& style = {});
 void drawUiButton(
     Renderer& renderer,
     UiRect rect,
     std::string_view label,
-    bool hot,
+    bool preferred,
     UiButtonState state,
     const UiButtonStyle& style = {});
 void drawUiButton(
     Renderer& renderer,
     UiRect rect,
     std::string_view label,
-    bool hot,
+    bool preferred,
     const UiButtonStyle& style,
     UiNavigationRole navigationRole);
 void drawUiButton(
     Renderer& renderer,
     UiRect rect,
     std::string_view label,
-    bool hot,
+    bool preferred,
     UiButtonState state,
     const UiButtonStyle& style,
     UiNavigationRole navigationRole);
-void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, int iconImageNumber, bool hot, const UiButtonStyle& style = {});
+void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, int iconImageNumber, bool preferred, const UiButtonStyle& style = {});
 void drawUiButton(
     Renderer& renderer,
     UiRect rect,
     std::string_view label,
     int iconImageNumber,
-    bool hot,
+    bool preferred,
     UiButtonState state,
     const UiButtonStyle& style = {});
-void drawUiFlexibleButtonFrame(Renderer& renderer, UiRect rect, bool selected, const UiButtonStyle& style = {});
+void drawUiFlexibleButtonFrame(Renderer& renderer, UiRect rect, bool preferred, const UiButtonStyle& style = {});
 void drawUiFlexibleButtonFrame(
     Renderer& renderer,
     UiRect rect,
-    bool selected,
+    bool preferred,
     UiButtonState state,
     const UiButtonStyle& style = {});
-void drawUiFlexibleButton(Renderer& renderer, UiRect rect, std::string_view label, bool selected, const UiButtonStyle& style = {});
+void drawUiFlexibleButton(Renderer& renderer, UiRect rect, std::string_view label, bool preferred, const UiButtonStyle& style = {});
 void drawUiFlexibleButton(
     Renderer& renderer,
     UiRect rect,
     std::string_view label,
-    bool selected,
+    bool preferred,
     UiButtonState state,
     const UiButtonStyle& style = {});
 void drawUiRectButton(Renderer& renderer, UiRect rect, std::string_view label, bool hot, const UiButtonStyle& style = {});
@@ -814,6 +924,12 @@ void drawUiSystemMessage(Renderer& renderer, std::string_view message, Vec2 pos,
     std::span<const UiColoredTextRun> runs,
     float maxWidth,
     int scale = 2);
+[[nodiscard]] float drawUiWrappedColoredText(
+    Renderer& renderer,
+    Vec2 pos,
+    std::span<const UiColoredTextRun> runs,
+    float maxWidth,
+    const UiWrappedColoredTextStyle& style);
 float drawUiDetailHeader(Renderer& renderer, UiRect panel, std::string_view text);
 float drawUiDetailHeaderWithIcon(
     Renderer& renderer,
@@ -822,7 +938,15 @@ float drawUiDetailHeaderWithIcon(
     int iconImageNumber);
 void drawUiDetailText(Renderer& renderer, UiRect panel, float& y, std::string_view text);
 void drawUiDetailText(Renderer& renderer, UiRect panel, float& y, std::string_view text, Color color);
+void drawUiDetailText(Renderer& renderer, UiRect panel, float& y, std::string_view text, const UiDetailTextStyle& style);
 void drawUiDetailLine(Renderer& renderer, UiRect panel, float& y, std::string_view label, std::string_view value, Color valueColor = ui::Text);
+void drawUiDetailLine(
+    Renderer& renderer,
+    UiRect panel,
+    float& y,
+    std::string_view label,
+    std::string_view value,
+    const UiDetailLineStyle& style);
 void openUiResultDialog(UiResultDialogState& state, std::string title, std::vector<std::string> lines);
 void openUiResultDialog(UiResultDialogState& state, std::string title, std::vector<UiResultDialogLine> lines);
 bool updateUiResultDialog(UiResultDialogState& state, UiContext& ui, const Input& input, UiRect panel);
@@ -844,7 +968,6 @@ UiRect uiConfirmDialogButtonRect(UiRect panel, int index);
 void openUiQuantityDialog(
     UiQuantityDialogState& state,
     std::string title,
-    std::string message,
     int minValue,
     int maxValue,
     int initialValue,
@@ -942,6 +1065,8 @@ void drawUiDropdown(
     const UiDropdownItem* items,
     int itemCount,
     const UiDropdownStyle& style = {});
+int uiCycleInputDelta(const Input& input, int itemCount);
+UiTabsInput makeUiCycleTabsInput(const Input& input, int itemCount);
 int updateUiTabs(
     UiTabsState& state,
     UiContext& ui,

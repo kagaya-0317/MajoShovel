@@ -41,9 +41,25 @@ struct InventoryUiEntryView {
     bool equipped = false;
 };
 
-inline constexpr std::string_view InventoryUiProtectionStatusText = "保護中";
+struct InventoryUiPowerBadgeValues {
+    int attackPower = 0;
+    int digPower = 0;
+    bool attackPowerEnhanced = false;
+    bool digPowerEnhanced = false;
+    bool attackPowerKnown = true;
+    bool digPowerKnown = true;
+};
+
+struct InventoryUiPowerBadgeStyle {
+    float alphaScale = 1.0f;
+    float fillAlphaScale = 1.0f;
+    Vec2 edgeInset{};
+};
+
+inline constexpr float InventoryUiDisabledIconAlpha = 0.42f;
 
 struct InventoryUiSlotStyle {
+    // selected はナビゲーション復帰位置。通常の強調は現在の入力フォーカスだけに従う。
     bool selected = false;
     bool disabled = false;
     float imageMaxSize = 48.0f;
@@ -53,16 +69,19 @@ struct InventoryUiSlotStyle {
     bool showTopRightCount = false;
     int topRightCount = 0;
     Color topRightCountColor = ui::Text;
-    bool showProtectionLabel = true;
-    Color protectionLabelColor = ui::Text;
+    bool showProtectionIcon = true;
+    bool showPowerBadges = true;
+    const EncyclopediaSystem* powerBadgeEncyclopedia = nullptr;
     bool showFrame = true;
     bool registerNavigationTarget = true;
+    // ショートカットHUDなど、フォーカスとは別のゲーム状態を常時示す場合だけ使う。
+    bool showPersistentSelection = false;
 };
 
-struct InventoryUiProtectionLabelStyle {
-    Color color = ui::Text;
+struct InventoryUiProtectionIconStyle {
     float alphaScale = 1.0f;
     Vec2 offset{};
+    float size = 20.0f;
 };
 
 struct InventoryUiDetailExtraLine {
@@ -73,7 +92,6 @@ struct InventoryUiDetailExtraLine {
 
 struct InventoryUiDetailOptions {
     bool showEnhanceCount = true;
-    bool showProtectionLabel = true;
     float animationSeconds = 0.0f;
     bool showExtraLineSeparator = true;
     int unlockedRingCount = SpellRingCount;
@@ -91,6 +109,7 @@ struct InventoryUiGridStyle {
     Vec2 slotSize = StandardInventoryUiGridSlotSize;
     Vec2 slotGap = StandardInventoryUiGridSlotGap;
     float imageMaxSize = 48.0f;
+    bool showPowerBadges = true;
     UiScrollAreaStyle scroll{};
 };
 
@@ -120,6 +139,9 @@ struct InlineItemTextStyle {
 [[nodiscard]] InventoryUiItemStats inventoryUiStatsFromInstance(const ItemInstance& instance);
 [[nodiscard]] InventoryUiItemStats inventoryUiStatsFromRingItem(const SpellRingItem& item);
 [[nodiscard]] std::optional<InventoryUiItemStats> inventoryUiEntryStats(const InventoryUiEntryView& entry);
+[[nodiscard]] InventoryUiPowerBadgeValues inventoryUiPowerBadgeValues(
+    const InventoryUiEntryView& entry,
+    const EncyclopediaSystem& encyclopedia);
 [[nodiscard]] std::string joinInventoryUiEffectLines(const std::vector<std::string>& lines);
 [[nodiscard]] Vec2 measureInventoryUiRarityStars(Renderer& renderer, int rarity);
 [[nodiscard]] Vec2 drawInventoryUiRarityStars(
@@ -163,10 +185,16 @@ void drawInventoryUiSlotBottomLabel(
     std::string_view label,
     Color color = ui::Text);
 
-void drawInventoryUiProtectionLabel(
+void drawInventoryUiProtectionIcon(
     Renderer& renderer,
     UiRect rect,
-    const InventoryUiProtectionLabelStyle& style = {});
+    const InventoryUiProtectionIconStyle& style = {});
+
+void drawInventoryUiPowerBadges(
+    Renderer& renderer,
+    UiRect itemImageRect,
+    const InventoryUiPowerBadgeValues& values,
+    const InventoryUiPowerBadgeStyle& style = {});
 
 void drawInventoryUiItemIcon(
     Renderer& renderer,
@@ -176,6 +204,14 @@ void drawInventoryUiItemIcon(
     bool selected = false,
     bool disabled = false,
     float alphaScale = 1.0f);
+
+void applyInventoryUiStackCount(
+    InventoryUiSlotStyle& style,
+    const InventoryUiEntryView& entry);
+
+void applyInventoryUiPowerBadgeDiscovery(
+    InventoryUiSlotStyle& style,
+    const EncyclopediaSystem& encyclopedia);
 
 void drawInventoryUiSlot(
     Renderer& renderer,

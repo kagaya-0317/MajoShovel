@@ -70,14 +70,26 @@ struct ObjectEffectDisplaySections {
     std::vector<ObjectEffectDisplayLine> ringLines;
 };
 
+enum class EncyclopediaPopupCue {
+    None,
+    EffectDiscovery,
+    MonsterDiscovery,
+};
+
+struct EncyclopediaPopupStartedEvent {
+    EncyclopediaPopupCue cue = EncyclopediaPopupCue::None;
+    Vec2 position{};
+};
+
 class EncyclopediaSystem {
 public:
     void clear();
-    void update(float dt);
+    [[nodiscard]] std::optional<EncyclopediaPopupStartedEvent> update(float dt, bool allowPopupStart);
     void renderPopups(
         Renderer& renderer,
         const Camera& camera,
         const ObjectCatalog& catalog,
+        Vec2 playerWorldPosition,
         std::span<const UiRect> avoidRects = {});
 
     void noteItemDiscovered(const ObjectDefinition& object, Vec2 position);
@@ -127,6 +139,7 @@ private:
         float duration = 0.0f;
         float revealSeconds = 0.0f;
         int revealUnitCount = 0;
+        EncyclopediaPopupCue cue = EncyclopediaPopupCue::None;
         bool screenPositionLocked = false;
         bool layoutReady = false;
         Vec2 baseSize{};
@@ -156,7 +169,7 @@ private:
     bool raiseObjectStage(const ObjectDefinition& object, EncyclopediaStage stage, Vec2 position, bool popup);
     bool raiseEnemyStage(std::string_view enemyId, std::string_view enemyName, EncyclopediaStage stage, Vec2 position, bool popup);
     void enqueueEffectPopup(std::span<const EffectPopupLine> lines);
-    void enqueuePopup(std::string text, Vec2 position);
+    void enqueuePopup(std::string text, Vec2 position, EncyclopediaPopupCue cue);
 
     std::unordered_map<std::string, EncyclopediaStage> itemStages_;
     std::unordered_map<std::string, EncyclopediaStage> treasureStages_;

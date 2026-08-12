@@ -38,6 +38,7 @@ enum class DamagePopupStyle {
     Enemy,
     Player,
     Heal,
+    Guard,
     Critical,
     WeakPoint
 };

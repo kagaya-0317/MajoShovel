@@ -44,7 +44,7 @@ std::string trimAscii(std::string text)
 #ifdef _WIN32
 
 constexpr UINT WM_DEBUG_APPEND_LOG = WM_APP + 1;
-constexpr UINT WM_DEBUG_TOGGLE = WM_APP + 2;
+constexpr UINT WM_DEBUG_SHOW_AND_FOCUS = WM_APP + 2;
 constexpr UINT WM_DEBUG_SHUTDOWN = WM_APP + 3;
 constexpr UINT WM_DEBUG_SCROLL_TO_BOTTOM = WM_APP + 4;
 
@@ -244,7 +244,7 @@ struct DebugConsole::Impl {
 #endif
     }
 
-    void toggleVisible()
+    void showAndFocus()
     {
 #ifdef _WIN32
         HWND target = nullptr;
@@ -253,7 +253,7 @@ struct DebugConsole::Impl {
             target = hwnd;
         }
         if (target) {
-            PostMessageW(target, WM_DEBUG_TOGGLE, 0, 0);
+            PostMessageW(target, WM_DEBUG_SHOW_AND_FOCUS, 0, 0);
         }
 #endif
     }
@@ -396,7 +396,7 @@ struct DebugConsole::Impl {
         MSG msg{};
         while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
             if (msg.message == WM_KEYDOWN && msg.wParam == VK_F8) {
-                toggleWindow();
+                showAndFocusWindow();
                 continue;
             }
             if (msg.message == WM_KEYDOWN && msg.wParam == VK_F5) {
@@ -464,8 +464,8 @@ struct DebugConsole::Impl {
         case WM_DEBUG_APPEND_LOG:
             impl->drainPendingLogs();
             return 0;
-        case WM_DEBUG_TOGGLE:
-            impl->toggleWindow();
+        case WM_DEBUG_SHOW_AND_FOCUS:
+            impl->showAndFocusWindow();
             return 0;
         case WM_DEBUG_SHUTDOWN:
             impl->shuttingDown = true;
@@ -547,7 +547,7 @@ struct DebugConsole::Impl {
         SendMessageW(autoScrollCheck, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont), TRUE);
         SendMessageW(autoScrollCheck, BM_SETCHECK, BST_CHECKED, 0);
 
-        appendUiLog({LogLevel::Info, "Debug console ready. F8 shows or hides this window."});
+        appendUiLog({LogLevel::Info, "Debug console ready. F8 shows and focuses this window."});
         appendUiLog({LogLevel::Info, "Built-in commands: help, clear, restart, quit"});
     }
 
@@ -1615,18 +1615,29 @@ struct DebugConsole::Impl {
         CloseClipboard();
     }
 
-    void toggleWindow()
+    void showAndFocusWindow()
     {
         if (!hwnd) {
             return;
         }
 
-        if (IsWindowVisible(hwnd)) {
-            ShowWindow(hwnd, SW_HIDE);
-            return;
+        if (IsIconic(hwnd)) {
+            ShowWindow(hwnd, SW_RESTORE);
+        } else if (!IsWindowVisible(hwnd)) {
+            ShowWindow(hwnd, SW_SHOWNORMAL);
+        } else {
+            ShowWindow(hwnd, SW_SHOW);
         }
 
-        ShowWindow(hwnd, SW_SHOWNORMAL);
+        BringWindowToTop(hwnd);
+        SetWindowPos(
+            hwnd,
+            HWND_TOP,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
         PostMessageW(hwnd, WM_DEBUG_SCROLL_TO_BOTTOM, 0, 0);
         SetForegroundWindow(hwnd);
         SetFocus(commandCombo);
@@ -1726,9 +1737,9 @@ void DebugConsole::shutdown()
     impl_->shutdown();
 }
 
-void DebugConsole::toggleVisible()
+void DebugConsole::showAndFocus()
 {
-    impl_->toggleVisible();
+    impl_->showAndFocus();
 }
 
 void DebugConsole::appendLog(LogLevel level, std::string_view message)

@@ -44,8 +44,8 @@ constexpr float PortraitExpressionPickerCardWidth = 144.0f;
 constexpr float PortraitExpressionPickerCardHeight = 174.0f;
 constexpr float PortraitExpressionPickerCardGap = 4.0f;
 constexpr float PortraitExpressionPickerIconSize = 144.0f;
-constexpr float DebugNamedSavePanelWidth = 620.0f;
-constexpr float DebugNamedSaveInputPanelHeight = 260.0f;
+constexpr float DebugNamedSavePanelWidth = 680.0f;
+constexpr float DebugNamedSaveInputPanelHeight = 620.0f;
 constexpr float DebugNamedSaveLoadPanelHeight = 520.0f;
 constexpr float DebugNamedSaveRowHeight = 46.0f;
 constexpr float DebugNamedSaveRowGap = 5.0f;
@@ -186,7 +186,6 @@ constexpr float AudioCueEditVolumeMaxPercent = 200.0f;
 constexpr float AudioCueEditPitchMinPercent = 50.0f;
 constexpr float AudioCueEditPitchMaxPercent = 200.0f;
 constexpr float AudioCueEditSliderStepPercent = 5.0f;
-constexpr float AudioCueEditSliderMajorTickPercent = 25.0f;
 constexpr float AudioCueEditSliderReferencePercent = 100.0f;
 constexpr std::uint64_t AudioCueEditDoubleClickTicks = 420;
 constexpr float AudioCueEditPitchMin = -100.0f;
@@ -1567,16 +1566,17 @@ DebugNamedSaveLayout makeDebugNamedSaveInputLayout(int screenWidth, int screenHe
 {
     DebugNamedSaveLayout layout;
     const float width = std::min(DebugNamedSavePanelWidth, std::max(360.0f, static_cast<float>(screenWidth) - 48.0f));
-    const float height = std::min(DebugNamedSaveInputPanelHeight, std::max(220.0f, static_cast<float>(screenHeight) - 48.0f));
+    const float height = std::min(DebugNamedSaveInputPanelHeight, std::max(420.0f, static_cast<float>(screenHeight) - 48.0f));
     layout.panel = {{
         std::max(0.0f, (static_cast<float>(screenWidth) - width) * 0.5f),
         std::max(0.0f, (static_cast<float>(screenHeight) - height) * 0.5f),
     }, {width, height}};
     layout.panel = uiEnsureDecoratedWindowMinSize(layout.panel);
     layout.input = {{layout.panel.pos.x + 36.0f, layout.panel.pos.y + 98.0f}, {layout.panel.size.x - 72.0f, 44.0f}};
-    layout.status = {{layout.panel.pos.x + 36.0f, layout.panel.pos.y + 150.0f}, {layout.panel.size.x - 72.0f, 28.0f}};
-    layout.primaryButton = {{layout.panel.pos.x + layout.panel.size.x - 200.0f, layout.panel.pos.y + layout.panel.size.y - 72.0f}, {156.0f, ui::ButtonHeight}};
-    layout.secondaryButton = {{layout.panel.pos.x + 44.0f, layout.panel.pos.y + layout.panel.size.y - 72.0f}, {156.0f, ui::ButtonHeight}};
+    layout.list = {{layout.panel.pos.x + 36.0f, layout.panel.pos.y + 184.0f}, {layout.panel.size.x - 72.0f, layout.panel.size.y - 306.0f}};
+    layout.status = {{layout.panel.pos.x + 36.0f, layout.panel.pos.y + layout.panel.size.y - 106.0f}, {layout.panel.size.x - 72.0f, 28.0f}};
+    layout.primaryButton = {{layout.panel.pos.x + layout.panel.size.x - 224.0f, layout.panel.pos.y + layout.panel.size.y - 64.0f}, {180.0f, ui::ButtonHeight}};
+    layout.secondaryButton = {{layout.panel.pos.x + 44.0f, layout.panel.pos.y + layout.panel.size.y - 64.0f}, {156.0f, ui::ButtonHeight}};
     return layout;
 }
 
@@ -1618,18 +1618,18 @@ float portraitExpressionPickerContentHeight(const PortraitExpressionPickerLayout
             static_cast<float>(rows - 1) * PortraitExpressionPickerCardGap;
 }
 
-UiRect debugNamedSaveLoadRowRect(const DebugNamedSaveLayout& layout, int index, float scrollOffset)
+UiRect debugNamedSaveRowRect(const UiScrollAreaLayout& scroll, int index, float rowPitch)
 {
     return {{
-        layout.list.pos.x + 10.0f,
-        layout.list.pos.y + 10.0f + static_cast<float>(index) * layout.rowPitch - scrollOffset,
+        scroll.content.pos.x + 10.0f,
+        scroll.content.pos.y + 10.0f + static_cast<float>(index) * rowPitch - scroll.scrollOffset,
     }, {
-        std::max(1.0f, layout.list.size.x - 20.0f),
+        std::max(1.0f, scroll.content.size.x - 20.0f),
         DebugNamedSaveRowHeight,
     }};
 }
 
-float debugNamedSaveLoadContentHeight(const DebugNamedSaveLayout& layout, int itemCount)
+float debugNamedSaveContentHeight(const DebugNamedSaveLayout& layout, int itemCount)
 {
     if (itemCount <= 0) {
         return layout.list.size.y;
@@ -1638,9 +1638,26 @@ float debugNamedSaveLoadContentHeight(const DebugNamedSaveLayout& layout, int it
         static_cast<float>(std::max(0, itemCount - 1)) * DebugNamedSaveRowGap;
 }
 
-float debugNamedSaveLoadMaxScroll(const DebugNamedSaveLayout& layout, int itemCount)
+UiRect debugNamedSaveOverwriteConfirmRect(int screenWidth, int screenHeight)
 {
-    return std::max(0.0f, debugNamedSaveLoadContentHeight(layout, itemCount) - layout.list.size.y);
+    const float width = std::min(600.0f, std::max(360.0f, static_cast<float>(screenWidth) - 48.0f));
+    const float height = std::min(300.0f, std::max(240.0f, static_cast<float>(screenHeight) - 48.0f));
+    return {{
+        std::max(0.0f, (static_cast<float>(screenWidth) - width) * 0.5f),
+        std::max(0.0f, (static_cast<float>(screenHeight) - height) * 0.5f),
+    }, {width, height}};
+}
+
+bool debugNamedSavePathsReferToSameFile(
+    const std::filesystem::path& left,
+    const std::filesystem::path& right)
+{
+    if (left.empty() || right.empty()) {
+        return false;
+    }
+    std::error_code error;
+    const bool equivalent = std::filesystem::equivalent(left, right, error);
+    return !error && equivalent;
 }
 
 AudioCueEditLayout makeAudioCueEditLayout(int screenWidth, int screenHeight)
@@ -2290,7 +2307,6 @@ UiSliderSpec audioCueEditVolumeSliderSpec()
         .minValue = AudioCueEditVolumeMinPercent,
         .maxValue = AudioCueEditVolumeMaxPercent,
         .step = AudioCueEditSliderStepPercent,
-        .majorTickStep = AudioCueEditSliderMajorTickPercent,
         .showReference = true,
         .referenceValue = AudioCueEditSliderReferencePercent,
     };
@@ -2302,7 +2318,6 @@ UiSliderSpec audioCueEditPitchSliderSpec()
         .minValue = AudioCueEditPitchMinPercent,
         .maxValue = AudioCueEditPitchMaxPercent,
         .step = AudioCueEditSliderStepPercent,
-        .majorTickStep = AudioCueEditSliderMajorTickPercent,
         .showReference = true,
         .referenceValue = AudioCueEditSliderReferencePercent,
     };
@@ -2311,13 +2326,10 @@ UiSliderSpec audioCueEditPitchSliderSpec()
 UiSliderStyle audioCueEditSliderStyle(bool pitch)
 {
     UiSliderStyle style;
-    style.gauge.tick = {255, 255, 255, 34};
-    style.gauge.fill.start = pitch
+    style.activeTrack = pitch
         ? Color{196, 146, 255, 235}
         : Color{108, 206, 236, 235};
-    style.gauge.fill.end = pitch
-        ? Color{255, 206, 132, 235}
-        : Color{190, 246, 220, 235};
+    style.thumb = style.activeTrack;
     return style;
 }
 
@@ -2336,6 +2348,7 @@ void drawAudioCueEditSlider(
     std::string_view label,
     float percent,
     const UiSliderSpec& spec,
+    const UiSliderState& state,
     const UiSliderStyle& style)
 {
     constexpr float LabelOffsetY = 30.0f;
@@ -2351,7 +2364,7 @@ void drawAudioCueEditSlider(
         Color{255, 230, 150, 255},
         2);
 
-    drawUiSlider(renderer, slider, percent, spec, style);
+    drawUiSlider(renderer, slider, percent, spec, state, style);
 
     const float scaleY = slider.pos.y + slider.size.y + ScaleOffsetY;
     const auto drawScaleLabel = [&](float value, float normalized, bool centered) {
@@ -8076,6 +8089,7 @@ void Game::renderAudioCueEditScreen(Renderer& renderer) const
             "音量",
             cue->volume * 100.0f,
             audioCueEditVolumeSliderSpec(),
+            audioCueEditVolumeSliderState_,
             audioCueEditSliderStyle(false));
         if (audioCueEditMode_ == AudioCueEditMode::Se) {
             drawAudioCueEditSlider(
@@ -8084,6 +8098,7 @@ void Game::renderAudioCueEditScreen(Renderer& renderer) const
                 "ピッチ",
                 audioCueEditPitchPercent(cue->pitch),
                 audioCueEditPitchSliderSpec(),
+                audioCueEditPitchSliderState_,
                 audioCueEditSliderStyle(true));
         }
     }
@@ -8130,7 +8145,8 @@ bool Game::handleDebugNamedSaveCommand(std::string_view normalized)
 
 bool Game::handleDebugNamedSaveEvent(const SDL_Event& event)
 {
-    if (!debugNamedSaveInputActive_) {
+    if (debugNamedSaveDialogMode_ != DebugNamedSaveDialogMode::Save ||
+        debugNamedSaveOverwriteConfirm_.open) {
         return false;
     }
     return handleUiTextInputEvent(debugNamedSaveInput_, event, 48);
@@ -8152,41 +8168,50 @@ void Game::openDebugNamedSaveDialog()
 
     closeDebugItemPicker();
     closeDebugStoryTest();
-    closeDebugNamedLoadDialog();
+    closeDebugNamedSaveDialog();
+    debugNamedSaveDialogMode_ = DebugNamedSaveDialogMode::Save;
     debugNamedSaveInput_.text.clear();
+    debugNamedSaveInputSnapshot_.clear();
+    rebuildDebugNamedSaveEntries();
+    debugNamedSaveSelectedIndex_ = -1;
+    debugNamedSaveScrollOffset_ = 0.0f;
+    debugNamedSaveScrollState_ = {};
     debugNamedSaveStatus_ = "保存名を入力してください";
     debugNamedSaveCancelState_ = {};
-    debugNamedSaveInputActive_ = true;
     focusUiTextInput(debugNamedSaveInput_);
 }
 
 void Game::closeDebugNamedSaveDialog()
 {
     blurUiTextInput(debugNamedSaveInput_);
-    debugNamedSaveInputActive_ = false;
+    debugNamedSaveDialogMode_ = DebugNamedSaveDialogMode::Closed;
+    debugNamedSaveOverwriteConfirm_ = {};
+    debugNamedSavePendingTarget_.reset();
     debugNamedSaveCancelState_ = {};
 }
 
-void Game::rebuildDebugNamedLoadEntries()
+void Game::rebuildDebugNamedSaveEntries()
 {
     std::string previousSelection;
-    if (debugNamedLoadSelectedIndex_ >= 0 &&
-        debugNamedLoadSelectedIndex_ < static_cast<int>(debugNamedLoadEntries_.size())) {
-        previousSelection = debugNamedLoadEntries_[static_cast<std::size_t>(debugNamedLoadSelectedIndex_)].name;
+    if (debugNamedSaveSelectedIndex_ >= 0 &&
+        debugNamedSaveSelectedIndex_ < static_cast<int>(debugNamedSaveEntries_.size())) {
+        previousSelection = debugNamedSaveEntries_[static_cast<std::size_t>(debugNamedSaveSelectedIndex_)].name;
     }
 
-    debugNamedLoadEntries_ = listDebugNamedSaveData();
-    debugNamedLoadSelectedIndex_ = -1;
+    debugNamedSaveEntries_ = listDebugNamedSaveData();
+    debugNamedSaveSelectedIndex_ = -1;
     if (!previousSelection.empty()) {
-        for (int i = 0; i < static_cast<int>(debugNamedLoadEntries_.size()); ++i) {
-            if (debugNamedLoadEntries_[static_cast<std::size_t>(i)].name == previousSelection) {
-                debugNamedLoadSelectedIndex_ = i;
+        for (int i = 0; i < static_cast<int>(debugNamedSaveEntries_.size()); ++i) {
+            if (debugNamedSaveEntries_[static_cast<std::size_t>(i)].name == previousSelection) {
+                debugNamedSaveSelectedIndex_ = i;
                 break;
             }
         }
     }
-    if (debugNamedLoadSelectedIndex_ < 0 && !debugNamedLoadEntries_.empty()) {
-        debugNamedLoadSelectedIndex_ = 0;
+    if (debugNamedSaveDialogMode_ == DebugNamedSaveDialogMode::Load &&
+        debugNamedSaveSelectedIndex_ < 0 &&
+        !debugNamedSaveEntries_.empty()) {
+        debugNamedSaveSelectedIndex_ = 0;
     }
 }
 
@@ -8207,37 +8232,75 @@ void Game::openDebugNamedLoadDialog()
     closeDebugItemPicker();
     closeDebugStoryTest();
     closeDebugNamedSaveDialog();
-    rebuildDebugNamedLoadEntries();
-    debugNamedLoadScrollOffset_ = 0.0f;
-    debugNamedSaveStatus_ = debugNamedLoadEntries_.empty()
+    debugNamedSaveDialogMode_ = DebugNamedSaveDialogMode::Load;
+    rebuildDebugNamedSaveEntries();
+    debugNamedSaveScrollOffset_ = 0.0f;
+    debugNamedSaveScrollState_ = {};
+    debugNamedSaveStatus_ = debugNamedSaveEntries_.empty()
         ? "名前付きセーブがありません"
         : "ロードするセーブを選択してください";
     debugNamedSaveCancelState_ = {};
-    debugNamedLoadActive_ = true;
 }
 
 void Game::closeDebugNamedLoadDialog()
 {
-    debugNamedLoadActive_ = false;
-    debugNamedSaveCancelState_ = {};
+    closeDebugNamedSaveDialog();
 }
 
-void Game::commitDebugNamedSave()
+void Game::refreshDebugNamedSaveTargetStatus()
 {
-    const std::string name = trimAscii(debugNamedSaveInput_.text);
-    if (name.empty()) {
+    const DebugNamedSaveTarget target = resolveDebugNamedSaveTarget(debugNamedSaveInput_.text);
+    if (target.requestedName.empty()) {
+        debugNamedSaveStatus_ = "保存名を入力してください";
+        return;
+    }
+
+    const std::string operation = target.exists ? "上書き対象: " : "新規保存: ";
+    debugNamedSaveStatus_ = operation + target.fileName + ".dat";
+    if (target.fileName != target.requestedName) {
+        debugNamedSaveStatus_ += "（使用不可文字は _ に置換）";
+    }
+}
+
+void Game::requestDebugNamedSave()
+{
+    const DebugNamedSaveTarget target = resolveDebugNamedSaveTarget(debugNamedSaveInput_.text);
+    if (target.requestedName.empty()) {
         debugNamedSaveStatus_ = "保存名が空です";
         focusUiTextInput(debugNamedSaveInput_);
         return;
     }
 
+    if (!target.exists) {
+        commitDebugNamedSave(target);
+        return;
+    }
+
+    blurUiTextInput(debugNamedSaveInput_);
+    debugNamedSavePendingTarget_ = target;
+    openUiConfirmDialog(
+        debugNamedSaveOverwriteConfirm_,
+        "デバッグ: セーブの上書き",
+        "「" + target.fileName + "」を上書きしますか？\n現在の内容で既存のテストセーブを置き換えます。",
+        "上書きする",
+        "戻る",
+        1);
+}
+
+void Game::commitDebugNamedSave(const DebugNamedSaveTarget& target)
+{
+    if (target.requestedName.empty() || target.path.empty()) {
+        debugNamedSaveStatus_ = "保存先が不正です";
+        focusUiTextInput(debugNamedSaveInput_);
+        return;
+    }
+
     std::string message;
-    const std::filesystem::path path = debugNamedSaveDataPath(name);
-    if (saveSaveData(path, message)) {
-        debugNamedSaveStatus_ = "保存しました: " + name;
+    if (saveSaveData(target.path, message)) {
+        debugNamedSaveStatus_ = "保存しました: " + target.fileName;
         reloadNotice_ = debugNamedSaveStatus_;
         reloadNoticeTimer_ = 1.8f;
-        logInfo("Debug: named save created: " + path.string());
+        logInfo("Debug: named save created: " + target.path.string());
         closeDebugNamedSaveDialog();
     } else {
         debugNamedSaveStatus_ = message.empty() ? "セーブ失敗" : message;
@@ -8248,13 +8311,13 @@ void Game::commitDebugNamedSave()
 
 void Game::loadSelectedDebugNamedSave()
 {
-    if (debugNamedLoadSelectedIndex_ < 0 ||
-        debugNamedLoadSelectedIndex_ >= static_cast<int>(debugNamedLoadEntries_.size())) {
+    if (debugNamedSaveSelectedIndex_ < 0 ||
+        debugNamedSaveSelectedIndex_ >= static_cast<int>(debugNamedSaveEntries_.size())) {
         debugNamedSaveStatus_ = "ロードするセーブが選択されていません";
         return;
     }
 
-    const DebugNamedSaveEntry entry = debugNamedLoadEntries_[static_cast<std::size_t>(debugNamedLoadSelectedIndex_)];
+    const DebugNamedSaveEntry entry = debugNamedSaveEntries_[static_cast<std::size_t>(debugNamedSaveSelectedIndex_)];
     closeDebugNamedLoadDialog();
     if (!loadSaveData(entry.path)) {
         debugNamedSaveStatus_ = "ロード失敗: " + entry.name;
@@ -8274,71 +8337,138 @@ void Game::loadSelectedDebugNamedSave()
 
 void Game::updateDebugNamedSaveUi(const Input& input, UiContext& ui)
 {
-    if (debugNamedSaveInputActive_) {
-        const DebugNamedSaveLayout layout = makeDebugNamedSaveInputLayout(camera_.width(), camera_.height());
-        updateUiTextInput(debugNamedSaveInput_, ui, layout.input);
-        if (uiCancelRequested(debugNamedSaveCancelState_, input, ui, layout.panel) ||
-            ui.pressed(layout.secondaryButton)) {
-            closeDebugNamedSaveDialog();
-            return;
-        }
-        if (ui.pressed(layout.primaryButton) || input.confirmPressed() || input.useItemPressed()) {
-            commitDebugNamedSave();
-            return;
+    if (debugNamedSaveDialogMode_ == DebugNamedSaveDialogMode::Closed) {
+        return;
+    }
+
+    const bool saving = debugNamedSaveDialogMode_ == DebugNamedSaveDialogMode::Save;
+    const DebugNamedSaveLayout layout = saving
+        ? makeDebugNamedSaveInputLayout(camera_.width(), camera_.height())
+        : makeDebugNamedSaveLoadLayout(camera_.width(), camera_.height());
+
+    if (debugNamedSaveOverwriteConfirm_.open) {
+        const UiConfirmDialogResult result = updateUiConfirmDialog(
+            debugNamedSaveOverwriteConfirm_,
+            ui,
+            input,
+            debugNamedSaveOverwriteConfirmRect(camera_.width(), camera_.height()));
+        if (result == UiConfirmDialogResult::Confirmed) {
+            const std::optional<DebugNamedSaveTarget> target = debugNamedSavePendingTarget_;
+            debugNamedSavePendingTarget_.reset();
+            if (target.has_value()) {
+                commitDebugNamedSave(*target);
+            }
+        } else if (result == UiConfirmDialogResult::Cancelled) {
+            debugNamedSavePendingTarget_.reset();
+            focusUiTextInput(debugNamedSaveInput_);
+            if (ui.navigationActive()) {
+                ui.setNavigationFocus(layout.input);
+            }
+            refreshDebugNamedSaveTargetStatus();
         }
         ui.block({{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}});
         return;
     }
 
-    if (!debugNamedLoadActive_) {
-        return;
-    }
-
-    const DebugNamedSaveLayout layout = makeDebugNamedSaveLoadLayout(camera_.width(), camera_.height());
-    const int itemCount = static_cast<int>(debugNamedLoadEntries_.size());
-    if (itemCount > 0) {
-        debugNamedLoadSelectedIndex_ = std::clamp(debugNamedLoadSelectedIndex_, 0, itemCount - 1);
-    } else {
-        debugNamedLoadSelectedIndex_ = -1;
-    }
-
-    const float maxScroll = debugNamedSaveLoadMaxScroll(layout, itemCount);
-    debugNamedLoadScrollOffset_ = clamp(debugNamedLoadScrollOffset_, 0.0f, maxScroll);
-    const int wheel = input.mouseWheelDelta();
-    if (wheel != 0) {
-        debugNamedLoadScrollOffset_ = clamp(
-            debugNamedLoadScrollOffset_ + static_cast<float>(wheel) * 42.0f,
-            0.0f,
-            maxScroll);
-    }
-
-    if (itemCount > 0) {
-        const int moveY =
-            (input.pressed(InputAction::MoveDown) ? 1 : 0) -
-            (input.pressed(InputAction::MoveUp) ? 1 : 0);
-        if (moveY != 0) {
-            debugNamedLoadSelectedIndex_ = std::clamp(debugNamedLoadSelectedIndex_ + moveY, 0, itemCount - 1);
+    if (saving) {
+        updateUiTextInput(debugNamedSaveInput_, ui, layout.input);
+        if (ui.navigationActive()) {
+            if (ui.navigationFocused(layout.input)) {
+                focusUiTextInput(debugNamedSaveInput_);
+            } else {
+                blurUiTextInput(debugNamedSaveInput_);
+            }
+        }
+        if (debugNamedSaveInput_.text != debugNamedSaveInputSnapshot_) {
+            debugNamedSaveInputSnapshot_ = debugNamedSaveInput_.text;
+            debugNamedSaveSelectedIndex_ = -1;
+            refreshDebugNamedSaveTargetStatus();
         }
     }
 
+    const int itemCount = static_cast<int>(debugNamedSaveEntries_.size());
+    if (itemCount > 0) {
+        if (!saving || debugNamedSaveSelectedIndex_ >= 0) {
+            debugNamedSaveSelectedIndex_ = std::clamp(debugNamedSaveSelectedIndex_, 0, itemCount - 1);
+        }
+    } else {
+        debugNamedSaveSelectedIndex_ = -1;
+    }
+
+    UiScrollAreaLayout scrollLayout = updateUiScrollArea(
+        ui,
+        input,
+        layout.list,
+        debugNamedSaveContentHeight(layout, itemCount),
+        debugNamedSaveScrollOffset_,
+        {},
+        &debugNamedSaveScrollState_);
+
+    int navigationSelectedIndex = -1;
     for (int i = 0; i < itemCount; ++i) {
-        const UiRect row = debugNamedSaveLoadRowRect(layout, i, debugNamedLoadScrollOffset_);
-        if (row.pos.y + row.size.y < layout.list.pos.y ||
-            row.pos.y > layout.list.pos.y + layout.list.size.y) {
+        const UiRect row = debugNamedSaveRowRect(scrollLayout, i, layout.rowPitch);
+        if (ui.navigationFocused(row)) {
+            navigationSelectedIndex = i;
+        }
+        if (!uiScrollAreaRectVisible(scrollLayout, row)) {
             continue;
         }
+        if (ui.selectionFocused(row)) {
+            debugNamedSaveSelectedIndex_ = i;
+        }
         if (ui.pressed(row)) {
-            debugNamedLoadSelectedIndex_ = i;
+            const bool keyboardActivation = ui.navigationActive();
+            debugNamedSaveSelectedIndex_ = i;
+            if (saving) {
+                debugNamedSaveInput_.text = debugNamedSaveEntries_[static_cast<std::size_t>(i)].name;
+                debugNamedSaveInputSnapshot_ = debugNamedSaveInput_.text;
+                focusUiTextInput(debugNamedSaveInput_);
+                if (keyboardActivation) {
+                    ui.setNavigationFocus(layout.input);
+                }
+                refreshDebugNamedSaveTargetStatus();
+                if (keyboardActivation) {
+                    ui.block({{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}});
+                    return;
+                }
+            } else if (keyboardActivation) {
+                loadSelectedDebugNamedSave();
+                return;
+            }
             break;
         }
+    }
+    if (navigationSelectedIndex >= 0) {
+        debugNamedSaveSelectedIndex_ = navigationSelectedIndex;
+        keepUiScrollAreaRectVisible(
+            layout.list,
+            debugNamedSaveRowRect(scrollLayout, navigationSelectedIndex, layout.rowPitch),
+            debugNamedSaveContentHeight(layout, itemCount),
+            debugNamedSaveScrollOffset_);
+        scrollLayout = makeUiScrollAreaLayout(
+            layout.list,
+            debugNamedSaveContentHeight(layout, itemCount),
+            debugNamedSaveScrollOffset_);
+        ui.setNavigationFocus(debugNamedSaveRowRect(scrollLayout, navigationSelectedIndex, layout.rowPitch));
     }
 
     if (uiCancelRequested(debugNamedSaveCancelState_, input, ui, layout.panel) ||
         ui.pressed(layout.secondaryButton)) {
-        closeDebugNamedLoadDialog();
+        closeDebugNamedSaveDialog();
         return;
     }
-    if (ui.pressed(layout.primaryButton) || input.confirmPressed() || input.useItemPressed()) {
+
+    const bool primaryPressed = ui.pressed(layout.primaryButton);
+    if (saving) {
+        const bool canSave = !resolveDebugNamedSaveTarget(debugNamedSaveInput_.text).requestedName.empty();
+        if (primaryPressed ||
+            ((input.confirmPressed() || input.useItemPressed()) && debugNamedSaveInput_.focused)) {
+            if (tryActivateUiButton(ui, uiButtonState(canSave))) {
+                requestDebugNamedSave();
+            }
+            return;
+        }
+    } else if (primaryPressed && tryActivateUiButton(ui, uiButtonState(itemCount > 0))) {
         loadSelectedDebugNamedSave();
         return;
     }
@@ -8348,78 +8478,117 @@ void Game::updateDebugNamedSaveUi(const Input& input, UiContext& ui)
 
 void Game::renderDebugNamedSaveUi(Renderer& renderer) const
 {
-    if (!debugNamedSaveInputActive_ && !debugNamedLoadActive_) {
+    if (debugNamedSaveDialogMode_ == DebugNamedSaveDialogMode::Closed) {
         return;
     }
 
     renderer.setScreenSpace();
+    const bool saving = debugNamedSaveDialogMode_ == DebugNamedSaveDialogMode::Save;
+    const UiRect modalRect = saving
+        ? makeDebugNamedSaveInputLayout(camera_.width(), camera_.height()).panel
+        : makeDebugNamedSaveLoadLayout(camera_.width(), camera_.height()).panel;
+    UiModalNavigationScope navigationScope(modalRect);
     drawUiModalBackdrop(
         renderer,
         {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
         {0, 0, 0, 142});
 
     UiCancelControlScope cancelScope(debugNamedSaveCancelState_);
-    if (debugNamedSaveInputActive_) {
-        const DebugNamedSaveLayout layout = makeDebugNamedSaveInputLayout(camera_.width(), camera_.height());
-        UiWindowScope window(
-            renderer,
-            "debug.named_save.input",
-            layout.panel,
-            "デバッグ: 名前を付けてセーブ",
-            "キーボード入力  Enter 保存  Esc 戻る",
-            UiWindowOptions{true, true});
-
-        renderer.drawText(layout.panel.pos + Vec2{36.0f, 70.0f}, "保存名", ui::TextMuted, 2);
-        drawUiTextInput(renderer, layout.input, debugNamedSaveInput_, "例: boss_before_stage3", {});
-        renderer.drawText(layout.status.pos, fittedSingleLineText(renderer, debugNamedSaveStatus_, layout.status.size.x, 2), {255, 230, 150, 255}, 2);
-        drawUiRectButton(renderer, layout.secondaryButton, "キャンセル", false, uiCancelButtonStyle());
-        drawUiRectButton(renderer, layout.primaryButton, "保存", true, uiActionButtonStyle());
-        return;
-    }
-
-    const DebugNamedSaveLayout layout = makeDebugNamedSaveLoadLayout(camera_.width(), camera_.height());
-    const int itemCount = static_cast<int>(debugNamedLoadEntries_.size());
-    const float scrollOffset = clamp(debugNamedLoadScrollOffset_, 0.0f, debugNamedSaveLoadMaxScroll(layout, itemCount));
+    const DebugNamedSaveLayout layout = saving
+        ? makeDebugNamedSaveInputLayout(camera_.width(), camera_.height())
+        : makeDebugNamedSaveLoadLayout(camera_.width(), camera_.height());
+    {
     UiWindowScope window(
         renderer,
-        "debug.named_save.load",
+        saving ? "debug.named_save.input" : "debug.named_save.load",
         layout.panel,
-        "デバッグ: 名前付きセーブロード",
-        "方向キー 選択  Enter ロード  Esc 戻る",
+        saving ? "デバッグ: 名前を付けてセーブ" : "デバッグ: 名前付きセーブロード",
+        saving
+            ? "名前を入力、または既存セーブを選択  Enter 保存  Esc 戻る"
+            : "方向キー 選択  Enter ロード  Esc 戻る",
         UiWindowOptions{true, true});
 
+    if (saving) {
+        registerUiNavigationTarget(layout.input, UiNavigationRole::Control, true);
+        renderer.drawText(layout.panel.pos + Vec2{36.0f, 70.0f}, "保存名", ui::TextMuted, 2);
+        drawUiTextInput(renderer, layout.input, debugNamedSaveInput_, "例: boss_before_stage3", {});
+        renderer.drawText(layout.panel.pos + Vec2{36.0f, 154.0f}, "既存セーブから選択", ui::TextMuted, 2);
+    }
+
     drawUiSubPanel(renderer, layout.list);
+    const int itemCount = static_cast<int>(debugNamedSaveEntries_.size());
     if (itemCount <= 0) {
         renderer.drawText(layout.list.pos + Vec2{22.0f, 22.0f}, "名前付きセーブがありません", ui::TextMuted, 2);
     }
 
-    renderer.pushClipRect(layout.list.pos, layout.list.size);
+    const UiScrollAreaLayout scrollLayout = makeUiScrollAreaLayout(
+        layout.list,
+        debugNamedSaveContentHeight(layout, itemCount),
+        debugNamedSaveScrollOffset_);
+    const DebugNamedSaveTarget saveTarget = saving
+        ? resolveDebugNamedSaveTarget(debugNamedSaveInput_.text)
+        : DebugNamedSaveTarget{};
+
+    renderer.pushClipRect(scrollLayout.viewport.pos, scrollLayout.viewport.size);
     for (int i = 0; i < itemCount; ++i) {
-        const UiRect row = debugNamedSaveLoadRowRect(layout, i, scrollOffset);
-        if (row.pos.y + row.size.y < layout.list.pos.y ||
-            row.pos.y > layout.list.pos.y + layout.list.size.y) {
+        const UiRect row = debugNamedSaveRowRect(scrollLayout, i, layout.rowPitch);
+        registerUiNavigationTarget(
+            row,
+            UiNavigationRole::Grid,
+            !saving && i == debugNamedSaveSelectedIndex_);
+        if (!uiScrollAreaRectVisible(scrollLayout, row)) {
             continue;
         }
-        const bool selected = i == debugNamedLoadSelectedIndex_;
-        renderer.fillRect(row.pos, row.size, selected ? Color{54, 44, 72, 232} : Color{18, 20, 30, 218});
-        renderer.drawRect(row.pos, row.size, selected ? Color{255, 230, 150, 255} : Color{92, 100, 126, 210});
-        const DebugNamedSaveEntry& entry = debugNamedLoadEntries_[static_cast<std::size_t>(i)];
-        renderer.drawText(row.pos + Vec2{14.0f, 10.0f}, fittedSingleLineText(renderer, entry.name, row.size.x - 28.0f, 2), selected ? Color{255, 236, 166, 255} : ui::Text, 2);
+        const DebugNamedSaveEntry& entry = debugNamedSaveEntries_[static_cast<std::size_t>(i)];
+        const bool focused = uiControlVisualState(row).selected;
+        const bool overwriteTarget = saving &&
+            saveTarget.exists &&
+            debugNamedSavePathsReferToSameFile(entry.path, saveTarget.path);
+        UiControlMotionScope rowMotion(renderer, row, UiControlMotion::PressOnly);
+        renderer.fillRect(
+            row.pos,
+            row.size,
+            focused ? Color{54, 44, 72, 232} : (overwriteTarget ? Color{46, 40, 34, 224} : Color{18, 20, 30, 218}));
+        renderer.drawRect(
+            row.pos,
+            row.size,
+            focused ? Color{255, 230, 150, 255} : (overwriteTarget ? Color{180, 167, 127, 235} : Color{92, 100, 126, 210}));
+        const std::string suffix = overwriteTarget ? "  上書き対象" : std::string{};
+        renderer.drawText(
+            row.pos + Vec2{14.0f, 10.0f},
+            fittedSingleLineText(renderer, entry.name + suffix, row.size.x - 28.0f, 2),
+            focused || overwriteTarget ? Color{255, 236, 166, 255} : ui::Text,
+            2);
     }
     renderer.popClipRect();
 
-    const UiScrollAreaLayout scrollLayout = makeUiScrollAreaLayout(
-        layout.list,
-        debugNamedSaveLoadContentHeight(layout, itemCount),
-        scrollOffset);
     drawUiScrollAreaFrame(renderer, scrollLayout);
     renderer.drawText(layout.status.pos, fittedSingleLineText(renderer, debugNamedSaveStatus_, layout.status.size.x, 2), {255, 230, 150, 255}, 2);
     drawUiRectButton(renderer, layout.secondaryButton, "キャンセル", false, uiCancelButtonStyle());
-    UiButtonStyle loadStyle = uiActionButtonStyle();
-    if (itemCount <= 0) {
-        loadStyle.text = ui::TextDisabled;
+    const bool primaryEnabled = saving ? !saveTarget.requestedName.empty() : itemCount > 0;
+    const std::string primaryLabel = saving
+        ? (saveTarget.exists ? "上書き保存" : "新規保存")
+        : "ロード";
+    drawUiRectButton(
+        renderer,
+        layout.primaryButton,
+        primaryLabel,
+        true,
+        uiButtonState(primaryEnabled),
+        uiActionButtonStyle());
     }
-    drawUiRectButton(renderer, layout.primaryButton, "ロード", itemCount > 0, loadStyle);
+
+    if (debugNamedSaveOverwriteConfirm_.open) {
+        drawUiModalBackdrop(
+            renderer,
+            {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
+            {0, 0, 0, 112});
+        drawUiConfirmDialog(
+            renderer,
+            debugNamedSaveOverwriteConfirm_,
+            debugNamedSaveOverwriteConfirmRect(camera_.width(), camera_.height()),
+            "debug.named_save.overwrite_confirm");
+    }
 }
 
 void Game::rebuildDebugItemPickerList()
@@ -8693,6 +8862,7 @@ void Game::renderDebugItemPicker(Renderer& renderer) const
         debugItemPickerScrollOffset_,
         0.0f,
         debugItemPickerMaxScroll(layout, itemCount));
+    UiModalNavigationScope navigationScope(layout.panel);
 
     drawUiModalBackdrop(
         renderer,
@@ -8763,7 +8933,8 @@ void Game::renderDebugItemPicker(Renderer& renderer) const
         InventoryUiSlotStyle style;
         style.selected = selected;
         style.imageMaxSize = 46.0f;
-        style.showProtectionLabel = false;
+        style.showProtectionIcon = false;
+        applyInventoryUiPowerBadgeDiscovery(style, encyclopedia_);
         const UiRect iconRect{{
             rect.pos.x + (rect.size.x - DebugItemPickerIconSize) * 0.5f,
             rect.pos.y + 7.0f,
@@ -9021,6 +9192,7 @@ void Game::renderDebugStoryTest(Renderer& renderer) const
         debugStoryTestScrollOffset_,
         listStyle);
     const bool tutorials = debugStoryTestMode_ == DebugStoryTestMode::Tutorials;
+    UiModalNavigationScope navigationScope(layout.panel);
 
     drawUiModalBackdrop(
         renderer,
@@ -10245,8 +10417,8 @@ void Game::enterBaseEditMode()
     baseWarpPointSelectActive_ = false;
     baseStorageActive_ = false;
     baseStorageMode_ = StorageUiMode::Closed;
-    baseStorageQuantityDialog_ = {};
-    baseStorageQuantityPending_ = {};
+    baseQuantityDialog_ = {};
+    baseQuantityPending_ = {};
     baseSellActive_ = false;
     baseMerchantMode_ = MerchantUiMode::Closed;
     baseMerchantSellSource_ = 0;

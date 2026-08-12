@@ -296,7 +296,8 @@ constexpr float BaseEditHandleSize = 12.0f;
 constexpr float BaseEditHandleHitPadding = 8.0f;
 constexpr float RingObjectImageMaxSize = 48.0f;
 constexpr Vec2 RingItemUiRectSize{54.0f, 54.0f};
-constexpr Vec2 RingItemProtectionLabelOffset{0.0f, -12.0f};
+constexpr Vec2 RingItemIndicatorInset{5.0f, 5.0f};
+constexpr float RingItemPowerBadgeFillAlphaScale = 160.0f / 255.0f;
 constexpr float RingItemBottomLabelExtraHeight = 30.0f;
 constexpr float ObjectImageScaleMin = 0.25f;
 constexpr float ObjectImageScaleMax = 4.0f;
@@ -2987,19 +2988,25 @@ void drawRingItemShapeVisual(
     float totalSeconds,
     bool selected,
     bool invalid = false,
-    bool moveMode = false)
+    bool moveMode = false,
+    float alphaScale = 1.0f)
 {
+    alphaScale = std::clamp(alphaScale, 0.0f, 1.0f);
     center = ringItemActionDrawPosition(item, center, outward);
-    const Color outline = moveMode
-        ? Color{255, 142, 42, 255}
-        : (selected
-            ? (invalid ? Color{255, 92, 92, 255} : Color{255, 230, 150, 255})
-            : Color{96, 104, 126, 220});
+    const Color outline = scaledAlpha(
+        moveMode
+            ? Color{255, 142, 42, 255}
+            : (selected
+                ? (invalid ? Color{255, 92, 92, 255} : Color{255, 230, 150, 255})
+                : Color{96, 104, 126, 220}),
+        alphaScale);
     const bool broken = item.broken();
 
     if (object != nullptr) {
         ObjectImageDrawOptions baseImageOptions = ringItemActionFlashOptions(item);
         baseImageOptions = ringItemActionPoseOptions(item, baseImageOptions);
+        baseImageOptions.tint = scaledAlpha(baseImageOptions.tint, alphaScale);
+        baseImageOptions.outlineColor = scaledAlpha(baseImageOptions.outlineColor, alphaScale);
         baseImageOptions.rotationDegrees += ringItemRotationWobbleDegrees(item, totalSeconds);
         ObjectImageDrawOptions imageOptions = objectRingImageOptions(
             *object,
@@ -3022,6 +3029,8 @@ void drawRingItemShapeVisual(
     } else if (item.objectVisual.imageNumber > 0) {
         ObjectImageDrawOptions imageOptions = ringItemActionFlashOptions(item);
         imageOptions = ringItemActionPoseOptions(item, imageOptions);
+        imageOptions.tint = scaledAlpha(imageOptions.tint, alphaScale);
+        imageOptions.outlineColor = scaledAlpha(imageOptions.outlineColor, alphaScale);
         imageOptions.rotationDegrees += ringItemRotationWobbleDegrees(item, totalSeconds);
         imageOptions = itemImageOptionsWithBrokenState(imageOptions, broken);
         if (selected) {
@@ -3044,8 +3053,8 @@ void drawRingItemShapeVisual(
             renderer.drawLine(center + Vec2{-3.0f, 0.0f}, center + outward * 24.0f + Vec2{-3.0f, 0.0f}, outline);
             renderer.drawLine(center + Vec2{3.0f, 0.0f}, center + outward * 24.0f + Vec2{3.0f, 0.0f}, outline);
         }
-        renderer.fillCircle(center, 11.0f, itemFallbackColorForBrokenState({178, 184, 190, 255}, broken));
-        renderer.drawLine(center, center + outward * 20.0f, itemFallbackColorForBrokenState({90, 96, 102, 255}, broken));
+        renderer.fillCircle(center, 11.0f, scaledAlpha(itemFallbackColorForBrokenState({178, 184, 190, 255}, broken), alphaScale));
+        renderer.drawLine(center, center + outward * 20.0f, scaledAlpha(itemFallbackColorForBrokenState({90, 96, 102, 255}, broken), alphaScale));
         return;
     }
 
@@ -3054,16 +3063,16 @@ void drawRingItemShapeVisual(
             renderer.drawCircle(center, 17.0f, outline);
             renderer.drawCircle(center + Vec2{3.0f, -4.0f}, 8.0f, outline);
         }
-        renderer.fillCircle(center, 13.0f, itemFallbackColorForBrokenState({242, 122, 25, 255}, broken));
-        renderer.fillCircle(center + Vec2{3.0f, -4.0f}, 5.0f, itemFallbackColorForBrokenState({255, 238, 98, 255}, broken));
+        renderer.fillCircle(center, 13.0f, scaledAlpha(itemFallbackColorForBrokenState({242, 122, 25, 255}, broken), alphaScale));
+        renderer.fillCircle(center + Vec2{3.0f, -4.0f}, 5.0f, scaledAlpha(itemFallbackColorForBrokenState({255, 238, 98, 255}, broken), alphaScale));
         return;
     }
 
     if (selected) {
         renderer.drawCircle(center, 17.0f, outline);
     }
-    renderer.fillCircle(center, 12.0f, itemFallbackColorForBrokenState({96, 122, 210, 255}, broken));
-    renderer.drawCircle(center, 15.0f, itemFallbackColorForBrokenState({160, 202, 255, 255}, broken));
+    renderer.fillCircle(center, 12.0f, scaledAlpha(itemFallbackColorForBrokenState({96, 122, 210, 255}, broken), alphaScale));
+    renderer.drawCircle(center, 15.0f, scaledAlpha(itemFallbackColorForBrokenState({160, 202, 255, 255}, broken), alphaScale));
 }
 
 void drawRingItemShape(
@@ -3077,7 +3086,9 @@ void drawRingItemShape(
     bool selected,
     bool invalid = false,
     bool moveMode = false,
-    bool showProtectionLabel = true)
+    bool showProtectionIcon = true,
+    float alphaScale = 1.0f,
+    const EncyclopediaSystem* powerBadgeEncyclopedia = nullptr)
 {
     drawRingItemShapeVisual(
         renderer,
@@ -3089,22 +3100,49 @@ void drawRingItemShape(
         totalSeconds,
         selected,
         invalid,
-        moveMode);
+        moveMode,
+        alphaScale);
 
-    if (!showProtectionLabel || !item.protectionEnabled) {
+    const Vec2 visualCenter = ringItemActionDrawPosition(item, center, outward);
+    constexpr Vec2 IndicatorImageSize{RingObjectImageMaxSize, RingObjectImageMaxSize};
+    const UiRect itemImageRect{
+        visualCenter - IndicatorImageSize * 0.5f,
+        IndicatorImageSize,
+    };
+    InventoryUiPowerBadgeValues powerBadgeValues{};
+    if (object == nullptr) {
+        powerBadgeValues = {
+            std::max(0, item.damage),
+            std::max(0, item.digPower),
+            item.attackBonus > 0,
+            item.digBonus > 0,
+        };
+    } else if (powerBadgeEncyclopedia != nullptr) {
+        InventoryUiEntryView entry{};
+        entry.item = object;
+        entry.stats = inventoryUiStatsFromRingItem(item);
+        powerBadgeValues = inventoryUiPowerBadgeValues(entry, *powerBadgeEncyclopedia);
+    }
+    drawInventoryUiPowerBadges(
+        renderer,
+        itemImageRect,
+        powerBadgeValues,
+        InventoryUiPowerBadgeStyle{
+            .alphaScale = alphaScale,
+            .fillAlphaScale = RingItemPowerBadgeFillAlphaScale,
+            .edgeInset = RingItemIndicatorInset,
+        });
+
+    if (!showProtectionIcon || !item.protectionEnabled) {
         return;
     }
 
-    const Vec2 visualCenter = ringItemActionDrawPosition(item, center, outward);
-    const UiRect itemRect{
-        visualCenter - RingItemUiRectSize * 0.5f,
-        RingItemUiRectSize,
-    };
-    drawInventoryUiProtectionLabel(
+    drawInventoryUiProtectionIcon(
         renderer,
-        itemRect,
-        InventoryUiProtectionLabelStyle{
-            .offset = RingItemProtectionLabelOffset,
+        itemImageRect,
+        InventoryUiProtectionIconStyle{
+            .alphaScale = alphaScale,
+            .offset = RingItemIndicatorInset,
         });
 }
 

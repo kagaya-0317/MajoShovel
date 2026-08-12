@@ -35,6 +35,12 @@ ItemGridInteractionResult ItemGridInteractionController::update(
     UiContext& ui)
 {
     const ItemGridInteractionSlot* selected = slotAt(interaction.slots, interaction.selectedSlot);
+    int pressedSlot = -1;
+    for (int index = 0; index < static_cast<int>(interaction.slots.size()); ++index) {
+        if (ui.pressed(interaction.slots[static_cast<std::size_t>(index)].rect)) {
+            pressedSlot = index;
+        }
+    }
 
     if (interaction.grabPressed) {
         cancelPointer();
@@ -86,8 +92,8 @@ ItemGridInteractionResult ItemGridInteractionController::update(
     }
 
     const int hovered = hoveredSlotIndex(interaction.slots, ui);
-    if (input.mouseLeftPressed() && hovered >= 0 && !ui.pointerConsumed()) {
-        pointerPressSlot_ = hovered;
+    if (pressedSlot >= 0 && !ui.navigationActive()) {
+        pointerPressSlot_ = pressedSlot;
         pointerPressPosition_ = input.mouseScreen();
         pointerCanActivate_ = true;
         pointerDragging_ = false;

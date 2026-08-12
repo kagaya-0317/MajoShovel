@@ -439,6 +439,14 @@ function Placeholder-Sample([string]$Kind, [double]$Time, [double]$Duration, [Sy
             $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.16
             return $env * (0.34 * [Math]::Sin($TwoPi * 155.0 * $Time) + $noise)
         }
+        "se.enemy.rat_steal" {
+            $env = Decay $Time $Duration 1.45
+            $u = $Time / $Duration
+            $squeak = 1450.0 + 1050.0 * [Math]::Sin([Math]::PI * [Math]::Min(1.0, $u))
+            $chirp = if ($Time -ge 0.10) { Decay ($Time - 0.10) ($Duration - 0.10) 1.8 } else { 0.0 }
+            return $env * (0.34 * [Math]::Sin($TwoPi * $squeak * $Time) + 0.14 * [Math]::Sin($TwoPi * ($squeak * 1.92) * $Time)) +
+                $chirp * 0.18 * [Math]::Sin($TwoPi * 1880.0 * ($Time - 0.10))
+        }
         "se.enemy.mimic_bite" {
             $env = Decay $Time $Duration 1.25
             $u = $Time / $Duration
@@ -929,6 +937,9 @@ public static class MajoPlaceholderAudioHQ
                 return Ring(t, d, 880.0, 0.26, 1.25) + Ring(t, d, 1320.0, 0.18, 1.35);
             case "se.enemy.attack":
                 return Whoosh(t, d, rng, 520.0, 150.0, 0.12) + 0.16 * Burst(t, 0.040, 0.05, 2.1) * S(190.0, t);
+            case "se.enemy.rat_steal":
+                return Env(t, d, 0.003, 1.45) * (0.34 * Sweep(t, d, 1450.0, 2480.0) + 0.14 * Sweep(t, d, 2780.0, 4100.0)) +
+                    0.18 * Env(t - 0.10, d - 0.10, 0.002, 1.8) * Sweep(t - 0.10, d - 0.10, 2050.0, 1540.0);
             case "se.enemy.mimic_bite":
                 return Whoosh(t, d, rng, 620.0, 170.0, 0.13) + 0.22 * Burst(t, 0.070, 0.045, 2.2) * S(760.0, t) + 0.14 * Env(t, d, 0.002, 1.05) * S(88.0, t);
             case "se.enemy.shoot":
@@ -1119,6 +1130,7 @@ $clips = @(
     @{ Path = Join-Path $SeRoot "enemy_spawn_placeholder.wav"; Kind = "se.enemy.spawn"; Duration = 0.32; Seed = 2021 },
     @{ Path = Join-Path $SeRoot "enemy_alert_placeholder.wav"; Kind = "se.enemy.alert"; Duration = 0.18; Seed = 2022 },
     @{ Path = Join-Path $SeRoot "enemy_attack_placeholder.wav"; Kind = "se.enemy.attack"; Duration = 0.18; Seed = 2023 },
+    @{ Path = Join-Path $SeRoot "enemy_rat_steal.wav"; Kind = "se.enemy.rat_steal"; Duration = 0.30; Seed = 2124 },
     @{ Path = Join-Path $SeRoot "enemy_mimic_bite_placeholder.wav"; Kind = "se.enemy.mimic_bite"; Duration = 0.28; Seed = 2110 },
     @{ Path = Join-Path $SeRoot "enemy_shoot_placeholder.wav"; Kind = "se.enemy.shoot"; Duration = 0.14; Seed = 2024 },
     @{ Path = Join-Path $SeRoot "enemy_heal_placeholder.wav"; Kind = "se.enemy.heal"; Duration = 0.26; Seed = 2025 },

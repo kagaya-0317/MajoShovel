@@ -343,6 +343,34 @@ bool isDropStealTarget(const WorldDropItem& drop, const ObjectCatalog& catalog, 
     return false;
 }
 
+std::size_t nearestStealableDropIndex(
+    const std::vector<WorldDropItem>& drops,
+    const ObjectCatalog& catalog,
+    Vec2 center,
+    float radius,
+    std::string_view targetFilter,
+    const CollisionRect* allowedBounds)
+{
+    std::size_t nearestIndex = drops.size();
+    float nearestDistanceSq = radius * radius;
+    for (std::size_t i = 0; i < drops.size(); ++i) {
+        const WorldDropItem& drop = drops[i];
+        if (!isDropStealTarget(drop, catalog, targetFilter)) {
+            continue;
+        }
+        if (allowedBounds != nullptr && !circleIntersectsRect(drop.position, DropVisualRadius, *allowedBounds)) {
+            continue;
+        }
+        const float distanceSq = lengthSquared(drop.position - center);
+        if (distanceSq > nearestDistanceSq) {
+            continue;
+        }
+        nearestDistanceSq = distanceSq;
+        nearestIndex = i;
+    }
+    return nearestIndex;
+}
+
 bool objectDropCanEnterInventory(const WorldDropItem& drop, const ObjectCatalog& catalog, const InventorySystem* inventory)
 {
     return drop.kind != WorldDropKind::Object || inventory == nullptr || inventory->canAddObjectItem(catalog, drop.id);
@@ -741,7 +769,7 @@ bool WorldDropSystem::spawnObjectInstanceDrop(
     }
 
     const ObjectDefinition* object = catalog.registry.findById(instance.objectId);
-    if (object == nullptr) {
+    if (object == nullptr && runtimeItem == nullptr) {
         logDropWarning("discard object_id=\"" + instance.objectId + "\" is missing; no item drop spawned");
         return false;
     }
@@ -855,23 +883,13 @@ bool WorldDropSystem::stealNearestDrop(
         return false;
     }
 
-    std::size_t nearestIndex = drops_.size();
-    float nearestDistanceSq = radius * radius;
-    for (std::size_t i = 0; i < drops_.size(); ++i) {
-        const WorldDropItem& drop = drops_[i];
-        if (!isDropStealTarget(drop, catalog, targetFilter)) {
-            continue;
-        }
-        if (allowedBounds != nullptr && !circleIntersectsRect(drop.position, DropVisualRadius, *allowedBounds)) {
-            continue;
-        }
-        const float distanceSq = lengthSquared(drop.position - center);
-        if (distanceSq > nearestDistanceSq) {
-            continue;
-        }
-        nearestDistanceSq = distanceSq;
-        nearestIndex = i;
-    }
+    const std::size_t nearestIndex = nearestStealableDropIndex(
+        drops_,
+        catalog,
+        center,
+        radius,
+        targetFilter,
+        allowedBounds);
 
     if (nearestIndex >= drops_.size()) {
         return false;
@@ -880,6 +898,26 @@ bool WorldDropSystem::stealNearestDrop(
     outDrop = drops_[nearestIndex];
     drops_.erase(drops_.begin() + static_cast<std::ptrdiff_t>(nearestIndex));
     return true;
+}
+
+const WorldDropItem* WorldDropSystem::nearestStealableDrop(
+    const ObjectCatalog& catalog,
+    Vec2 center,
+    float radius,
+    std::string_view targetFilter,
+    const CollisionRect* allowedBounds) const
+{
+    if (drops_.empty() || radius <= 0.0f) {
+        return nullptr;
+    }
+    const std::size_t nearestIndex = nearestStealableDropIndex(
+        drops_,
+        catalog,
+        center,
+        radius,
+        targetFilter,
+        allowedBounds);
+    return nearestIndex < drops_.size() ? &drops_[nearestIndex] : nullptr;
 }
 
 int WorldDropSystem::pullNearbyDrops(

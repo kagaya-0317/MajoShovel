@@ -2895,6 +2895,23 @@ std::filesystem::path Game::debugNamedSaveDataPath(std::string_view name) const
     return debugNamedSaveDataDirectory() / std::filesystem::path(toPathUtf8(safeName + ".dat"));
 }
 
+Game::DebugNamedSaveTarget Game::resolveDebugNamedSaveTarget(std::string_view name) const
+{
+    DebugNamedSaveTarget target;
+    target.requestedName = trimAscii(std::string(name));
+    if (target.requestedName.empty()) {
+        return target;
+    }
+
+    // 表示名ではなく、安全化後の実パスを上書き判定の正とする。
+    target.path = debugNamedSaveDataPath(target.requestedName);
+    target.fileName = fromPathUtf8(target.path.stem().u8string());
+
+    std::error_code error;
+    target.exists = std::filesystem::is_regular_file(target.path, error) && !error;
+    return target;
+}
+
 std::vector<Game::DebugNamedSaveEntry> Game::listDebugNamedSaveData() const
 {
     std::vector<DebugNamedSaveEntry> entries;

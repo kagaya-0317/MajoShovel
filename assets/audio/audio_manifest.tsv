@@ -20,6 +20,8 @@ se.dev.build_failed	se	se/0_Cancel1.wav	0.8	false	0	32.193	開発用ビルド失
 se.facility.forge_upgrade	se	se/facility_forge_upgrade.wav	0.82	false	180	0	拠点強化炉 強化完了
 se.facility.workbench_upgrade	se	se/facility_workbench_upgrade.wav	0.78	false	140	0	作業台 強化完了
 se.facility.workbench_repair	se	se/facility_workbench_repair.wav	0.76	false	160	0	作業台 修理完了
+se.facility.ring_workshop_upgrade	se	se/0_Recharge1.wav	0.82	false	180	26.303	リング工房 強化完了
+se.facility.ring_workshop_respec	se	se/0_Recharge2.wav	0.82	false	180	26.303	リング工房 再調整完了
 se.facility.diary_save	se	se/0_Message.wav	0.88	false	180	0	日記 保存完了
 se.merchant.transaction	se	se/merchant_transaction.wav	0.74	false	90	0	商人 取引完了
 se.dialogue.advance	se	se/0_Cursor5.wav	0.7	false	45	0	メッセージ送り
@@ -76,6 +78,7 @@ se.enemy.spawn	se	se/0_Dash.wav	0.7	false	180	48.543	敵出現
 se.enemy.buried_warning	se	se/zz_tmp_enemy_buried_warning_placeholder.wav	0.74	false	80	0	埋没敵予兆
 se.enemy.alert	se	se/zz_tmp_enemy_alert_placeholder.wav	0.72	false	180	0	敵発見
 se.enemy.attack	se	se/zz_tmp_enemy_attack_placeholder.wav	0.76	false	140	0	敵攻撃
+se.enemy.rat_steal	se	se/enemy_rat_steal.wav	0.82	false	120	0	金食いネズミ 盗み「チュウ！」
 se.enemy.mimic_bite	se	se/bite3.wav	0.78	false	130	0	ミミック噛みつき
 se.enemy.shoot	se	se/shot6.wav	0.66	false	90	29	敵射撃
 se.enemy.heal	se	se/zz_tmp_enemy_heal_placeholder.wav	0.68	false	220	0	敵回復

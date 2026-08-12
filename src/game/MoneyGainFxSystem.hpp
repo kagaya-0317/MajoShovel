@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "engine/Math.hpp"
+#include "engine/RendererTypes.hpp"
 
 #include <cstdint>
 #include <vector>
@@ -30,7 +31,7 @@ public:
     [[nodiscard]] int displayedMoney(int authoritativeMoney) const;
     [[nodiscard]] int pendingDisplayAmount() const;
     [[nodiscard]] float hudPulseStrength() const;
-    [[nodiscard]] bool active() const { return !coins_.empty() || !arrivalPulses_.empty(); }
+    [[nodiscard]] bool active() const { return !coins_.empty() || !sparkles_.empty() || !arrivalPulses_.empty(); }
     std::vector<MoneyGainSpawnEvent> consumeSpawnEvents();
     std::vector<MoneyGainArrivalEvent> consumeArrivalEvents();
 
@@ -58,9 +59,21 @@ private:
         float initialDepthAxisDegrees = 90.0f;
         float absorbDepthRotationDegrees = 0.0f;
         float absorbDepthAxisDegrees = 90.0f;
+        float sparkleTimerSeconds = 0.0f;
+        float trailIntensity = 1.0f;
+        std::uint32_t sparkleRandomState = 1;
         int displayAmount = 0;
         int sequenceIndex = 0;
         int sequenceCount = 1;
+    };
+
+    struct Sparkle {
+        Vec2 position{};
+        Color color{};
+        float ageSeconds = 0.0f;
+        float durationSeconds = 0.18f;
+        float size = 4.0f;
+        float rotationRadians = 0.0f;
     };
 
     struct ArrivalPulse {
@@ -70,6 +83,7 @@ private:
     };
 
     std::vector<Coin> coins_;
+    std::vector<Sparkle> sparkles_;
     std::vector<ArrivalPulse> arrivalPulses_;
     std::vector<MoneyGainSpawnEvent> spawnEvents_;
     std::vector<MoneyGainArrivalEvent> arrivalEvents_;

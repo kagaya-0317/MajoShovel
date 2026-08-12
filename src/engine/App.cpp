@@ -852,7 +852,7 @@ bool App::initialize(
         debugConsole_.setDropdownSelection("launch_mode", devLaunchModeDropdownIndex(launchMode));
         logInfo(std::string("Auto reload block: ") + (autoReloadBlocked_ ? "ON" : "OFF"));
         logInfo(std::string("Launch mode: ") + devLaunchModeLogName(launchMode));
-        logInfo("Test-play debug console enabled. Press F8 to show or hide it.");
+        logInfo("Test-play debug console enabled. Press F8 to show and focus it.");
     }
     startupLaunchModeCommand_ =
         testPlayMode_ && launchMode != DevLaunchMode::PreTitle
@@ -1803,11 +1803,7 @@ void App::renderStartupFrame()
     loadingGaugeStyle.trackInner = {30, 38, 52, 220};
     loadingGaugeStyle.trackOuter = {218, 228, 244, 78};
     loadingGaugeStyle.shadow = {0, 0, 0, 105};
-    loadingGaugeStyle.tick = {255, 255, 255, 32};
     loadingGaugeStyle.highlight = {255, 255, 255, 118};
-    loadingGaugeStyle.capGlow = {132, 230, 250, 78};
-    loadingGaugeStyle.capCore = {246, 252, 255, 225};
-    loadingGaugeStyle.tickCount = 8;
     loadingGaugeStyle.shimmer = {255, 255, 255, 76};
     loadingGaugeStyle.shimmerPhase =
         std::fmod(std::max(0.0f, totalSeconds) * 116.0f, BarW + loadingGaugeStyle.shimmerWidth) /
@@ -2036,7 +2032,7 @@ void App::run()
             continue;
         }
         if (testPlayMode_ && input_.openConsolePressed()) {
-            debugConsole_.toggleVisible();
+            debugConsole_.showAndFocus();
         }
         if (startupLoadActive_) {
             if (!running_) {

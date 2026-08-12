@@ -22,15 +22,10 @@ constexpr float PopupLineGap = 6.0f;
 constexpr float PopupScreenMargin = 12.0f;
 constexpr float PopupTopMargin = 58.0f;
 constexpr float PopupAvoidPadding = 8.0f;
-constexpr float PopupFadeInSeconds = 0.2f;
-constexpr float PopupFadeOutSeconds = 0.2f;
 constexpr float PopupHoldAfterRevealSeconds = 4.5f;
 constexpr float PopupRevealUnitsPerSecond = 102.0f;
-constexpr float PopupAppearScale = 1.25f;
-constexpr float PopupScaleHoldSeconds = 1.0f;
-constexpr float PopupScaleEaseSeconds = 0.45f;
 constexpr int PopupTextScale = 2;
-constexpr int MaxActiveDiscoveryPopups = 3;
+constexpr float PopupMinPlayerDistance = 144.0f;
 constexpr std::string_view TreasureCategory = "\xE5\xAE\x9D";
 constexpr std::string_view NoEffectText = "\xE3\x81\xAA\xE3\x81\x97";
 
@@ -48,12 +43,6 @@ struct PopupTextLine {
 int stageValue(EncyclopediaStage stage)
 {
     return static_cast<int>(stage);
-}
-
-float smootherStep01(float value)
-{
-    value = std::clamp(value, 0.0f, 1.0f);
-    return value * value * value * (value * (value * 6.0f - 15.0f) + 10.0f);
 }
 
 bool isNoEffectKey(std::string_view key)
@@ -237,25 +226,6 @@ float popupTextBlockHeight(Renderer& renderer, std::size_t lineCount)
     return popupLineHeight(renderer) * static_cast<float>(lineCount) - PopupLineGap;
 }
 
-float popupVisualScale(float elapsed)
-{
-    if (elapsed <= PopupScaleHoldSeconds || PopupScaleEaseSeconds <= 0.0f) {
-        return PopupAppearScale;
-    }
-    const float t = smootherStep01((elapsed - PopupScaleHoldSeconds) / PopupScaleEaseSeconds);
-    return lerp(PopupAppearScale, 1.0f, t);
-}
-
-UiRect scaledCenteredPopupRect(Vec2 basePos, Vec2 baseSize, float scale)
-{
-    const float safeScale = std::max(0.001f, scale);
-    const Vec2 size = baseSize * safeScale;
-    return {
-        basePos - (size - baseSize) * 0.5f,
-        size,
-    };
-}
-
 UiRect expandedRect(UiRect rect, float padding)
 {
     rect.pos -= Vec2{padding, padding};
@@ -287,28 +257,18 @@ float totalAvoidOverlap(UiRect popup, std::span<const UiRect> avoidRects)
     return total;
 }
 
-float popupFadeAlpha(float elapsed, float revealSeconds)
+float pointToRectDistance(Vec2 point, UiRect rect)
 {
-    if (PopupFadeInSeconds > 0.0f && elapsed < PopupFadeInSeconds) {
-        return std::clamp(elapsed / PopupFadeInSeconds, 0.0f, 1.0f);
-    }
-
-    const float fadeOutStart = PopupFadeInSeconds + revealSeconds + PopupHoldAfterRevealSeconds;
-    if (PopupFadeOutSeconds > 0.0f && elapsed > fadeOutStart) {
-        return 1.0f - std::clamp((elapsed - fadeOutStart) / PopupFadeOutSeconds, 0.0f, 1.0f);
-    }
-
-    return 1.0f;
-}
-
-float popupRevealElapsed(float elapsed)
-{
-    return std::max(0.0f, elapsed - PopupFadeInSeconds);
+    const float right = rect.pos.x + rect.size.x;
+    const float bottom = rect.pos.y + rect.size.y;
+    const float dx = std::max({rect.pos.x - point.x, 0.0f, point.x - right});
+    const float dy = std::max({rect.pos.y - point.y, 0.0f, point.y - bottom});
+    return std::sqrt(dx * dx + dy * dy);
 }
 
 float popupTotalDuration(float revealSeconds)
 {
-    return PopupFadeInSeconds + revealSeconds + PopupHoldAfterRevealSeconds + PopupFadeOutSeconds;
+    return revealSeconds + PopupHoldAfterRevealSeconds;
 }
 
 float clampPopupAxis(float value, float minValue, float maxValue)
@@ -333,9 +293,11 @@ Vec2 choosePopupPosition(
     Vec2 desired,
     Vec2 size,
     const Camera& camera,
+    Vec2 playerScreenPosition,
     std::span<const UiRect> avoidRects)
 {
-    const std::array<Vec2, 8> candidates{{
+    constexpr float DiagonalDistance = PopupMinPlayerDistance * 0.70710678118f;
+    const std::array<Vec2, 16> candidates{{
         desired,
         anchor + Vec2{14.0f, 18.0f},
         anchor + Vec2{-size.x - 14.0f, -34.0f},
@@ -344,19 +306,36 @@ Vec2 choosePopupPosition(
         anchor + Vec2{-size.x * 0.5f, 18.0f},
         anchor + Vec2{18.0f, -size.y * 0.5f},
         anchor + Vec2{-size.x - 18.0f, -size.y * 0.5f},
+        playerScreenPosition + Vec2{PopupMinPlayerDistance, -size.y * 0.5f},
+        playerScreenPosition + Vec2{-PopupMinPlayerDistance - size.x, -size.y * 0.5f},
+        playerScreenPosition + Vec2{-size.x * 0.5f, PopupMinPlayerDistance},
+        playerScreenPosition + Vec2{-size.x * 0.5f, -PopupMinPlayerDistance - size.y},
+        playerScreenPosition + Vec2{DiagonalDistance, -DiagonalDistance - size.y},
+        playerScreenPosition + Vec2{-DiagonalDistance - size.x, -DiagonalDistance - size.y},
+        playerScreenPosition + Vec2{DiagonalDistance, DiagonalDistance},
+        playerScreenPosition + Vec2{-DiagonalDistance - size.x, DiagonalDistance},
     }};
 
     Vec2 best = clampPopupPosition(desired, size, camera);
-    float bestScore = std::numeric_limits<float>::max();
+    float bestPlayerShortfall = std::numeric_limits<float>::max();
+    float bestOverlap = std::numeric_limits<float>::max();
+    float bestMovement = std::numeric_limits<float>::max();
     for (Vec2 candidate : candidates) {
         const Vec2 pos = clampPopupPosition(candidate, size, camera);
         const UiRect rect{pos, size};
+        const float playerDistance = pointToRectDistance(playerScreenPosition, rect);
+        const float playerShortfall = std::max(0.0f, PopupMinPlayerDistance - playerDistance);
         const float overlap = totalAvoidOverlap(rect, avoidRects);
         const float movement = lengthSquared(pos - desired);
-        const float score = overlap * 100000.0f + movement;
-        if (score < bestScore) {
+        const bool better =
+            playerShortfall < bestPlayerShortfall ||
+            (playerShortfall == bestPlayerShortfall && overlap < bestOverlap) ||
+            (playerShortfall == bestPlayerShortfall && overlap == bestOverlap && movement < bestMovement);
+        if (better) {
             best = pos;
-            bestScore = score;
+            bestPlayerShortfall = playerShortfall;
+            bestOverlap = overlap;
+            bestMovement = movement;
         }
     }
     return best;
@@ -437,32 +416,40 @@ void EncyclopediaSystem::clear()
     updateLog_.clear();
 }
 
-void EncyclopediaSystem::update(float dt)
+std::optional<EncyclopediaPopupStartedEvent> EncyclopediaSystem::update(float dt, bool allowPopupStart)
 {
-    for (Popup& popup : activePopups_) {
-        if (popup.duration > 0.0f) {
-            popup.elapsed += std::max(0.0f, dt);
+    if (!activePopups_.empty()) {
+        Popup& active = activePopups_.front();
+        if (active.duration > 0.0f) {
+            active.elapsed += std::max(0.0f, dt);
+        }
+        if (active.duration <= 0.0f || active.elapsed >= active.duration) {
+            activePopups_.clear();
         }
     }
-    activePopups_.erase(
-        std::remove_if(activePopups_.begin(), activePopups_.end(), [](const Popup& popup) {
-            return popup.duration <= 0.0f || popup.elapsed >= popup.duration;
-        }),
-        activePopups_.end());
 
-    while (static_cast<int>(activePopups_.size()) < MaxActiveDiscoveryPopups && !queuedPopups_.empty()) {
-        Popup popup = queuedPopups_.front();
+    if (allowPopupStart && activePopups_.empty() && !queuedPopups_.empty()) {
+        Popup popup = std::move(queuedPopups_.front());
         queuedPopups_.pop_front();
         popup.elapsed = 0.0f;
         popup.screenPositionLocked = false;
         activePopups_.push_back(std::move(popup));
+        const Popup& active = activePopups_.front();
+        if (active.cue != EncyclopediaPopupCue::None) {
+            return EncyclopediaPopupStartedEvent{
+                .cue = active.cue,
+                .position = active.position,
+            };
+        }
     }
+    return std::nullopt;
 }
 
 void EncyclopediaSystem::renderPopups(
     Renderer& renderer,
     const Camera& camera,
     const ObjectCatalog& catalog,
+    Vec2 playerWorldPosition,
     std::span<const UiRect> avoidRects)
 {
     if (activePopups_.empty()) {
@@ -471,67 +458,57 @@ void EncyclopediaSystem::renderPopups(
 
     const InlineItemTextStyle textStyle = popupTextStyle();
     const float contentWidth = std::max(0.0f, PopupWidth - PopupPaddingX * 2.0f);
-    std::vector<UiRect> popupAvoidRects(avoidRects.begin(), avoidRects.end());
+    const Vec2 playerScreenPosition = camera.worldToScreen(playerWorldPosition);
 
     renderer.setScreenSpace();
-    for (Popup& popup : activePopups_) {
-        if (popup.duration <= 0.0f || popup.text.empty()) {
-            continue;
-        }
+    Popup& popup = activePopups_.front();
+    if (popup.duration <= 0.0f || popup.text.empty()) {
+        return;
+    }
 
-        if (!popup.layoutReady) {
-            const std::vector<PopupTextLine> lines = layoutPopupText(renderer, popup.text, contentWidth, textStyle);
-            popup.layoutLines.clear();
-            popup.layoutLines.reserve(lines.size());
-            for (const PopupTextLine& line : lines) {
-                popup.layoutLines.push_back({line.text, line.startUnit, line.unitCount});
-            }
-            popup.baseSize = {
-                PopupWidth,
-                std::max(PopupMinHeight, popupTextBlockHeight(renderer, popup.layoutLines.size()) + PopupPaddingY * 2.0f),
-            };
-            popup.layoutReady = true;
+    if (!popup.layoutReady) {
+        const std::vector<PopupTextLine> lines = layoutPopupText(renderer, popup.text, contentWidth, textStyle);
+        popup.layoutLines.clear();
+        popup.layoutLines.reserve(lines.size());
+        for (const PopupTextLine& line : lines) {
+            popup.layoutLines.push_back({line.text, line.startUnit, line.unitCount});
         }
+        popup.baseSize = {
+            PopupWidth,
+            std::max(PopupMinHeight, popupTextBlockHeight(renderer, popup.layoutLines.size()) + PopupPaddingY * 2.0f),
+        };
+        popup.layoutReady = true;
+    }
 
-        const Vec2 baseSize = popup.baseSize;
-        const Vec2 maxSize = baseSize * PopupAppearScale;
+    const Vec2 baseSize = popup.baseSize;
+    if (!popup.screenPositionLocked) {
         const Vec2 anchor = camera.worldToScreen(popup.position);
         const Vec2 desired = anchor + Vec2{14.0f, -34.0f};
-        UiRect maxPanel = scaledCenteredPopupRect(popup.screenPosition, baseSize, PopupAppearScale);
-        const Vec2 clampedMaxPos = clampPopupPosition(maxPanel.pos, maxPanel.size, camera);
-        const bool offscreen = lengthSquared(clampedMaxPos - maxPanel.pos) > 0.25f;
-        if (!popup.screenPositionLocked || offscreen || totalAvoidOverlap(maxPanel, popupAvoidRects) > 0.0f) {
-            const Vec2 maxDesired = desired - (maxSize - baseSize) * 0.5f;
-            const Vec2 maxPos = choosePopupPosition(anchor, maxDesired, maxSize, camera, popupAvoidRects);
-            popup.screenPosition = maxPos + (maxSize - baseSize) * 0.5f;
-            popup.screenPositionLocked = true;
-            maxPanel = {maxPos, maxSize};
+        popup.screenPosition = choosePopupPosition(
+            anchor,
+            desired,
+            baseSize,
+            camera,
+            playerScreenPosition,
+            avoidRects);
+        popup.screenPositionLocked = true;
+    }
+
+    const UiRect panel{popup.screenPosition, baseSize};
+    drawDiscoveryPopupBackdrop(renderer, panel);
+
+    const int visibleUnits = popup.elapsed >= popup.revealSeconds
+        ? popup.revealUnitCount
+        : std::clamp(static_cast<int>(std::floor(popup.elapsed * PopupRevealUnitsPerSecond)), 0, popup.revealUnitCount);
+    const float lineHeight = popupLineHeight(renderer);
+    Vec2 linePos = panel.pos + Vec2{PopupPaddingX, PopupPaddingY};
+    for (const PopupLayoutLine& line : popup.layoutLines) {
+        const int lineVisibleUnits = std::clamp(visibleUnits - line.startUnit, 0, line.unitCount);
+        const std::string visibleLine = visiblePopupLineText(line.text, lineVisibleUnits);
+        if (!visibleLine.empty()) {
+            drawInlineItemText(renderer, catalog, linePos, visibleLine, textStyle);
         }
-
-        const float alpha = popupFadeAlpha(popup.elapsed, popup.revealSeconds);
-        const float visualScale = popupVisualScale(popup.elapsed);
-        const UiRect panel{popup.screenPosition, baseSize};
-        renderer.pushScreenTransform(panel.pos + panel.size * 0.5f, visualScale, alpha);
-
-        drawDiscoveryPopupBackdrop(renderer, panel);
-
-        const float revealElapsed = popupRevealElapsed(popup.elapsed);
-        const int visibleUnits = revealElapsed >= popup.revealSeconds
-            ? popup.revealUnitCount
-            : std::clamp(static_cast<int>(std::floor(revealElapsed * PopupRevealUnitsPerSecond)), 0, popup.revealUnitCount);
-        const float lineHeight = popupLineHeight(renderer);
-        Vec2 linePos = panel.pos + Vec2{PopupPaddingX, PopupPaddingY};
-        for (const PopupLayoutLine& line : popup.layoutLines) {
-            const int lineVisibleUnits = std::clamp(visibleUnits - line.startUnit, 0, line.unitCount);
-            const std::string visibleLine = visiblePopupLineText(line.text, lineVisibleUnits);
-            if (!visibleLine.empty()) {
-                drawInlineItemText(renderer, catalog, linePos, visibleLine, textStyle);
-            }
-            linePos.y += lineHeight;
-        }
-        renderer.popScreenTransform();
-
-        popupAvoidRects.push_back(maxPanel);
+        linePos.y += lineHeight;
     }
 }
 
@@ -732,7 +709,7 @@ void EncyclopediaSystem::enqueueEffectPopup(std::span<const EffectPopupLine> lin
         popup += "\n";
         popup += note;
     }
-    enqueuePopup(std::move(popup), first.position);
+    enqueuePopup(std::move(popup), first.position, EncyclopediaPopupCue::EffectDiscovery);
 }
 
 void EncyclopediaSystem::noteEnemyDiscovered(std::string_view enemyId, std::string_view enemyName, Vec2 position)
@@ -763,7 +740,7 @@ bool EncyclopediaSystem::noteEnemyInspected(const EnemyDefinition& enemy, Vec2 p
     popup += std::to_string(std::max(0, enemy.contactAttackPower));
     popup += "\n";
     popup += enemy.description.empty() ? "-" : enemy.description;
-    enqueuePopup(std::move(popup), position);
+    enqueuePopup(std::move(popup), position, EncyclopediaPopupCue::MonsterDiscovery);
     return true;
 }
 
@@ -921,12 +898,21 @@ std::string EncyclopediaSystem::canonicalEffectKey(std::string_view effectKey)
 std::size_t EncyclopediaSystem::findEffectLineIndexByKey(const ObjectDefinition& object, std::string_view effectKey)
 {
     const std::string canonical = canonicalEffectKey(effectKey);
-    const auto it = std::find_if(
+    const auto matchesKey = [&canonical](const DiscoveryEffectLine& line) {
+        return line.effectKey == canonical || canonicalEffectKey(line.effectKey) == canonical;
+    };
+    auto it = std::find_if(
         object.discoveryEffectLines.begin(),
         object.discoveryEffectLines.end(),
-        [&canonical](const DiscoveryEffectLine& line) {
-            return line.effectKey == canonical || canonicalEffectKey(line.effectKey) == canonical;
+        [&matchesKey](const DiscoveryEffectLine& line) {
+            return line.trigger != DiscoveryTrigger::NormalEffect && matchesKey(line);
         });
+    if (it == object.discoveryEffectLines.end()) {
+        it = std::find_if(
+            object.discoveryEffectLines.begin(),
+            object.discoveryEffectLines.end(),
+            matchesKey);
+    }
     if (it == object.discoveryEffectLines.end()) {
         return object.discoveryEffectLines.size();
     }
@@ -948,7 +934,7 @@ bool EncyclopediaSystem::raiseObjectStage(const ObjectDefinition& object, Encycl
     const std::string log = std::string("図鑑更新 ") + name + " " + encyclopediaStageName(stage);
     updateLog_.push_back(log);
     if (popup) {
-        enqueuePopup(log, position);
+        enqueuePopup(log, position, EncyclopediaPopupCue::None);
     }
     return true;
 }
@@ -967,12 +953,12 @@ bool EncyclopediaSystem::raiseEnemyStage(std::string_view enemyId, std::string_v
     const std::string log = std::string("敵図鑑更新 ") + name + " " + encyclopediaStageName(stage);
     updateLog_.push_back(log);
     if (popup) {
-        enqueuePopup(log, position);
+        enqueuePopup(log, position, EncyclopediaPopupCue::None);
     }
     return true;
 }
 
-void EncyclopediaSystem::enqueuePopup(std::string text, Vec2 position)
+void EncyclopediaSystem::enqueuePopup(std::string text, Vec2 position, EncyclopediaPopupCue cue)
 {
     if (text.empty()) {
         return;
@@ -987,6 +973,7 @@ void EncyclopediaSystem::enqueuePopup(std::string text, Vec2 position)
         .duration = popupTotalDuration(revealSeconds),
         .revealSeconds = revealSeconds,
         .revealUnitCount = revealUnits,
+        .cue = cue,
     });
 }
 
