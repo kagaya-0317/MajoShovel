@@ -149,7 +149,48 @@ struct InlineItemTextStyle {
     Vec2 pos,
     int rarity,
     float animationSeconds);
+float drawInventoryUiDetailHeader(
+    Renderer& renderer,
+    UiRect panel,
+    std::string_view text,
+    std::string_view category,
+    int rarity,
+    float animationSeconds);
+[[nodiscard]] float measureInventoryUiDetailHeaderHeight(
+    Renderer& renderer,
+    UiRect panel,
+    std::string_view text,
+    std::string_view category,
+    int rarity);
+[[nodiscard]] float measureInventoryUiItemEffectSections(
+    Renderer& renderer,
+    UiRect panel,
+    const ItemData& item,
+    const ObjectCatalog& catalog,
+    const EncyclopediaSystem& encyclopedia,
+    const std::optional<InventoryUiItemStats>& stats,
+    int unlockedRingCount);
+void drawInventoryUiItemEffectSections(
+    Renderer& renderer,
+    UiRect panel,
+    float& y,
+    const ItemData& item,
+    const ObjectCatalog& catalog,
+    const EncyclopediaSystem& encyclopedia,
+    const std::optional<InventoryUiItemStats>& stats,
+    int unlockedRingCount);
 [[nodiscard]] std::string formatInventoryUiWeightText(
+    const ItemData& item,
+    const std::optional<InventoryUiItemStats>& stats = std::nullopt);
+[[nodiscard]] float measureInventoryUiWeightLineHeight(
+    Renderer& renderer,
+    UiRect panel,
+    const ItemData& item,
+    const std::optional<InventoryUiItemStats>& stats = std::nullopt);
+void drawInventoryUiWeightLine(
+    Renderer& renderer,
+    UiRect panel,
+    float& y,
     const ItemData& item,
     const std::optional<InventoryUiItemStats>& stats = std::nullopt);
 [[nodiscard]] Vec2 measureInlineItemText(

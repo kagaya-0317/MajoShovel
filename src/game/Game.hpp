@@ -436,8 +436,7 @@ private:
     struct LevelUpPresentationState {
         bool active = false;
         float elapsedSeconds = 0.0f;
-        float durationSeconds = 1.2f;
-        float sparkleTimer = 0.0f;
+        float durationSeconds = 1.5f;
     };
 
     enum class AstralDistortionKind {
@@ -1375,8 +1374,20 @@ private:
         Material,
         Money,
     };
+    enum class AcquisitionNoticePresentation {
+        FirstDiscovery,
+        Standard,
+        Reward,
+    };
+    enum class AcquisitionNoticeAnimationPhase {
+        Opening,
+        Visible,
+        Closing,
+    };
     struct AcquisitionNotice {
         AcquisitionNoticeKind kind = AcquisitionNoticeKind::Object;
+        AcquisitionNoticePresentation presentation = AcquisitionNoticePresentation::Standard;
+        AcquisitionNoticeAnimationPhase animationPhase = AcquisitionNoticeAnimationPhase::Opening;
         std::string title;
         std::string objectId;
         std::string instanceId;
@@ -1384,6 +1395,9 @@ private:
         MaterialType materialType = MaterialType::EnhancementOre;
         int amount = 1;
         bool protectable = false;
+        bool jingleOnShow = false;
+        bool jinglePlayed = false;
+        float animationProgress = 0.0f;
     };
     struct CaptureAbsorbAnimation {
         Enemy enemy;
@@ -1598,11 +1612,12 @@ private:
     bool shouldRecordEffectDiscoveries() const;
     void recordMainObjectObtained(std::string_view objectId);
     void recordMainCapturedEnemy(std::string_view enemyId);
-    void recordObjectObtainedForFirstNotice(
+    void recordObjectAcquisitionNotice(
         std::string_view objectId,
         std::string_view instanceId,
         bool protectable,
-        Vec2 position);
+        Vec2 position,
+        int amount = 1);
     void recordRewardObjectAcquisitionNotice(
         std::string_view objectId,
         std::string_view instanceId,
@@ -1610,20 +1625,25 @@ private:
         Vec2 position);
     void recordRewardMaterialAcquisitionNotice(MaterialType materialType, int amount);
     void recordRewardMoneyAcquisitionNotice(int amount);
-    bool firstItemAcquisitionNoticeActive() const;
-    void closeFirstItemAcquisitionNotice();
+    bool itemAcquisitionNoticeActive() const;
+    void playItemAcquisitionNoticeJingle();
+    void closeItemAcquisitionNotice();
     void queueIntroTutorialChestLootDialogueIfReady();
-    void updateFirstItemAcquisitionNotice(const Input& input, UiContext& ui);
+    float measureItemAcquisitionNoticeContentHeight(
+        Renderer& renderer,
+        const AcquisitionNotice& notice) const;
+    void updateItemAcquisitionNotice(const Input& input, UiContext& ui, Renderer& renderer, float dt);
     void addStoryFlag(std::string flag);
     void updateBookshelfScreen(const Input& input, UiContext& ui);
     void updateScreenMode(
         const Input& input,
         UiContext& ui,
+        Renderer& renderer,
         float dt,
         std::vector<EffectDiscoveryEvent>* discoveryEvents);
     int unlockedRingPresetSlotCount() const;
     bool registerRingPresetShortcut(int presetIndex);
-    bool applyRingPresetShortcut(int presetIndex);
+    bool applyRingPreset(int presetIndex);
     bool hasAnyMiningToolForBaseRescue() const;
     bool canAffordMerchantMiningToolForBaseRescue() const;
     bool shouldStartBaseMiningRescueDropEvent() const;
@@ -1664,6 +1684,7 @@ private:
     void prepareOptionsMenu();
     void openOptionsMenu();
     bool optionsMenuActive() const;
+    bool operationSettingsModalVisible() const;
     void loadOptionsSettings();
     void applyOptionsSettings(std::string status);
     void updateOptionsMenu(const Input& input, UiContext& ui);
@@ -1671,6 +1692,11 @@ private:
     void updateAudioSettings(const Input& input, UiContext& ui);
     void updateVideoSettings(const Input& input, UiContext& ui);
     bool handleOperationSettingsEvent(const SDL_Event& event);
+    bool handleOperationSettingsCaptureResult(
+        InputRemapCaptureResult result,
+        InputAction action,
+        int column,
+        const InputBinding& binding);
     void renderOptionsMenu(Renderer& renderer) const;
     void renderOperationSettings(Renderer& renderer) const;
     void renderAudioSettings(Renderer& renderer) const;
@@ -2234,7 +2260,6 @@ private:
     void spawnSelectedEnemyTestEnemy();
     bool spawnEnemyTestMimicChest(const EnemyDefinition& enemy, Vec2 desiredPosition);
     int spawnEnemyTestMagnetDrops(Vec2 center);
-    int spawnEnemyTestStealBaitDrops(const EnemyDefinition& enemy, Vec2 center);
     int spawnEnemyTestHealSlimes(Vec2 center);
     int spawnEnemyTestSwarmMembers(const EnemyDefinition& enemy, Vec2 center);
     void clearEnemyTestArena();
@@ -2347,7 +2372,7 @@ private:
     void renderPauseMenu(Renderer& renderer) const;
     void renderRingScreen(Renderer& renderer, float totalTime) const;
     void renderRingStatusHud(Renderer& renderer) const;
-    void renderFirstItemAcquisitionNotice(Renderer& renderer, float animationSeconds) const;
+    void renderItemAcquisitionNotice(Renderer& renderer, float animationSeconds) const;
     UiRect dungeonMinimapRect() const;
     UiRect dungeonMapOverlayPanelRect() const;
     UiRect dungeonMapOverlayViewportRect() const;
@@ -2419,7 +2444,7 @@ private:
     WorldDropSystem worldDrops_;
     EncyclopediaSystem encyclopedia_;
     InitializeJob initializeJob_;
-    std::deque<AcquisitionNotice> firstItemAcquisitionNotices_;
+    std::deque<AcquisitionNotice> itemAcquisitionNotices_;
     std::vector<CaptureAbsorbAnimation> captureAbsorbAnimations_;
     std::unordered_set<std::string> mainObtainedObjectIds_;
     std::unordered_set<std::string> mainCapturedEnemyIds_;
@@ -2800,6 +2825,7 @@ private:
     UiCommandMenuState operationSettingsCommandMenu_{};
     UiConfirmDialogState operationSettingsConflictConfirm_{};
     UiConfirmDialogState operationSettingsResetAllConfirm_{};
+    UiResultDialogState operationSettingsReadOnlyDialog_{};
     InputRemapCapture operationSettingsCapture_{};
     InputBindingMap operationSettingsBindings_ = defaultInputBindings();
     std::vector<InputAction> operationSettingsConflictActions_;

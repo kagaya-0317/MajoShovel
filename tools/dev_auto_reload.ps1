@@ -25,6 +25,7 @@ $WatcherStartedAtUtc = (Get-Process -Id $PID).StartTime.ToUniversalTime()
 
 $DevBuildLogMaxBytes = 4MB
 $DevBuildFailureHistoryCount = 4
+$DevBuildSuccessEvidenceCount = 32
 
 function Find-CMake {
     $cmd = Get-Command cmake -ErrorAction SilentlyContinue
@@ -122,9 +123,23 @@ function Get-LatestBuildEvidencePath {
 function Initialize-BuildEvidenceStorage {
     New-Item -ItemType Directory -Force -Path $BuildEvidenceRoot | Out-Null
     New-Item -ItemType Directory -Force -Path (Join-Path $BuildEvidenceRoot "failures") | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $BuildEvidenceRoot "successes") | Out-Null
     Get-ChildItem -LiteralPath $BuildEvidenceRoot -Filter "current-*.log" -File -ErrorAction SilentlyContinue |
         Remove-Item -Force -ErrorAction SilentlyContinue
     Remove-OldFailureBuildLogs
+    Remove-OldSuccessBuildEvidence
+}
+
+function Remove-OldSuccessBuildEvidence {
+    $successDirectory = Join-Path $BuildEvidenceRoot "successes"
+    if (-not (Test-Path -LiteralPath $successDirectory -PathType Container)) {
+        return
+    }
+    $history = @(Get-ChildItem -LiteralPath $successDirectory -Filter "*.json" -File -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTimeUtc -Descending)
+    for ($index = $DevBuildSuccessEvidenceCount; $index -lt $history.Count; $index++) {
+        Remove-Item -LiteralPath $history[$index].FullName -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Remove-OldFailureBuildLogs {
@@ -212,6 +227,13 @@ function Publish-DevBuildEvidence($Result, [string]$CurrentLogPath) {
         $utf8Bom = New-Object System.Text.UTF8Encoding($true)
         [System.IO.File]::WriteAllText($temporaryPath, $json + [Environment]::NewLine, $utf8Bom)
         Move-Item -LiteralPath $temporaryPath -Destination $path -Force
+        if ($Result.status -eq "succeeded" -and $Result.reusable) {
+            $successPath = Join-Path $BuildEvidenceRoot "successes\$($Result.buildId).json"
+            $successTemporaryPath = "$successPath.$PID.tmp"
+            [System.IO.File]::WriteAllText($successTemporaryPath, $json + [Environment]::NewLine, $utf8Bom)
+            Move-Item -LiteralPath $successTemporaryPath -Destination $successPath -Force
+            Remove-OldSuccessBuildEvidence
+        }
         Write-Host "[dev] build evidence: $path"
         return $true
     }
@@ -386,6 +408,30 @@ function Get-BuildConfigPath {
     return Join-Path $BuildPath $Config
 }
 
+function Get-CleanRebuildMarkerPath {
+    return Join-Path $BuildPath ".majo-dev-clean-rebuild-required"
+}
+
+function Test-CleanRebuildRequired {
+    return Test-Path -LiteralPath (Get-CleanRebuildMarkerPath) -PathType Leaf
+}
+
+function Set-CleanRebuildRequired([string]$Reason) {
+    $markerPath = Get-CleanRebuildMarkerPath
+    $markerText = "recorded_utc=$([DateTime]::UtcNow.ToString('o'))`nreason=$Reason`n"
+    [System.IO.File]::WriteAllText(
+        $markerPath,
+        $markerText,
+        [System.Text.UTF8Encoding]::new($false))
+}
+
+function Clear-CleanRebuildRequired {
+    $markerPath = Get-CleanRebuildMarkerPath
+    if (Test-Path -LiteralPath $markerPath) {
+        Remove-Item -LiteralPath $markerPath -Force
+    }
+}
+
 function Remove-OldRunDirs([string]$KeepPath = "") {
     if (-not (Test-Path $RunRoot)) {
         return
@@ -488,7 +534,7 @@ function Restart-ExistingGameCopy {
     return $true
 }
 
-function Invoke-GameBuild([string[]]$RequestedPaths = @()) {
+function Invoke-GameBuild([string[]]$RequestedPaths = @(), $SourceCoordinationLock = $null) {
     $cmake = Find-CMake
     $script:BuildSequence++
     $startedAtUtc = [DateTime]::UtcNow
@@ -505,7 +551,11 @@ function Invoke-GameBuild([string[]]$RequestedPaths = @()) {
     $failureStage = ""
     $dependencyTrackingComplete = $true
     $buildSucceeded = $false
+    $buildAttempted = $false
     try {
+        if ($null -eq $SourceCoordinationLock) {
+            $SourceCoordinationLock = Enter-MajoShovelSourceVerificationWindow $Root "[dev]"
+        }
         $buildOperationMutex = Enter-MajoShovelBuildOperationLock $BuildPath "[dev]"
         Wait-MajoShovelBuildOutputAvailability $BuildPath $TargetName "[dev]"
 
@@ -538,13 +588,19 @@ function Invoke-GameBuild([string[]]$RequestedPaths = @()) {
 
         if ($configureSucceeded) {
             Write-Host "[dev] building with $Jobs job(s)..."
-            $cleanFirst = Test-MajoShovelVisualStudioDependencyTrackingIncomplete $BuildPath $Config $TargetName
-            if ($cleanFirst) {
+            $cleanRequiredByPriorBuild = Test-CleanRebuildRequired
+            $dependencyTrackingIncomplete = Test-MajoShovelVisualStudioDependencyTrackingIncomplete $BuildPath $Config $TargetName
+            $cleanFirst = $cleanRequiredByPriorBuild -or $dependencyTrackingIncomplete
+            if ($cleanRequiredByPriorBuild) {
+                Write-Host "[dev] previous build may have left mixed object files; rebuilding cleanly."
+                Add-DevBuildLogLine $currentLogPath "[dev] prior build marked the output unsafe; using clean-first."
+            } elseif ($dependencyTrackingIncomplete) {
                 Write-Host "[dev] incomplete compiler dependency tracking detected; rebuilding once to prevent mixed object layouts."
                 Add-DevBuildLogLine $currentLogPath "[dev] dependency tracking incomplete before build; using clean-first."
             }
             $buildArgs = Get-MajoShovelVisualStudioBuildArguments $BuildPath $Config $TargetName $Jobs $cleanFirst
             Add-DevBuildLogLine $currentLogPath ("[dev] build command: " + $cmake + " " + (Join-MajoShovelCommandLineArguments $buildArgs))
+            $buildAttempted = $true
             $buildExitCode = Invoke-MajoShovelNativeCommandWithProgress $cmake $buildArgs "[dev] building with $Jobs job(s)" $Root $currentLogPath
             if ($buildExitCode -ne 0) {
                 Write-Host "[dev] build failed. Fix errors and save again."
@@ -599,6 +655,11 @@ function Invoke-GameBuild([string[]]$RequestedPaths = @()) {
             $dependencyTrackingComplete -and
             -not $sourceChangedDuringBuild -and
             $null -ne $outputEvidence
+        if ($reusable) {
+            Clear-CleanRebuildRequired
+        } elseif ($buildAttempted) {
+            Set-CleanRebuildRequired $buildId
+        }
         $finishedAtUtc = [DateTime]::UtcNow
         Add-DevBuildLogLine $currentLogPath ""
         Add-DevBuildLogLine $currentLogPath "[dev] finished UTC: $($finishedAtUtc.ToString('o'))"
@@ -632,11 +693,14 @@ function Invoke-GameBuild([string[]]$RequestedPaths = @()) {
             logPath = ""
         }
         [void](Publish-DevBuildEvidence $result $currentLogPath)
+        Write-Host "[dev] releasing build coordination locks..."
         Exit-MajoShovelMutex $buildOperationMutex
+        Exit-MajoShovelMutex $SourceCoordinationLock
         $script:IsBuilding = $false
+        Write-Host "[dev] build coordination locks released."
     }
 
-    return $buildSucceeded
+    return $reusable
 }
 
 function Test-RebuildPath($path) {
@@ -732,6 +796,7 @@ Write-Host "[dev] build jobs: $Jobs"
 Write-Host "[dev] build config: $Config"
 Write-Host "[dev] build evidence: $BuildEvidenceRoot"
 Write-Host "[dev] auto reload block: $AutoReloadBlocked (toggle in game with F2)"
+Write-Host "[dev] Codex edit sessions postpone source builds; builds briefly lock new edit sessions."
 Write-Host "[dev] code changes rebuild while the current game keeps running."
 Write-Host "[dev] successful builds wait for F5 before applying the prepared game copy."
 Write-Host "[dev] data/assets runtime reload keeps the existing game window."
@@ -747,24 +812,37 @@ try {
         $hasRunningGame = $GameProcess -and -not $GameProcess.HasExited
         $canRunPendingBuild = -not $AutoReloadBlocked -or -not $hasRunningGame
         if ($canRunPendingBuild -and $PendingBuild -and ((Get-Date) - $LastChangeTime).TotalMilliseconds -ge 700) {
-            $PendingBuild = $false
-            $requestedPaths = @(Take-PendingBuildPaths)
-            $hadRunningGame = $hasRunningGame
-            $buildSucceeded = Invoke-GameBuild $requestedPaths
-            if ($buildSucceeded) {
-                if ($hadRunningGame) {
-                    if ($PendingBuild) {
-                        Write-Host "[dev] a newer code change is queued; waiting for its build before publishing."
-                    } elseif (Publish-BuildStatus "ready") {
-                        Write-Host "[dev] build ready. Press F5 in the game to apply it."
+            $activeEditSessions = @(Get-MajoShovelCodexEditSessions $Root $true | Where-Object { Test-MajoShovelCodexEditSessionBlocksBuild $_ })
+            if ($activeEditSessions.Count -eq 0) {
+                $sourceCoordinationLock = Try-Enter-MajoShovelSourceCoordinationLock $Root
+                if ($null -ne $sourceCoordinationLock) {
+                    $activeEditSessions = @(Get-MajoShovelCodexEditSessions $Root $true | Where-Object { Test-MajoShovelCodexEditSessionBlocksBuild $_ })
+                    if ($activeEditSessions.Count -gt 0) {
+                        Exit-MajoShovelMutex $sourceCoordinationLock
+                    } else {
+                        $PendingBuild = $false
+                        $requestedPaths = @(Take-PendingBuildPaths)
+                        $hadRunningGame = $hasRunningGame
+                        $buildSucceeded = Invoke-GameBuild $requestedPaths $sourceCoordinationLock
+                        Write-Host "[dev] build result accepted: $buildSucceeded"
+                        if ($buildSucceeded) {
+                            if ($hadRunningGame) {
+                                if ($PendingBuild) {
+                                    Write-Host "[dev] a newer code change is queued; waiting for its build before publishing."
+                                } elseif (Publish-BuildStatus "ready") {
+                                    Write-Host "[dev] build ready. Press F5 in the game to apply it."
+                                }
+                            } else {
+                                Clear-BuildStatus
+                                Write-Host "[dev] initial build complete; launching game."
+                                Start-Game
+                            }
+                        } elseif ($hadRunningGame -and -not $PendingBuild) {
+                            if (Publish-BuildStatus "failed") {
+                                Write-Host "[dev] build failure published to the running game."
+                            }
+                        }
                     }
-                } else {
-                    Clear-BuildStatus
-                    Start-Game
-                }
-            } elseif ($hadRunningGame -and -not $PendingBuild) {
-                if (Publish-BuildStatus "failed") {
-                    Write-Host "[dev] build failure published to the running game."
                 }
             }
         }
@@ -780,15 +858,34 @@ try {
                     Clear-BuildStatus
                     Start-Game
                 } else {
-                    Write-Host "[dev] F5 restart requested without a prepared build: building before restart..."
-                    $PendingBuild = $false
-                    $requestedPaths = @(Take-PendingBuildPaths)
-                    if (Invoke-GameBuild $requestedPaths) {
-                        Clear-BuildStatus
-                        Start-Game
+                    $activeEditSessions = @(Get-MajoShovelCodexEditSessions $Root $true | Where-Object { Test-MajoShovelCodexEditSessionBlocksBuild $_ })
+                    if ($activeEditSessions.Count -gt 0) {
+                        Write-Host "[dev] F5 restart postponed while Codex edit sessions are active."
+                        $PendingBuild = $true
                     } else {
-                        [void](Publish-BuildStatus "failed")
-                        [void](Restart-ExistingGameCopy)
+                        $sourceCoordinationLock = Try-Enter-MajoShovelSourceCoordinationLock $Root
+                        if ($null -eq $sourceCoordinationLock) {
+                            Write-Host "[dev] F5 restart postponed while source coordination is busy."
+                            $PendingBuild = $true
+                        } else {
+                            $activeEditSessions = @(Get-MajoShovelCodexEditSessions $Root $true | Where-Object { Test-MajoShovelCodexEditSessionBlocksBuild $_ })
+                            if ($activeEditSessions.Count -gt 0) {
+                                Exit-MajoShovelMutex $sourceCoordinationLock
+                                Write-Host "[dev] F5 restart postponed because a Codex edit session just started."
+                                $PendingBuild = $true
+                            } else {
+                                Write-Host "[dev] F5 restart requested without a prepared build: building before restart..."
+                                $PendingBuild = $false
+                                $requestedPaths = @(Take-PendingBuildPaths)
+                                if (Invoke-GameBuild $requestedPaths $sourceCoordinationLock) {
+                                    Clear-BuildStatus
+                                    Start-Game
+                                } else {
+                                    [void](Publish-BuildStatus "failed")
+                                    [void](Restart-ExistingGameCopy)
+                                }
+                            }
+                        }
                     }
                 }
             }

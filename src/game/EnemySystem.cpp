@@ -7364,6 +7364,7 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
     enemy.stealRadius = 0.0f;
     enemy.stealSeekRadius = 0.0f;
     enemy.stealMaxCarry = 0;
+    enemy.fleeNavigation = {};
     enemy.bossAction = {};
     enemy.death = {};
     enemy.awareness = EnemyAwarenessState::Unaware;
@@ -8993,112 +8994,278 @@ Vec2 EnemySystem::flowDirectionFor(TileMap& map, Vec2 enemyPosition, Vec2 player
     return normalize(bestTarget - enemyPosition);
 }
 
-Vec2 EnemySystem::fleeDirectionFor(TileMap& map, const Enemy& enemy, Vec2 playerPosition, Vec2 jitterDirection) const
+bool EnemySystem::planFleeWaypoint(TileMap& map, const Enemy& enemy, Vec2 playerPosition, Vec2& outWaypoint) const
 {
+    if (flowDistance_.empty() || flowWidth_ <= 0 || flowHeight_ <= 0) {
+        return false;
+    }
+
     const Vec2 awayFromPlayer = enemy.position - playerPosition;
     if (lengthSquared(awayFromPlayer) <= 0.0001f) {
-        return {};
+        return false;
     }
 
+    const int startTileX = map.worldToTile(enemy.position.x);
+    const int startTileY = map.worldToTile(enemy.position.y);
+    const float passageRadius = enemyPassageRadius(enemy, placementCatalog_);
     const Vec2 away = normalize(awayFromPlayer);
-    const Vec2 jitter = lengthSquared(jitterDirection) > 0.0001f ? normalize(jitterDirection) : Vec2{};
-    const int enemyTileX = map.worldToTile(enemy.position.x);
-    const int enemyTileY = map.worldToTile(enemy.position.y);
-    const float radius = enemyPassageRadius(enemy, placementCatalog_);
-    auto inBounds = [&](int tx, int ty) {
-        return tx >= flowMinX_ && ty >= flowMinY_ && tx < flowMinX_ + flowWidth_ && ty < flowMinY_ + flowHeight_;
+    const Vec2 previousHeading = lengthSquared(enemy.fleeNavigation.heading) > 0.0001f
+        ? normalize(enemy.fleeNavigation.heading)
+        : away;
+    const bool avoidFailedDirection =
+        enemy.fleeNavigation.failedDirectionTimer > 0.0f &&
+        lengthSquared(enemy.fleeNavigation.failedDirection) > 0.0001f;
+    const Vec2 failedDirection = avoidFailedDirection
+        ? normalize(enemy.fleeNavigation.failedDirection)
+        : Vec2{};
+
+    const auto inFlowBounds = [&](int tx, int ty) {
+        return tx >= flowMinX_ && ty >= flowMinY_ &&
+            tx < flowMinX_ + flowWidth_ && ty < flowMinY_ + flowHeight_;
     };
-    auto index = [&](int tx, int ty) {
+    const auto flowIndex = [&](int tx, int ty) {
         return (ty - flowMinY_) * flowWidth_ + (tx - flowMinX_);
     };
-    auto clearanceForDirection = [&](Vec2 direction) {
-        if (lengthSquared(direction) <= 0.0001f) {
-            return 0.0f;
-        }
-        const Vec2 normalized = normalize(direction);
-        float clearance = 0.0f;
-        constexpr std::array<float, 4> ProbeDistances{{0.45f, 0.80f, 1.15f, 1.50f}};
-        for (float probe : ProbeDistances) {
-            const Vec2 target = enemy.position + normalized * (radius + static_cast<float>(balance::TileSize) * probe);
-            if (map.isCircleBlocked(target, radius)) {
-                break;
-            }
-            clearance += 1.0f;
-        }
-        return clearance;
-    };
+    if (!inFlowBounds(startTileX, startTileY)) {
+        return false;
+    }
+    const int startFlowDistance = flowDistance_[static_cast<std::size_t>(flowIndex(startTileX, startTileY))];
+    if (startFlowDistance < 0) {
+        return false;
+    }
 
-    Vec2 bestDirection{};
-    float bestScore = -1.0e9f;
-    auto considerDirection = [&](Vec2 direction, int distanceScore, float pathWeight) {
-        if (lengthSquared(direction) <= 0.0001f) {
-            return;
-        }
-        direction = normalize(direction);
-        const float clearance = clearanceForDirection(direction);
-        if (clearance <= 0.0f) {
-            return;
-        }
-        const Vec2 lateral{-away.y, away.x};
-        const float score =
-            static_cast<float>(distanceScore) * pathWeight +
-            dot(direction, away) * 12.0f +
-            dot(direction, jitter) * 4.0f +
-            std::abs(dot(direction, lateral)) * 3.5f +
-            clearance * 8.0f;
-        if (score > bestScore) {
-            bestScore = score;
-            bestDirection = direction;
-        }
+    const auto localIndex = [](int localX, int localY) {
+        return localY * FleeSearchDiameterTiles + localX;
     };
-    auto considerTarget = [&](Vec2 target, int distanceScore, float pathWeight) {
-        const Vec2 candidate = target - enemy.position;
-        if (lengthSquared(candidate) <= 0.0001f || map.isCircleBlocked(target, radius)) {
-            return;
-        }
-        considerDirection(candidate, distanceScore, pathWeight);
+    const auto tileForLocalIndex = [&](int index) {
+        const int localX = index % FleeSearchDiameterTiles;
+        const int localY = index / FleeSearchDiameterTiles;
+        return std::pair{
+            startTileX + localX - FleeSearchRadiusTiles,
+            startTileY + localY - FleeSearchRadiusTiles,
+        };
     };
+    const int startLocalIndex = localIndex(FleeSearchRadiusTiles, FleeSearchRadiusTiles);
+    std::array<int, FleeSearchTileCount> routeCosts;
+    std::array<int, FleeSearchTileCount> parents;
+    routeCosts.fill(std::numeric_limits<int>::max());
+    parents.fill(-1);
+    routeCosts[static_cast<std::size_t>(startLocalIndex)] = 0;
 
-    if (!flowDistance_.empty() && inBounds(enemyTileX, enemyTileY)) {
-        const int current = flowDistance_[static_cast<std::size_t>(index(enemyTileX, enemyTileY))];
-        if (current >= 0) {
-            for (const FlowStep& step : FlowDirections) {
-                const int nx = enemyTileX + step.dx;
-                const int ny = enemyTileY + step.dy;
-                if (!inBounds(nx, ny) || !canUseFlowStep(map, enemyTileX, enemyTileY, step)) {
-                    continue;
+    std::priority_queue<FleeSearchNode, std::vector<FleeSearchNode>, FleeSearchNodeGreater> open;
+    open.push({0, startLocalIndex});
+
+    int bestImprovingIndex = -1;
+    float bestImprovingScore = -std::numeric_limits<float>::infinity();
+    int bestFallbackIndex = -1;
+    float bestFallbackScore = -std::numeric_limits<float>::infinity();
+    while (!open.empty()) {
+        const FleeSearchNode node = open.top();
+        open.pop();
+        if (node.routeCost != routeCosts[static_cast<std::size_t>(node.localIndex)]) {
+            continue;
+        }
+
+        const auto [tx, ty] = tileForLocalIndex(node.localIndex);
+        if (node.localIndex != startLocalIndex) {
+            const int candidateFlowDistance = flowDistance_[static_cast<std::size_t>(flowIndex(tx, ty))];
+            const Vec2 candidatePosition = map.tileCenter(tx, ty);
+            const Vec2 candidateOffset = candidatePosition - enemy.position;
+            if (candidateFlowDistance >= 0 && lengthSquared(candidateOffset) > 0.0001f) {
+                const Vec2 routeDirection = normalize(candidateOffset);
+                int openness = 0;
+                for (const FlowStep& opennessStep : FlowDirections) {
+                    const int openX = tx + opennessStep.dx;
+                    const int openY = ty + opennessStep.dy;
+                    if (!inFlowBounds(openX, openY) ||
+                        !canUseFlowStep(map, tx, ty, opennessStep) ||
+                        map.isCircleBlocked(map.tileCenter(openX, openY), passageRadius)) {
+                        continue;
+                    }
+                    ++openness;
                 }
-                const int candidate = flowDistance_[static_cast<std::size_t>(index(nx, ny))];
-                if (candidate < 0) {
-                    continue;
+
+                const int flowProgress = candidateFlowDistance - startFlowDistance;
+                const float failedPenalty = avoidFailedDirection
+                    ? std::max(0.0f, dot(routeDirection, failedDirection)) * 28.0f
+                    : 0.0f;
+                const float improvingScore =
+                    static_cast<float>(flowProgress) * 3.2f -
+                    static_cast<float>(node.routeCost) * 0.22f +
+                    static_cast<float>(openness) * 3.0f +
+                    dot(routeDirection, away) * 18.0f +
+                    dot(routeDirection, previousHeading) * 6.0f -
+                    failedPenalty;
+                if (flowProgress >= FlowOrthogonalCost && improvingScore > bestImprovingScore) {
+                    bestImprovingScore = improvingScore;
+                    bestImprovingIndex = node.localIndex;
                 }
-                considerTarget(map.tileCenter(nx, ny), candidate - current, 2.2f);
+
+                const float fallbackScore =
+                    static_cast<float>(flowProgress) * 0.9f +
+                    static_cast<float>(node.routeCost) * 0.12f +
+                    static_cast<float>(openness) * 5.0f +
+                    dot(routeDirection, away) * 10.0f +
+                    dot(routeDirection, previousHeading) * 4.0f -
+                    failedPenalty;
+                if (fallbackScore > bestFallbackScore) {
+                    bestFallbackScore = fallbackScore;
+                    bestFallbackIndex = node.localIndex;
+                }
             }
+        }
+
+        const int localX = node.localIndex % FleeSearchDiameterTiles;
+        const int localY = node.localIndex / FleeSearchDiameterTiles;
+        for (const FlowStep& step : FlowDirections) {
+            const int nextLocalX = localX + step.dx;
+            const int nextLocalY = localY + step.dy;
+            if (nextLocalX < 0 || nextLocalY < 0 ||
+                nextLocalX >= FleeSearchDiameterTiles || nextLocalY >= FleeSearchDiameterTiles) {
+                continue;
+            }
+
+            const int nextTileX = tx + step.dx;
+            const int nextTileY = ty + step.dy;
+            if (!inFlowBounds(nextTileX, nextTileY) ||
+                flowDistance_[static_cast<std::size_t>(flowIndex(nextTileX, nextTileY))] < 0 ||
+                !canUseFlowStep(map, tx, ty, step) ||
+                map.isCircleBlocked(map.tileCenter(nextTileX, nextTileY), passageRadius)) {
+                continue;
+            }
+
+            const int nextLocalIndex = localIndex(nextLocalX, nextLocalY);
+            const int nextRouteCost = node.routeCost + step.cost;
+            if (nextRouteCost >= routeCosts[static_cast<std::size_t>(nextLocalIndex)]) {
+                continue;
+            }
+            routeCosts[static_cast<std::size_t>(nextLocalIndex)] = nextRouteCost;
+            parents[static_cast<std::size_t>(nextLocalIndex)] = node.localIndex;
+            open.push({nextRouteCost, nextLocalIndex});
         }
     }
 
-    if (lengthSquared(bestDirection) > 0.0001f) {
-        return bestDirection;
+    const int goalIndex = bestImprovingIndex >= 0 ? bestImprovingIndex : bestFallbackIndex;
+    if (goalIndex < 0) {
+        return false;
     }
 
-    for (const FlowStep& step : FlowDirections) {
-        considerTarget(
-            map.tileCenter(enemyTileX + step.dx, enemyTileY + step.dy),
-            0,
-            0.0f);
+    std::array<int, FleeSearchTileCount> reversePath;
+    int pathLength = 0;
+    int cursor = goalIndex;
+    while (cursor != startLocalIndex && cursor >= 0 && pathLength < FleeSearchTileCount) {
+        reversePath[static_cast<std::size_t>(pathLength++)] = cursor;
+        cursor = parents[static_cast<std::size_t>(cursor)];
+    }
+    if (cursor != startLocalIndex || pathLength <= 0) {
+        return false;
     }
 
-    const float baseAngle = std::atan2(away.y, away.x);
-    for (int i = 0; i < 16; ++i) {
-        const float offset = (-0.5f + static_cast<float>(i) / 15.0f) * Pi * 1.45f;
-        considerDirection(fromAngle(baseAngle + offset), 0, 0.0f);
+    const float maxLookAheadDistance = static_cast<float>(balance::TileSize) * FleeWaypointLookAheadTiles;
+    const auto segmentIsClear = [&](Vec2 target) {
+        const Vec2 travel = target - enemy.position;
+        const float travelDistance = length(travel);
+        if (travelDistance <= 0.0001f) {
+            return true;
+        }
+        const Vec2 travelDirection = travel / travelDistance;
+        const float sampleSpacing = std::max(4.0f, passageRadius * 0.55f);
+        const int sampleCount = std::max(1, static_cast<int>(std::ceil(travelDistance / sampleSpacing)));
+        for (int sample = 1; sample <= sampleCount; ++sample) {
+            const float sampleDistance = travelDistance * static_cast<float>(sample) / static_cast<float>(sampleCount);
+            if (map.isCircleBlocked(enemy.position + travelDirection * sampleDistance, passageRadius)) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    const auto [firstTileX, firstTileY] = tileForLocalIndex(reversePath[static_cast<std::size_t>(pathLength - 1)]);
+    outWaypoint = map.tileCenter(firstTileX, firstTileY);
+    for (int pathIndex = pathLength - 2; pathIndex >= 0; --pathIndex) {
+        const auto [pathTileX, pathTileY] = tileForLocalIndex(reversePath[static_cast<std::size_t>(pathIndex)]);
+        const Vec2 candidateWaypoint = map.tileCenter(pathTileX, pathTileY);
+        if (length(candidateWaypoint - enemy.position) > maxLookAheadDistance || !segmentIsClear(candidateWaypoint)) {
+            break;
+        }
+        outWaypoint = candidateWaypoint;
     }
-    if (lengthSquared(jitter) > 0.0001f) {
-        considerDirection(normalize(away + jitter * 0.8f), 0, 0.0f);
-        considerDirection(normalize(away - jitter * 0.8f), 0, 0.0f);
+    return true;
+}
+
+Vec2 EnemySystem::updateFleeDirection(TileMap& map, Enemy& enemy, Vec2 playerPosition, float dt)
+{
+    EnemyFleeNavigationRuntime& navigation = enemy.fleeNavigation;
+    navigation.replanTimer = std::max(0.0f, navigation.replanTimer - std::max(0.0f, dt));
+    navigation.failedDirectionTimer = std::max(0.0f, navigation.failedDirectionTimer - std::max(0.0f, dt));
+    if (navigation.failedDirectionTimer <= 0.0f) {
+        navigation.failedDirection = {};
     }
 
-    return lengthSquared(bestDirection) > 0.0001f ? bestDirection : away;
+    const Vec2 awayFromPlayer = enemy.position - playerPosition;
+    if (lengthSquared(awayFromPlayer) <= 0.0001f) {
+        return navigation.heading;
+    }
+    const Vec2 away = normalize(awayFromPlayer);
+    if (lengthSquared(navigation.heading) <= 0.0001f) {
+        navigation.heading = away;
+    }
+
+    const float waypointReachRadius = std::max(FleeWaypointReachRadius, enemyPassageRadius(enemy, placementCatalog_) * 0.45f);
+    if (navigation.waypointActive &&
+        distanceSquared(enemy.position, navigation.waypoint) <= waypointReachRadius * waypointReachRadius) {
+        navigation.waypointActive = false;
+        navigation.replanTimer = 0.0f;
+    }
+    if (navigation.waypointActive &&
+        map.isCircleBlocked(navigation.waypoint, enemyPassageRadius(enemy, placementCatalog_))) {
+        navigation.waypointActive = false;
+        navigation.replanTimer = 0.0f;
+    }
+    if (navigation.waypointActive && navigation.replanTimer <= 0.0f) {
+        navigation.replanTimer = FleeReplanIntervalSeconds;
+    }
+
+    if (!navigation.waypointActive && navigation.replanTimer <= 0.0f) {
+        Vec2 waypoint{};
+        navigation.waypointActive = planFleeWaypoint(map, enemy, playerPosition, waypoint);
+        navigation.waypoint = navigation.waypointActive
+            ? waypoint
+            : enemy.position + away * static_cast<float>(balance::TileSize);
+        navigation.replanTimer = FleeReplanIntervalSeconds;
+    }
+
+    const Vec2 toWaypoint = navigation.waypoint - enemy.position;
+    const Vec2 desiredDirection = lengthSquared(toWaypoint) > 0.0001f ? normalize(toWaypoint) : away;
+    const float currentAngle = std::atan2(navigation.heading.y, navigation.heading.x);
+    const float desiredAngle = std::atan2(desiredDirection.y, desiredDirection.x);
+    const float steeredAngle = rotateTowards(
+        currentAngle,
+        desiredAngle,
+        std::max(0.0f, dt) * FleeTurnSpeedRadiansPerSecond);
+    navigation.heading = fromAngle(steeredAngle);
+    return navigation.heading;
+}
+
+void EnemySystem::updateFleeProgress(Enemy& enemy, Vec2 actualMovement, float expectedDistance, float dt)
+{
+    EnemyFleeNavigationRuntime& navigation = enemy.fleeNavigation;
+    const float progressThreshold = std::max(0.12f, std::max(0.0f, expectedDistance) * 0.16f);
+    if (expectedDistance > 0.05f && lengthSquared(actualMovement) <= progressThreshold * progressThreshold) {
+        navigation.blockedSeconds += std::max(0.0f, dt);
+    } else {
+        navigation.blockedSeconds = 0.0f;
+    }
+
+    if (navigation.blockedSeconds < FleeBlockedThresholdSeconds) {
+        return;
+    }
+
+    navigation.failedDirection = navigation.heading;
+    navigation.failedDirectionTimer = FleeFailedDirectionPenaltySeconds;
+    navigation.waypointActive = false;
+    navigation.replanTimer = 0.0f;
+    navigation.blockedSeconds = 0.0f;
 }
 
 Vec2 EnemySystem::separationFor(const Enemy& enemy) const
@@ -10017,16 +10184,15 @@ void EnemySystem::update(
             return enemy.aiMoveDirection;
         };
         const auto chooseFleeDirection = [&]() {
-            if (enemy.aiDecisionTimer <= 0.0f || lengthSquared(enemy.aiMoveDirection) <= 0.0001f) {
-                enemy.aiMoveDirection = randomDirection(rng_);
-                std::uniform_real_distribution<float> retarget(0.14f, 0.32f);
-                enemy.aiDecisionTimer = retarget(rng_);
-            }
-            return fleeDirectionFor(map, enemy, player.position, enemy.aiMoveDirection);
+            return updateFleeDirection(map, enemy, player.position, dt);
         };
         const bool stealEscaping = enemy.stealItemEnabled && enemyHeldDropCount(enemy) > 0;
+        const bool fleeNavigating = !confused && (stealEscaping || aiId == "flee");
+        if (!fleeNavigating) {
+            enemy.fleeNavigation = {};
+        }
         if (stealEscaping) {
-            direction = chooseFleeDirection();
+            direction = fleeNavigating ? chooseFleeDirection() : Vec2{};
         } else if (enemy.stealItemEnabled && stealDropTargetPosition) {
             direction = normalize(*stealDropTargetPosition - enemy.position);
         } else if (enemy.stealItemEnabled && enemy.awareness == EnemyAwarenessState::Detected) {
@@ -10038,7 +10204,7 @@ void EnemySystem::update(
         } else if (aiId == "buried") {
             direction = {};
         } else if (aiId == "flee") {
-            direction = chooseFleeDirection();
+            direction = fleeNavigating ? chooseFleeDirection() : Vec2{};
         } else if (aiId == "wander") {
             direction = chooseWanderDirection();
         } else if (aiId == "patrol") {
@@ -10218,6 +10384,7 @@ void EnemySystem::update(
         if (lengthSquared(enemy.velocity) > maxSpeed * maxSpeed) {
             enemy.velocity = normalize(enemy.velocity) * maxSpeed;
         }
+        const float expectedMovementDistance = length(enemy.velocity) * std::max(0.0f, dt);
         const bool ignoresWallCollision = !confused && (aiId == "phase_wander" || aiId == "phase_chase");
         const bool digsThroughWall = !confused && (aiId == "dig_chase" || aiId == "dig_wander") && hasBehavior(enemy, "dig_move");
         const Vec2 previousPosition = enemy.position;
@@ -10271,26 +10438,28 @@ void EnemySystem::update(
             }
         }
 
-        if (!actionLocksMovement &&
+        const Vec2 actualMovement = enemy.position - previousPosition;
+        if (!actionLocksMovement && fleeNavigating) {
+            updateFleeProgress(enemy, actualMovement, expectedMovementDistance, dt);
+        }
+
+        if (!actionLocksMovement && !fleeNavigating &&
             (confused ||
-                aiId == "flee" ||
                 aiId == "wander" ||
                 aiId == "patrol" ||
                 aiId == "item_seek" ||
-                aiId == "dig_wander" ||
-                (enemy.stealItemEnabled && enemyHeldDropCount(enemy) > 0)) &&
+                aiId == "dig_wander") &&
             distanceSquared(enemy.position, previousPosition) <= 0.0004f) {
             enemy.aiDecisionTimer = 0.0f;
             enemy.aiMoveDirection = randomDirection(rng_);
         }
 
         const bool actionLocksFacing = enemy.action.active && enemy.action.lockFacing;
-        const bool faceMovementDirection = aiId == "flee" || stealEscaping;
-        if (!actionLocksFacing && faceMovementDirection && lengthSquared(enemy.velocity) > 0.0001f) {
-            enemy.facingAngle = std::atan2(enemy.velocity.y, enemy.velocity.x);
-        } else if (!actionLocksFacing && !confused && enemy.awareness == EnemyAwarenessState::Detected && lengthSquared(toPlayer) > 0.0001f && aiId != "shield_chase") {
+        if (!actionLocksFacing && fleeNavigating && lengthSquared(actualMovement) > 0.0001f) {
+            enemy.facingAngle = std::atan2(actualMovement.y, actualMovement.x);
+        } else if (!actionLocksFacing && !fleeNavigating && !confused && enemy.awareness == EnemyAwarenessState::Detected && lengthSquared(toPlayer) > 0.0001f && aiId != "shield_chase") {
             enemy.facingAngle = std::atan2(toPlayer.y, toPlayer.x);
-        } else if (!actionLocksFacing && (confused || (aiId != "stationary" && aiId != "idle" && aiId != "buried")) && lengthSquared(enemy.velocity) > 0.0001f) {
+        } else if (!actionLocksFacing && !fleeNavigating && (confused || (aiId != "stationary" && aiId != "idle" && aiId != "buried")) && lengthSquared(enemy.velocity) > 0.0001f) {
             enemy.facingAngle = std::atan2(enemy.velocity.y, enemy.velocity.x);
         }
         if (!enemy.action.active &&
@@ -12043,6 +12212,7 @@ void EnemySystem::clearTemporaryState()
         enemy.knockbackVelocity = {};
         enemy.knockbackTimer = 0.0f;
         enemy.death = {};
+        enemy.fleeNavigation = {};
         clearExternalBounceState(enemy);
         enemy.contactTimer = 0.0f;
     };

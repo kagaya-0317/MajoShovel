@@ -1,5 +1,6 @@
 ﻿#include "engine/InputRemapCapture.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace majo {
@@ -10,6 +11,8 @@ constexpr float AxisDeadzone = 0.22f;
 constexpr float AxisCaptureThreshold = 0.70f;
 constexpr float StickDigitalThreshold = 0.55f;
 constexpr float TriggerDigitalThreshold = 0.45f;
+constexpr Uint64 GamepadCancelHoldMilliseconds = 1000;
+constexpr int GamepadCancelButton = SDL_GAMEPAD_BUTTON_EAST;
 
 float normalizeGamepadAxis(Sint16 value)
 {
@@ -72,6 +75,8 @@ void InputRemapCapture::begin(InputAction action, InputRemapCaptureDeviceGroup d
     action_ = action;
     deviceGroup_ = deviceGroup;
     pendingModifierScancode_ = SDL_SCANCODE_UNKNOWN;
+    pendingGamepadCancelButton_ = -1;
+    gamepadCancelHoldStartedAtMs_ = 0;
 }
 
 void InputRemapCapture::cancel()
@@ -79,6 +84,8 @@ void InputRemapCapture::cancel()
     active_ = false;
     action_ = InputAction::Count;
     pendingModifierScancode_ = SDL_SCANCODE_UNKNOWN;
+    pendingGamepadCancelButton_ = -1;
+    gamepadCancelHoldStartedAtMs_ = 0;
 }
 
 bool InputRemapCapture::shouldConsumeEvent(const SDL_Event& event) const
@@ -108,14 +115,8 @@ InputRemapCaptureResult InputRemapCapture::handleEvent(const SDL_Event& event, I
 
     if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
         if (deviceGroup_ == InputRemapCaptureDeviceGroup::KeyboardMouse) {
-            if (event.key.scancode == SDL_SCANCODE_ESCAPE) {
-                cancel();
-                return InputRemapCaptureResult::Cancelled;
-            }
-            if (event.key.scancode == SDL_SCANCODE_BACKSPACE ||
-                event.key.scancode == SDL_SCANCODE_DELETE) {
-                cancel();
-                return InputRemapCaptureResult::ClearRequested;
+            if (event.key.scancode == SDL_SCANCODE_UNKNOWN) {
+                return InputRemapCaptureResult::None;
             }
             if (isModifierScancode(event.key.scancode)) {
                 pendingModifierScancode_ = event.key.scancode;
@@ -142,10 +143,39 @@ InputRemapCaptureResult InputRemapCapture::handleEvent(const SDL_Event& event, I
         return InputRemapCaptureResult::Captured;
     }
 
-    if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && deviceGroup_ == InputRemapCaptureDeviceGroup::KeyboardMouse) {
+    if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+        deviceGroup_ == InputRemapCaptureDeviceGroup::KeyboardMouse &&
+        event.button.button > 0) {
         outBinding = {
             .device = InputBindingDevice::MouseButton,
             .code = event.button.button,
+        };
+        cancel();
+        return InputRemapCaptureResult::Captured;
+    }
+
+    if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN &&
+        event.gbutton.button == GamepadCancelButton) {
+        pendingGamepadCancelButton_ = event.gbutton.button;
+        gamepadCancelHoldStartedAtMs_ = SDL_GetTicks();
+        return InputRemapCaptureResult::None;
+    }
+
+    if (event.type == SDL_EVENT_GAMEPAD_BUTTON_UP &&
+        event.gbutton.button == pendingGamepadCancelButton_) {
+        const bool cancelRequested = gamepadCancelHoldProgress() >= 1.0f;
+        pendingGamepadCancelButton_ = -1;
+        gamepadCancelHoldStartedAtMs_ = 0;
+        if (cancelRequested) {
+            cancel();
+            return InputRemapCaptureResult::Cancelled;
+        }
+        if (deviceGroup_ != InputRemapCaptureDeviceGroup::Gamepad) {
+            return InputRemapCaptureResult::None;
+        }
+        outBinding = {
+            .device = InputBindingDevice::GamepadButton,
+            .code = event.gbutton.button,
         };
         cancel();
         return InputRemapCaptureResult::Captured;
@@ -176,6 +206,27 @@ InputRemapCaptureResult InputRemapCapture::handleEvent(const SDL_Event& event, I
     }
 
     return InputRemapCaptureResult::None;
+}
+
+InputRemapCaptureResult InputRemapCapture::update()
+{
+    if (!active_ || pendingGamepadCancelButton_ < 0 || gamepadCancelHoldProgress() < 1.0f) {
+        return InputRemapCaptureResult::None;
+    }
+    cancel();
+    return InputRemapCaptureResult::Cancelled;
+}
+
+float InputRemapCapture::gamepadCancelHoldProgress() const
+{
+    if (!active_ || pendingGamepadCancelButton_ < 0) {
+        return 0.0f;
+    }
+    const Uint64 elapsed = SDL_GetTicks() - gamepadCancelHoldStartedAtMs_;
+    return std::clamp(
+        static_cast<float>(elapsed) / static_cast<float>(GamepadCancelHoldMilliseconds),
+        0.0f,
+        1.0f);
 }
 
 }

@@ -16,6 +16,7 @@ namespace {
 
 enum class GlyphKind {
     Key,
+    DirectionKey,
     Mouse,
     PadButton,
     Shoulder,
@@ -219,6 +220,24 @@ Glyph keyGlyph(std::string label)
     return glyph;
 }
 
+Glyph directionKeyGlyph(int direction)
+{
+    Glyph glyph;
+    glyph.kind = GlyphKind::DirectionKey;
+    glyph.directions = direction;
+    glyph.accent = {150, 194, 255, 255};
+    return glyph;
+}
+
+std::optional<Glyph> directionKeyGlyphForLabel(std::string_view label)
+{
+    if (label == "←") return directionKeyGlyph(DirLeft);
+    if (label == "→") return directionKeyGlyph(DirRight);
+    if (label == "↑") return directionKeyGlyph(DirUp);
+    if (label == "↓") return directionKeyGlyph(DirDown);
+    return std::nullopt;
+}
+
 Glyph dpadGlyph(int directions = DirAll)
 {
     Glyph glyph;
@@ -318,7 +337,16 @@ std::optional<Glyph> glyphFromBinding(const InputBinding& binding)
         if (binding.code == SDL_BUTTON_MIDDLE) {
             return mouseGlyph(MousePart::Middle);
         }
-        return mouseGlyph(MousePart::Left);
+        if (binding.code == SDL_BUTTON_LEFT) {
+            return mouseGlyph(MousePart::Left);
+        }
+        if (binding.code == SDL_BUTTON_X1) {
+            return keyGlyph("Mouse4");
+        }
+        if (binding.code == SDL_BUTTON_X2) {
+            return keyGlyph("Mouse5");
+        }
+        return keyGlyph("Mouse" + std::to_string(binding.code));
     case InputBindingDevice::GamepadButton:
         switch (static_cast<SDL_GamepadButton>(binding.code)) {
         case SDL_GAMEPAD_BUTTON_SOUTH: return padButtonGlyph("A", {98, 220, 144, 255});
@@ -379,7 +407,7 @@ void appendBindingModifierGlyphs(std::vector<Glyph>& glyphs, const InputBinding&
 
 std::vector<Glyph> glyphsForActions(
     const Input* input,
-    std::initializer_list<InputAction> actions,
+    const std::vector<InputAction>& actions,
     GlyphJoin* outJoin = nullptr)
 {
     std::vector<Glyph> result;
@@ -449,9 +477,7 @@ std::vector<Glyph> semanticGlyphs(
             ? glyphsForActions(input, {InputAction::Confirm, InputAction::Cancel})
             : std::vector<Glyph>{keyGlyph("F"), keyGlyph("Enter"), keyGlyph("Esc")};
     case SemanticGlyph::Back:
-        return gamepad
-            ? glyphsForActions(input, {InputAction::Cancel, InputAction::Pause})
-            : std::vector<Glyph>{keyGlyph("Esc")};
+        return glyphsForActions(input, {InputAction::Cancel, InputAction::Pause}, outJoin);
     case SemanticGlyph::Use:
         return glyphsForActions(input, {InputAction::UseSelectedItem}, outJoin);
     case SemanticGlyph::RingAdd:
@@ -460,17 +486,12 @@ std::vector<Glyph> semanticGlyphs(
         return glyphsForActions(input, {InputAction::ThrowActiveRing}, outJoin);
     case SemanticGlyph::RingOffset:
         return gamepad
-            ? glyphsForActions(input, {
-                InputAction::ShiftRingLeft,
-                InputAction::ShiftRingRight,
-                InputAction::ShiftRingUp,
-                InputAction::ShiftRingDown,
-            })
-            : glyphsForActions(input, {InputAction::OffsetRingCenter}, outJoin);
+            ? std::vector<Glyph>{stickGlyph("R", DirAll)}
+            : std::vector<Glyph>{mouseGlyph(MousePart::Right)};
     case SemanticGlyph::ShortcutCursor:
         return glyphsForActions(input, {InputAction::ShortcutCursorLeft, InputAction::ShortcutCursorRight});
     case SemanticGlyph::RingSwitch:
-        return glyphsForActions(input, {InputAction::PreviousActiveRing, InputAction::NextActiveRing});
+        return glyphsForActions(input, {InputAction::CyclePrevious, InputAction::CycleNext});
     case SemanticGlyph::Protection:
         return glyphsForActions(input, {InputAction::ToggleProtection}, outJoin);
     case SemanticGlyph::GrabPlace:
@@ -478,18 +499,14 @@ std::vector<Glyph> semanticGlyphs(
     case SemanticGlyph::ArrangeItems:
         return glyphsForActions(input, {InputAction::ArrangeItems}, outJoin);
     case SemanticGlyph::RingRemoveAll:
-        if (outJoin != nullptr) {
-            *outJoin = GlyphJoin::Chord;
-        }
-        if (gamepad) {
-            return glyphsForActions(input, {
-                InputAction::RingCommandModifier,
+        {
+            std::vector<Glyph> result = glyphsForActions(input, {
+                InputAction::SecondaryActionModifier,
                 InputAction::PutSelectedItemOnRing,
             });
-        } else {
-            std::vector<Glyph> result{keyGlyph("Shift")};
-            std::vector<Glyph> removeGlyphs = glyphsForActions(input, {InputAction::PutSelectedItemOnRing});
-            result.insert(result.end(), removeGlyphs.begin(), removeGlyphs.end());
+            if (outJoin != nullptr) {
+                *outJoin = GlyphJoin::Chord;
+            }
             return result;
         }
     case SemanticGlyph::ShortcutRow:
@@ -552,8 +569,30 @@ bool matchExplicitTag(
         if (std::optional<InputAction> action = parseInputAction(body.substr(4))) {
             outGlyphs = glyphsForActions(input, {*action}, &outJoin);
         }
+    } else if (body.rfind("acts:", 0) == 0) {
+        std::vector<InputAction> actions;
+        std::string_view remaining = body.substr(5);
+        while (!remaining.empty()) {
+            const std::size_t separator = remaining.find(',');
+            const std::string_view name = remaining.substr(0, separator);
+            if (std::optional<InputAction> action = parseInputAction(name)) {
+                actions.push_back(*action);
+            }
+            if (separator == std::string_view::npos) {
+                break;
+            }
+            remaining.remove_prefix(separator + 1);
+        }
+        outGlyphs = glyphsForActions(input, actions, &outJoin);
+    } else if (body == "ring-remove-all") {
+        outGlyphs = semanticGlyphs(SemanticGlyph::RingRemoveAll, input, &outJoin);
     } else if (body.rfind("key:", 0) == 0) {
-        outGlyphs = {keyGlyph(std::string(body.substr(4)))};
+        const std::string_view label = body.substr(4);
+        if (const std::optional<Glyph> directionGlyph = directionKeyGlyphForLabel(label)) {
+            outGlyphs = {*directionGlyph};
+        } else {
+            outGlyphs = {keyGlyph(std::string(label))};
+        }
     } else if (body.rfind("mouse:", 0) == 0) {
         const std::string_view part = body.substr(6);
         outGlyphs = {mouseGlyph(part == "right" ? MousePart::Right : (part == "middle" ? MousePart::Middle : MousePart::Left))};
@@ -573,6 +612,7 @@ bool matchExplicitTag(
         else if (button == "dpad_down") outGlyphs = {dpadGlyph(DirDown)};
         else if (button == "dpad_left") outGlyphs = {dpadGlyph(DirLeft)};
         else if (button == "dpad_right") outGlyphs = {dpadGlyph(DirRight)};
+        else outGlyphs = {shoulderGlyph(std::string(button))};
     } else if (body.rfind("axis:", 0) == 0) {
         const std::string_view rest = body.substr(5);
         const std::size_t separator = rest.find(':');
@@ -647,12 +687,7 @@ bool matchPlainGlyph(
     if (semantic("Z/X", SemanticGlyph::RingSwitch)) return true;
     if (semantic("Shift+R", SemanticGlyph::RingRemoveAll)) return true;
     if (literalGlyphs("Backspace/Delete", {keyGlyph("Back"), keyGlyph("Del")})) return true;
-    if (literalGlyphs("Shift+1-2", {keyGlyph("Shift"), keyGlyph("1-2")}, GlyphJoin::Chord)) return true;
-    if (literalGlyphs("Shift+1-3", {keyGlyph("Shift"), keyGlyph("1-3")}, GlyphJoin::Chord)) return true;
-    if (literalGlyphs("Shift+1", {keyGlyph("Shift"), keyGlyph("1")}, GlyphJoin::Chord)) return true;
     if (literalGlyphs("Ctrl+S", {keyGlyph("Ctrl"), keyGlyph("S")}, GlyphJoin::Chord)) return true;
-    if (literalGlyphs("1〜8", {keyGlyph("1-8")})) return true;
-    if (literalGlyphs("1-8", {keyGlyph("1-8")})) return true;
     if (literalGlyphs("1〜2", {keyGlyph("1-2")})) return true;
     if (literalGlyphs("1-2", {keyGlyph("1-2")})) return true;
     if (literalGlyphs("1〜3", {keyGlyph("1-3")})) return true;
@@ -763,6 +798,8 @@ Vec2 glyphSize(Renderer& renderer, const Glyph& glyph, const InputHelpStyle& sty
         const Vec2 labelSize = measureIconLabel(renderer, glyph.label, labelScale);
         return {std::max(h + 8.0f, labelSize.x + 2.0f), h};
     }
+    case GlyphKind::DirectionKey:
+        return {h, h};
     case GlyphKind::Mouse:
         return {h * 0.78f, h};
     case GlyphKind::PadButton:
@@ -896,7 +933,7 @@ void drawCenteredText(Renderer& renderer, Vec2 pos, Vec2 size, std::string_view 
         scale);
 }
 
-void drawKey(Renderer& renderer, Vec2 pos, Vec2 size, const Glyph& glyph, const InputHelpStyle& style)
+void drawKeyFrame(Renderer& renderer, Vec2 pos, Vec2 size)
 {
     const float r = std::min(size.y * 0.33f, 7.0f);
     fillSoftRoundedRect(renderer, pos + Vec2{0.0f, 2.0f}, size, r, {0, 0, 0, 90});
@@ -907,7 +944,59 @@ void drawKey(Renderer& renderer, Vec2 pos, Vec2 size, const Glyph& glyph, const 
         pos + Vec2{size.x - r - 2.0f, 3.0f},
         1.6f,
         {255, 255, 255, 118});
+}
+
+void drawKey(Renderer& renderer, Vec2 pos, Vec2 size, const Glyph& glyph, const InputHelpStyle& style)
+{
+    drawKeyFrame(renderer, pos, size);
     drawCenteredText(renderer, pos, size - Vec2{0.0f, 1.0f}, glyph.label, {246, 250, 255, 255}, labelScaleForGlyph(glyph, style));
+}
+
+void drawDirectionKey(Renderer& renderer, Vec2 pos, Vec2 size, const Glyph& glyph)
+{
+    drawKeyFrame(renderer, pos, size);
+
+    Vec2 direction{};
+    if ((glyph.directions & DirLeft) != 0) direction = {-1.0f, 0.0f};
+    else if ((glyph.directions & DirRight) != 0) direction = {1.0f, 0.0f};
+    else if ((glyph.directions & DirUp) != 0) direction = {0.0f, -1.0f};
+    else direction = {0.0f, 1.0f};
+
+    const float unit = std::min(size.x, size.y);
+    const float halfLength = std::max(4.5f, std::floor(unit * 0.27f));
+    const float headLength = std::max(5.0f, std::floor(unit * 0.30f));
+    const float headHalfWidth = std::max(4.0f, std::floor(unit * 0.25f));
+    const float shaftThickness = std::max(2.0f, std::floor(unit * 0.11f));
+    const Vec2 center = pos + size * 0.5f + Vec2{0.0f, -0.5f};
+    const Vec2 perpendicular{-direction.y, direction.x};
+    const Vec2 tip = center + direction * halfLength;
+    const Vec2 headBase = tip - direction * headLength;
+    const Vec2 tail = center - direction * halfLength;
+
+    const auto drawArrow = [&](Vec2 offset, Color color) {
+        const Vec2 shiftedTail = tail + offset;
+        const Vec2 shiftedHeadBase = headBase + offset;
+        if (direction.x != 0.0f) {
+            renderer.fillRect(
+                {std::min(shiftedTail.x, shiftedHeadBase.x), shiftedTail.y - shaftThickness * 0.5f},
+                {std::abs(shiftedHeadBase.x - shiftedTail.x), shaftThickness},
+                color);
+        } else {
+            renderer.fillRect(
+                {shiftedTail.x - shaftThickness * 0.5f, std::min(shiftedTail.y, shiftedHeadBase.y)},
+                {shaftThickness, std::abs(shiftedHeadBase.y - shiftedTail.y)},
+                color);
+        }
+        const std::array<Vec2, 3> triangle{
+            tip + offset,
+            headBase + perpendicular * headHalfWidth + offset,
+            headBase - perpendicular * headHalfWidth + offset,
+        };
+        renderer.fillPolygon(triangle.data(), triangle.size(), color);
+    };
+
+    drawArrow({0.0f, 1.0f}, {0, 0, 0, 112});
+    drawArrow({}, {242, 248, 255, 255});
 }
 
 void drawPadButton(Renderer& renderer, Vec2 pos, Vec2 size, const Glyph& glyph, const InputHelpStyle& style)
@@ -942,20 +1031,37 @@ void drawMouse(Renderer& renderer, Vec2 pos, Vec2 size, const Glyph& glyph)
     const float midY = pos.y + size.y * 0.47f;
     renderer.drawSoftLine({splitX, top}, {splitX, midY}, 1.2f, {204, 214, 232, 170});
     renderer.drawSoftLine({pos.x + 5.0f, midY}, {pos.x + size.x - 5.0f, midY}, 1.2f, {204, 214, 232, 116});
-    Vec2 activePos{};
-    Vec2 activeSize{};
-    const Color activeColor{242, 248, 255, 126};
-    if (glyph.mousePart == MousePart::Left) {
-        activePos = {pos.x + 3.0f, pos.y + 3.0f};
-        activeSize = {size.x * 0.5f - 3.5f, size.y * 0.38f};
-    } else if (glyph.mousePart == MousePart::Right) {
-        activePos = {splitX + 0.5f, pos.y + 3.0f};
-        activeSize = {size.x * 0.5f - 3.5f, size.y * 0.38f};
+    const Color activeColor{242, 248, 255, 210};
+    if (glyph.mousePart == MousePart::Left || glyph.mousePart == MousePart::Right) {
+        // ボタン片を小さな丸として重ねず、上面全体の形を半分に切り出す。
+        // これにより左右端はマウス外形に沿い、クリック部分が明瞭に塗り分けられる。
+        const Vec2 buttonPos{pos.x + 3.0f, pos.y + 3.0f};
+        const Vec2 buttonSize{size.x - 6.0f, size.y * 0.42f};
+        const bool right = glyph.mousePart == MousePart::Right;
+        const Vec2 clipPos{
+            right ? splitX : buttonPos.x,
+            buttonPos.y,
+        };
+        const Vec2 clipSize{
+            right ? buttonPos.x + buttonSize.x - splitX : splitX - buttonPos.x,
+            buttonSize.y,
+        };
+        renderer.pushClipRect(clipPos, clipSize);
+        fillSoftRoundedRect(
+            renderer,
+            buttonPos,
+            buttonSize,
+            std::max(2.0f, r - 3.0f),
+            activeColor);
+        renderer.popClipRect();
     } else {
-        activePos = {splitX - 2.0f, pos.y + 4.0f};
-        activeSize = {4.0f, size.y * 0.28f};
+        fillSoftRoundedRect(
+            renderer,
+            {splitX - 2.0f, pos.y + 4.0f},
+            {4.0f, size.y * 0.28f},
+            2.0f,
+            activeColor);
     }
-    fillSoftRoundedRect(renderer, activePos, activeSize, 2.0f, activeColor);
 }
 
 void drawDpadButton(Renderer& renderer, Vec2 pos, Vec2 size, bool active, Color accent)
@@ -1063,6 +1169,9 @@ void drawGlyph(Renderer& renderer, Vec2 pos, const Glyph& glyph, const InputHelp
     case GlyphKind::Key:
         drawKey(renderer, pos, size, glyph, style);
         break;
+    case GlyphKind::DirectionKey:
+        drawDirectionKey(renderer, pos, size, glyph);
+        break;
     case GlyphKind::Mouse:
         drawMouse(renderer, pos, size, glyph);
         break;
@@ -1144,6 +1253,68 @@ InputHelpDeviceMode inputHelpDeviceMode()
 std::string inlineInputActionTag(InputAction action)
 {
     return "{act:" + std::string(inputActionName(action)) + "}";
+}
+
+std::string inlineInputActionsTag(std::initializer_list<InputAction> actions)
+{
+    std::string tag = "{acts:";
+    bool first = true;
+    for (InputAction action : actions) {
+        if (!first) {
+            tag += ',';
+        }
+        tag += inputActionName(action);
+        first = false;
+    }
+    tag += '}';
+    return tag;
+}
+
+std::string inlineRingRemoveAllInputTag()
+{
+    return "{ring-remove-all}";
+}
+
+std::string buildInputHelpText(const std::vector<InputHelpEntry>& entries)
+{
+    std::string result;
+    constexpr std::array<InputHelpGroup, 4> DisplayOrder{
+        InputHelpGroup::Primary,
+        InputHelpGroup::Back,
+        InputHelpGroup::Cycle,
+        InputHelpGroup::Other,
+    };
+    for (InputHelpGroup group : DisplayOrder) {
+        for (const InputHelpEntry& entry : entries) {
+            if (entry.group != group || entry.label.empty()) {
+                continue;
+            }
+            std::string bindingTag = entry.bindingTag;
+            if (bindingTag.empty()) {
+                if (entry.actions.empty() || glyphsForActions(currentInput, entry.actions).empty()) {
+                    continue;
+                }
+                bindingTag = "{acts:";
+                for (std::size_t i = 0; i < entry.actions.size(); ++i) {
+                    if (i > 0) {
+                        bindingTag += ',';
+                    }
+                    bindingTag += inputActionName(entry.actions[i]);
+                }
+                bindingTag += '}';
+            }
+            if (!result.empty()) {
+                result += "  ";
+            }
+            result += bindingTag + " " + entry.label;
+        }
+    }
+    return result;
+}
+
+std::string buildInputHelpText(std::initializer_list<InputHelpEntry> entries)
+{
+    return buildInputHelpText(std::vector<InputHelpEntry>(entries));
 }
 
 bool inputHelpExplicitTagAt(std::string_view text, std::size_t offset, std::size_t& outEnd, const Input* input)

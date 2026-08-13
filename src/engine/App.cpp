@@ -1985,7 +1985,9 @@ void App::run()
                     renderer_->convertEventToRenderCoordinates(renderEvent);
                 }
                 const bool gameConsumedEvent = !startupLoadActive_ && game_.handleEvent(renderEvent);
-                if (!gameConsumedEvent) {
+                if (gameConsumedEvent) {
+                    input_.handleConsumedEvent(renderEvent);
+                } else {
                     input_.handleEvent(renderEvent);
                 }
                 if (!gameConsumedEvent && testPlayMode_ && !startupLoadActive_ &&
@@ -2000,9 +2002,6 @@ void App::run()
                     autoSimulation_.executeCommand(
                         autosimRunning ? "autosim stop" : "autosim start",
                         game_.makeTestSnapshot());
-                }
-                if (!gameConsumedEvent && event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.scancode == SDL_SCANCODE_F4) {
-                    toggleFullscreen();
                 }
                 if (event.type == SDL_EVENT_WINDOW_RESIZED) {
                     width_ = event.window.data1;
@@ -2026,6 +2025,9 @@ void App::run()
         if (input_.quitRequested()) {
             game_.handleApplicationQuitRequested();
             running_ = false;
+        }
+        if (input_.pressed(InputAction::ToggleFullscreen)) {
+            toggleFullscreen();
         }
         if (testPlayMode_ && input_.testRestartPressed()) {
             requestRestart();

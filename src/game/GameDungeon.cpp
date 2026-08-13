@@ -3,6 +3,7 @@
 #include "data/GameBalance.hpp"
 #include "data/StageWeight.hpp"
 
+#include "engine/InputHelpGlyph.hpp"
 #include "game/EntityStatusVisuals.hpp"
 #include "game/ExplosionWarning.hpp"
 #include "game/ItemImageRenderer.hpp"
@@ -334,15 +335,17 @@ const char* roguelikeFacilityName(Game::RoguelikeFacilityKind kind)
     return "施設";
 }
 
-const char* roguelikeFacilityPromptVerb(Game::RoguelikeFacilityKind kind)
+std::string roguelikeFacilityPromptVerb(Game::RoguelikeFacilityKind kind)
 {
     switch (kind) {
     case Game::RoguelikeFacilityKind::Merchant:
     case Game::RoguelikeFacilityKind::Artisan:
     case Game::RoguelikeFacilityKind::Trainer:
-        return "F/Enter 調べる";
+        return buildInputHelpText({
+            {InputHelpGroup::Primary, {InputAction::Confirm, InputAction::UseSelectedItem}, "調べる"},
+        });
     }
-    return "F/Enter 調べる";
+    return {};
 }
 
 std::string roguelikeFacilityId(Game::RoguelikeFacilityKind kind, int areaIndex, int index)
@@ -3854,7 +3857,7 @@ void Game::finalizeCaptureAbsorbAnimation(const CaptureAbsorbAnimation& animatio
     if (inventory_.addRuntimeObjectItem(animation.item, &addResult)) {
         ++runStats_.acquiredItems;
         ++runStats_.acquiredObjectItems;
-        recordObjectObtainedForFirstNotice(
+        recordObjectAcquisitionNotice(
             animation.item.id,
             addResult.instanceId,
             addResult.kind == InventoryAddKind::Instance && !addResult.instanceId.empty(),
@@ -7633,7 +7636,10 @@ void Game::renderDungeonEventItemRequestUi(Renderer& renderer, double totalSecon
             "dungeon_event.item_request",
             layout.window,
             "渡すアイテムを選ぶ",
-            "WASD/矢印 選択  F/Enter 渡す  Esc 戻る",
+            buildInputHelpText({
+                {InputHelpGroup::Primary, {InputAction::Confirm, InputAction::UseSelectedItem}, "渡す"},
+                {InputHelpGroup::Back, {InputAction::Cancel, InputAction::Pause}, "戻る"},
+            }),
             UiWindowOptions{true, true});
 
         renderer.drawText(
@@ -7731,15 +7737,23 @@ std::string Game::dungeonEventNpcPromptText() const
         return {};
     }
     if (target->completed || target->rewardClaimed) {
-        return "魔女   F/Enter 話す";
+        return buildInputHelpText({
+            {InputHelpGroup::Primary, {InputAction::Confirm, InputAction::UseSelectedItem}, "魔女と話す"},
+        });
     }
     if (target->objectiveResolved) {
-        return "魔女   F/Enter お礼を受け取る";
+        return buildInputHelpText({
+            {InputHelpGroup::Primary, {InputAction::Confirm, InputAction::UseSelectedItem}, "魔女からお礼を受け取る"},
+        });
     }
     if (target->npcRequestKnown) {
-        return "魔女   F/Enter 条件を確認";
+        return buildInputHelpText({
+            {InputHelpGroup::Primary, {InputAction::Confirm, InputAction::UseSelectedItem}, "魔女に条件を確認"},
+        });
     }
-    return "魔女   F/Enter 話す";
+    return buildInputHelpText({
+        {InputHelpGroup::Primary, {InputAction::Confirm, InputAction::UseSelectedItem}, "魔女と話す"},
+    });
 }
 
 bool Game::updateDungeonEventDiscovery(float dt)
@@ -8509,7 +8523,7 @@ bool Game::requestDungeonFocus(DungeonFocusRequest request)
         return false;
     }
     if (dialogue_.active() ||
-        firstItemAcquisitionNoticeActive() ||
+        itemAcquisitionNoticeActive() ||
         warpReturnConfirm_.open ||
         (bossEncounterBlocksProgress() && !request.allowDuringBossEncounter) ||
         dungeonRingIntroActive() ||
@@ -9233,7 +9247,11 @@ std::string Game::roguelikeFacilityPromptText() const
         return {};
     }
     const RoguelikeFacilityInstance& facility = roguelikeFacilities_[static_cast<std::size_t>(focusedRoguelikeFacilityIndex_)];
-    return std::string(roguelikeFacilityName(facility.kind)) + "   " + roguelikeFacilityPromptVerb(facility.kind);
+    const std::string prompt = roguelikeFacilityPromptVerb(facility.kind);
+    if (prompt.empty()) {
+        return {};
+    }
+    return prompt + " " + roguelikeFacilityName(facility.kind);
 }
 
 int Game::nearbyDiscoveredWarpPointIndex() const

@@ -361,6 +361,7 @@ function Get-ExecutablePath([string]$BuildPath, [string]$GeneratorKind, [string]
 function Invoke-MajoShovelBuild {
     $slotLease = $null
     $buildOperationMutex = $null
+    $sourceCoordinationLock = $null
     try {
         $cmake = Find-CMake
         $ninja = Find-Ninja
@@ -390,6 +391,7 @@ function Invoke-MajoShovelBuild {
 
         $slotCount = Get-CodexBuildSlotCount
         $buildFlavor = Get-BuildFlavor $generatorKind $cacheTool
+        $sourceCoordinationLock = Enter-MajoShovelSourceVerificationWindow $Root "[build]"
         $leaseRef = [ref]$slotLease
         $buildPath = Resolve-BuildPath $BuildDir $buildFlavor $slotCount $leaseRef
         $slotLease = $leaseRef.Value
@@ -453,6 +455,7 @@ function Invoke-MajoShovelBuild {
     }
     finally {
         Exit-MajoShovelMutex $buildOperationMutex
+        Exit-MajoShovelMutex $sourceCoordinationLock
         if ($null -ne $slotLease -and $null -ne $slotLease.Lock) {
             $slotLease.Lock.Dispose()
         }

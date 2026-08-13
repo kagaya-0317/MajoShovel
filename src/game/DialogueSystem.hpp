@@ -4,6 +4,7 @@
 #include "engine/Renderer.hpp"
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -77,6 +78,7 @@ public:
     [[nodiscard]] int portraitExpressionVariant(std::string_view speakerId) const;
     void setPortraitExpressionVariant(std::string speakerId, int variant);
     int consumeAdvanceSoundRequests();
+    std::optional<std::string> consumeTextSoundSpeakerId();
 
 private:
     enum class RightPortraitTransition {
@@ -142,6 +144,7 @@ private:
     float contentFade_ = 0.0f;
     float advanceRepeatTimer_ = 0.0f;
     int advanceSoundRequests_ = 0;
+    std::optional<std::string> textSoundSpeakerId_;
     std::string rightSpeakerId_;
     std::string pendingRightSpeakerId_;
     std::vector<std::pair<std::string, int>> portraitExpressionVariants_;

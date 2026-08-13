@@ -68,6 +68,13 @@ constexpr std::string_view AudioSeUiUpgradeSelect = "se.ui.upgrade_select";
 constexpr std::string_view AudioSeRingAppear = "se.ring.appear";
 constexpr std::string_view AudioSeRingUnlockJingle = "se.ring.unlock.jingle";
 constexpr std::string_view AudioSeDialogueAdvance = "se.dialogue.advance";
+constexpr std::string_view AudioSeDialogueTextPlayer = "se.dialogue.text.player";
+constexpr std::string_view AudioSeDialogueTextMonica = "se.dialogue.text.monica";
+constexpr std::string_view AudioSeDialogueTextChicory = "se.dialogue.text.chicory";
+constexpr std::string_view AudioSeDialogueTextAstragna = "se.dialogue.text.astragna";
+constexpr std::string_view AudioSeDialogueTextLow = "se.dialogue.text.low";
+constexpr std::string_view AudioSeDialogueTextMid = "se.dialogue.text.mid";
+constexpr std::string_view AudioSeDialogueTextHigh = "se.dialogue.text.high";
 constexpr std::string_view AudioSeStoryPhoneIncoming = "se.story.phone.incoming";
 constexpr std::string_view AudioSeStoryPhoneOutgoing = "se.story.phone.outgoing";
 constexpr std::string_view AudioSeStoryPhoneHangup = "se.story.phone.hangup";
@@ -88,8 +95,7 @@ constexpr float PlayerDamageVignetteStartHpRatio = 0.70f;
 constexpr float PlayerDamageVignetteMaxHpRatio = 0.20f;
 constexpr float PlayerDamageVignetteFlashDecayPerSecond = 3.4f;
 constexpr float PlayerPinchSeHpRatio = 1.0f / 3.0f;
-constexpr float LevelUpPresentationMinSeconds = 1.22f;
-constexpr float LevelUpPresentationSparkleIntervalSeconds = 0.22f;
+constexpr float LevelUpPresentationMinSeconds = 90.0f / 60.0f;
 constexpr float LevelUpJingleFallbackSeconds = 1.18f;
 constexpr float GameOverJingleFallbackSeconds = 1.35f;
 constexpr float StoryRingUnlockJingleFallbackSeconds = 1.28f;
@@ -100,6 +106,29 @@ constexpr float RingWorkshopWeightLimitKgPerLevel = 1.0f;
 constexpr float RingWorkshopShiftDistanceMetersPerLevel = 0.50f;
 constexpr float RingWorkshopThrowDistanceMetersPerLevel = 0.40f;
 constexpr float RingWorkshopThrowCooldownSecondsPerLevel = 0.18f;
+
+std::string_view dialogueTextSoundCueForSpeaker(std::string_view speakerId)
+{
+    if (speakerId == "player") {
+        return AudioSeDialogueTextPlayer;
+    }
+    if (speakerId == "monica") {
+        return AudioSeDialogueTextMonica;
+    }
+    if (speakerId == "chicory") {
+        return AudioSeDialogueTextChicory;
+    }
+    if (speakerId == "astragna") {
+        return AudioSeDialogueTextAstragna;
+    }
+    if (speakerId == "slime" || speakerId == "stardust_mole") {
+        return AudioSeDialogueTextLow;
+    }
+    if (speakerId == "elder" || speakerId == "witch") {
+        return AudioSeDialogueTextHigh;
+    }
+    return AudioSeDialogueTextMid;
+}
 
 float metersToWorldDistance(float meters)
 {
@@ -287,7 +316,8 @@ void stripUtf8Bom(std::string& text)
 std::string enemyStealLogLabel(const EnemyEvent& event, const ObjectCatalog& objectCatalog)
 {
     if (event.moneyDrop > 0) {
-        return inlineWorldIconTag(worldIconKey(moneyWorldIconForAmount(event.moneyDrop))) + "お金";
+        return inlineWorldIconTag(worldIconKey(moneyWorldIconForAmount(event.moneyDrop))) +
+            std::to_string(event.moneyDrop) + "G";
     }
     if (!event.objectDropId.empty()) {
         const ObjectDefinition* object = objectCatalog.registry.findById(event.objectDropId);
@@ -857,6 +887,9 @@ void Game::setInputBindingAccessors(
 
 bool Game::handleEvent(const SDL_Event& event)
 {
+    if (handleOperationSettingsEvent(event)) {
+        return true;
+    }
     if (handleDebugNamedSaveEvent(event)) {
         return true;
     }
@@ -876,9 +909,6 @@ bool Game::handleEvent(const SDL_Event& event)
         return true;
     }
     if (handleEnemyShadowEditEvent(event)) {
-        return true;
-    }
-    if (handleOperationSettingsEvent(event)) {
         return true;
     }
     return false;
@@ -2277,9 +2307,7 @@ void Game::updateTitleScreen(const Input& input, UiContext& ui)
     if (titleMenuPage_ == TitleMenuPage::Options) {
         const bool suppressCancelThisFrame = optionsSuppressCancelThisFrame_;
         optionsSuppressCancelThisFrame_ = false;
-        const bool operationModalOpen = operationSettingsCapture_.active() ||
-            operationSettingsConflictConfirm_.open ||
-            operationSettingsResetAllConfirm_.open;
+        const bool operationModalOpen = operationSettingsModalVisible();
         if (!operationModalOpen &&
             !suppressCancelThisFrame &&
             uiCancelRequested(titleCancelState_, input, ui, optionsMenuPanelRect())) {
@@ -2967,12 +2995,12 @@ void Game::startLevelUpPresentation()
     levelUpPresentation_ = {};
     levelUpPresentation_.active = true;
     levelUpPresentation_.durationSeconds = LevelUpPresentationMinSeconds;
-    levelUpPresentation_.sparkleTimer = LevelUpPresentationSparkleIntervalSeconds;
 
-    const Vec2 anchor = levelUpPresentationAnchor();
-    effects_.spawnLevelUpPopup(anchor);
-    effects_.spawnLevelUpSparkles(anchor);
-    addScreenShake(2.2f, 0.18f);
+    effects_.spawnLevelUpPopup(levelUpPresentationAnchor());
+    const Vec2 effectAnchor = levelUpReturnMode_ == ScreenMode::Base || basePresentationActive()
+        ? basePlayerPosition_
+        : player_.position - Vec2{0.0f, PlayerSpriteDrawSize * (PlayerSpriteAnchorY - 0.5f)};
+    effects_.spawnLevelUpEffects(effectAnchor);
 
     const float jingleDuration = playAudioJingle(
         AudioSeLevelUpJingle,
@@ -2992,11 +3020,6 @@ void Game::updateLevelUpPresentation(float dt)
 
     const float safeDt = std::max(0.0f, dt);
     levelUpPresentation_.elapsedSeconds += safeDt;
-    levelUpPresentation_.sparkleTimer -= safeDt;
-    if (levelUpPresentation_.sparkleTimer <= 0.0f) {
-        effects_.spawnLevelUpSparkles(levelUpPresentationAnchor());
-        levelUpPresentation_.sparkleTimer = LevelUpPresentationSparkleIntervalSeconds;
-    }
     effects_.update(safeDt);
 
     if (levelUpPresentation_.elapsedSeconds >= levelUpPresentation_.durationSeconds) {
@@ -3266,7 +3289,7 @@ bool Game::registerRingPresetShortcut(int presetIndex)
     return true;
 }
 
-bool Game::applyRingPresetShortcut(int presetIndex)
+bool Game::applyRingPreset(int presetIndex)
 {
     const int presetSlotCount = unlockedRingPresetSlotCount();
     if (presetIndex < 0 || presetIndex >= presetSlotCount) {
@@ -4100,6 +4123,7 @@ void Game::startFinalBossEndingKamishibaiAfterTransition()
 void Game::updateScreenMode(
     const Input& input,
     UiContext& ui,
+    Renderer& renderer,
     float dt,
     std::vector<EffectDiscoveryEvent>* discoveryEvents)
 {
@@ -4131,8 +4155,8 @@ void Game::updateScreenMode(
         return;
     }
 
-    if (firstItemAcquisitionNoticeActive()) {
-        updateFirstItemAcquisitionNotice(input, ui);
+    if (itemAcquisitionNoticeActive()) {
+        updateItemAcquisitionNotice(input, ui, renderer, dt);
         return;
     }
 
@@ -4198,6 +4222,9 @@ void Game::updateScreenMode(
         }
         const bool dialogueWasActive = dialogue_.active();
         dialogue_.update(input, dt);
+        if (const std::optional<std::string> speakerId = dialogue_.consumeTextSoundSpeakerId()) {
+            playAudioSe(dialogueTextSoundCueForSpeaker(*speakerId));
+        }
         if (dialogue_.consumeAdvanceSoundRequests() > 0) {
             playAudioSe(AudioSeDialogueAdvance);
         }
@@ -4401,7 +4428,8 @@ void Game::updateScreenMode(
             ui.emitSound(UiSoundEvent::BookOpen);
             return;
         }
-        if (input.pausePressed()) {
+        // 右クリックは固定のリングドラッグを優先し、同じ既定割当のメニューを開かない。
+        if (input.pausePressed() && !input.ringOffsetPointerHeld()) {
             ui.emitSound(UiSoundEvent::MenuOpen);
             mode_ = ScreenMode::PauseMenu;
             pauseReturnMode_ = ScreenMode::Playing;
@@ -4428,12 +4456,8 @@ void Game::updateScreenMode(
             mode_ = ScreenMode::Inventory;
             return;
         }
-        if (input.shortcutSlotPressed() >= 0 && input.shortcutSlotPressed() < RingPresetSlotCount) {
-            ui.emitActionResult(applyRingPresetShortcut(input.shortcutSlotPressed()));
-            return;
-        }
-        if (input.activeRingDelta() != 0) {
-            switchActiveRingWithLog(input.activeRingDelta());
+        if (input.cycleDelta() != 0) {
+            switchActiveRingWithLog(input.cycleDelta());
         }
         inventory_.updateShortcuts(
             input,
@@ -4612,7 +4636,7 @@ bool Game::gameProgressPaused() const
         debugItemPickerActive_ ||
         debugStoryTestActive_ ||
         pendingStoryTriggerDelayActive() ||
-        firstItemAcquisitionNoticeActive() ||
+        itemAcquisitionNoticeActive() ||
         dungeonEventItemRequestUiActive() ||
         dungeonFocusActive() ||
         dialogue_.active() ||
@@ -4731,7 +4755,7 @@ void Game::queueIntroTutorialChestLootDialogueIfReady()
     if (!introTutorialActive() ||
         !introTutorialChestLootPending_ ||
         introTutorialChestLootDialogueQueued_ ||
-        firstItemAcquisitionNoticeActive()) {
+        itemAcquisitionNoticeActive()) {
         return;
     }
 
@@ -4863,7 +4887,7 @@ void Game::update(const Input& input, const Time& time, Renderer& renderer)
         ~UiSoundFlush() { game.playUiSoundEvents(ui); }
     } uiSoundFlush{*this, ui};
     const bool wasPaused = gameProgressPaused();
-    updateScreenMode(input, ui, time.deltaSeconds(), effectDiscoveryEvents);
+    updateScreenMode(input, ui, renderer, time.deltaSeconds(), effectDiscoveryEvents);
     effects_.setLightweightMode(lightweight);
     magicFx_.setLightweightMode(lightweight);
     wetGround_.setLightweightMode(lightweight);
@@ -5163,7 +5187,12 @@ void Game::update(const Input& input, const Time& time, Renderer& renderer)
             }
             if (event.kind == WorldDropKind::Object) {
                 runStats_.acquiredObjectItems += std::max(1, event.quantity);
-                recordObjectObtainedForFirstNotice(event.id, event.instanceId, event.protectable, player_.position);
+                recordObjectAcquisitionNotice(
+                    event.id,
+                    event.instanceId,
+                    event.protectable,
+                    player_.position,
+                    std::max(1, event.quantity));
                 if (std::string_view(event.id) == MagnifyingGlassObjectId) {
                     queueStoryEventForTrigger("tutorial:magnifying_glass");
                 }

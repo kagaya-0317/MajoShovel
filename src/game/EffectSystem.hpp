@@ -15,6 +15,7 @@ namespace majo {
 
 enum class EffectType {
     Ring,
+    LevelUpPulseRing,
     Particle
 };
 
@@ -22,6 +23,7 @@ enum class ParticleVisual {
     Circle,
     RockShard,
     Sparkle,
+    LevelUpTwinkle,
     ImpactSpark,
     ImpactBurst,
     PoisonBubble,
@@ -208,7 +210,7 @@ public:
     void spawnDamagePopup(Vec2 position, int amount, DamagePopupStyle style = DamagePopupStyle::Enemy);
     void spawnStatusPopup(Vec2 position, std::string_view stateId, StatusPopupTarget target);
     void spawnLevelUpPopup(Vec2 position);
-    void spawnLevelUpSparkles(Vec2 position);
+    void spawnLevelUpEffects(Vec2 position);
     void spawnDigHit(Vec2 position, Vec2 direction = {1.0f, 0.0f}, Color colorOverride = {0, 0, 0, 0}, bool playSound = true);
     void spawnTileBreak(
         Vec2 position,

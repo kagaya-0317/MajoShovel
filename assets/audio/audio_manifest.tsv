@@ -25,6 +25,13 @@ se.facility.ring_workshop_respec	se	se/0_Recharge2.wav	0.82	false	180	26.303	リ
 se.facility.diary_save	se	se/0_Message.wav	0.88	false	180	0	日記 保存完了
 se.merchant.transaction	se	se/merchant_transaction.wav	0.74	false	90	0	商人 取引完了
 se.dialogue.advance	se	se/0_Cursor5.wav	0.7	false	45	0	メッセージ送り
+se.dialogue.text.player	se	se/zz_tmp_dialogue_text_player_placeholder.wav	0.34	false	55	0	会話文字音 ルネ
+se.dialogue.text.monica	se	se/zz_tmp_dialogue_text_monica_placeholder.wav	0.32	false	55	0	会話文字音 モニカ
+se.dialogue.text.chicory	se	se/zz_tmp_dialogue_text_chicory_placeholder.wav	0.30	false	55	0	会話文字音 チコリ
+se.dialogue.text.astragna	se	se/zz_tmp_dialogue_text_astragna_placeholder.wav	0.36	false	55	0	会話文字音 アストラグナ
+se.dialogue.text.low	se	se/zz_tmp_dialogue_text_low_placeholder.wav	0.32	false	55	0	会話文字音 汎用低音
+se.dialogue.text.mid	se	se/zz_tmp_dialogue_text_mid_placeholder.wav	0.30	false	55	0	会話文字音 汎用中音
+se.dialogue.text.high	se	se/zz_tmp_dialogue_text_high_placeholder.wav	0.28	false	55	0	会話文字音 汎用高音
 se.story.phone.incoming	se	se/zz_tmp_story_phone_incoming_placeholder.wav	0.72	false	250	0	電話 着信
 se.story.phone.outgoing	se	se/zz_tmp_story_phone_outgoing_placeholder.wav	0.66	false	180	0	電話 発信
 se.story.phone.hangup	se	se/zz_tmp_story_phone_hangup_placeholder.wav	0.64	false	120	0	電話 切断

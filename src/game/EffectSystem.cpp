@@ -120,6 +120,20 @@ unsigned char fadeAlpha(Color color, float t)
 
 unsigned char effectAlpha(const Effect& effect, Color color, float t)
 {
+    if (effect.type == EffectType::LevelUpPulseRing) {
+        constexpr float FadeStart = 60.0f / 75.0f;
+        const float fade = clamp((t - FadeStart) / (1.0f - FadeStart), 0.0f, 1.0f);
+        const float easedFade = fade * fade * (3.0f - 2.0f * fade);
+        return static_cast<unsigned char>(static_cast<float>(color.a) * (1.0f - easedFade));
+    }
+
+    if (effect.visual == ParticleVisual::LevelUpTwinkle) {
+        constexpr float FadeStart = 0.68f;
+        const float fade = clamp((t - FadeStart) / (1.0f - FadeStart), 0.0f, 1.0f);
+        const float easedFade = fade * fade * (3.0f - 2.0f * fade);
+        return static_cast<unsigned char>(static_cast<float>(color.a) * (1.0f - easedFade));
+    }
+
     if (effect.visual == ParticleVisual::PoisonBubble) {
         constexpr float PopStart = 0.82f;
         if (t < PopStart) {
@@ -557,6 +571,38 @@ void renderSparkle(Renderer& renderer, const Effect& effect, Vec2 center, Color 
         {220, 250, 255, static_cast<unsigned char>(color.a * 3 / 4)});
 }
 
+void renderLevelUpTwinkle(Renderer& renderer, Vec2 center, Color color, float radius)
+{
+    if (radius <= 0.0f || color.a == 0) {
+        return;
+    }
+
+    const float verticalRadius = radius * 1.35f;
+    const float horizontalRadius = radius * 0.82f;
+    const Color glow{color.r, color.g, color.b, static_cast<unsigned char>(color.a * 2 / 5)};
+    const Color core{255, 255, 244, color.a};
+    renderer.drawSoftLine(
+        center - Vec2{0.0f, verticalRadius},
+        center + Vec2{0.0f, verticalRadius},
+        std::max(1.8f, radius * 0.48f),
+        glow);
+    renderer.drawSoftLine(
+        center - Vec2{horizontalRadius, 0.0f},
+        center + Vec2{horizontalRadius, 0.0f},
+        std::max(1.8f, radius * 0.48f),
+        glow);
+    renderer.drawSoftLine(
+        center - Vec2{0.0f, verticalRadius},
+        center + Vec2{0.0f, verticalRadius},
+        std::max(1.0f, radius * 0.18f),
+        core);
+    renderer.drawSoftLine(
+        center - Vec2{horizontalRadius, 0.0f},
+        center + Vec2{horizontalRadius, 0.0f},
+        std::max(1.0f, radius * 0.18f),
+        core);
+}
+
 void renderPoisonBubble(Renderer& renderer, const Effect& effect, Vec2 center, Color color, float radius, float t)
 {
     if (radius <= 0.0f || color.a == 0) {
@@ -814,15 +860,22 @@ void renderEffectVisual(Renderer& renderer, const Effect& effect)
     const float t = effect.duration > 0.0f ? effect.age / effect.duration : 1.0f;
     Color color = effect.color;
     color.a = effectAlpha(effect, color, t);
-    const float radius = lerp(effect.startRadius, effect.endRadius, t);
+    const float radius =
+        effect.type == EffectType::LevelUpPulseRing || effect.visual == ParticleVisual::LevelUpTwinkle
+        ? lerp(effect.startRadius, effect.endRadius, smooth01(t))
+        : lerp(effect.startRadius, effect.endRadius, t);
     const Vec2 drawPosition = effectDrawPosition(effect);
-    if (effect.type == EffectType::Ring) {
+    if (effect.type == EffectType::LevelUpPulseRing) {
+        renderer.drawAntialiasedRing(drawPosition, radius, 5.0f, color);
+    } else if (effect.type == EffectType::Ring) {
         const float width = std::max(2.2f, radius * 0.075f);
         renderer.drawSoftRing(drawPosition, radius, width, color);
     } else if (effect.visual == ParticleVisual::RockShard) {
         renderRockShard(renderer, effect, drawPosition, color, std::max(1.0f, radius));
     } else if (effect.visual == ParticleVisual::Sparkle) {
         renderSparkle(renderer, effect, drawPosition, color, std::max(1.0f, radius));
+    } else if (effect.visual == ParticleVisual::LevelUpTwinkle) {
+        renderLevelUpTwinkle(renderer, drawPosition, color, std::max(0.0f, radius));
     } else if (effect.visual == ParticleVisual::ImpactSpark) {
         renderImpactSpark(renderer, effect, drawPosition, color, std::max(1.0f, radius));
     } else if (effect.visual == ParticleVisual::ImpactBurst) {
@@ -1146,15 +1199,10 @@ void EffectSystem::renderDamagePopups(Renderer& renderer)
         const float lift = std::sin(clamp(t / 0.68f, 0.0f, 1.0f) * Pi) * 22.0f + t * 18.0f;
         const Vec2 center = popup.position + popup.velocity * popup.age - Vec2{0.0f, lift};
         const Vec2 pos = center - Vec2{size.x * 0.5f, size.y * 0.5f};
-        const Color glowColor{255, 226, 118, static_cast<unsigned char>(std::clamp(std::lround(78.0f * fade), 0L, 255L))};
-        const Color outlineColor{42, 18, 62, static_cast<unsigned char>(std::clamp(std::lround(230.0f * fade), 0L, 255L))};
+        const Color shadowColor{196, 118, 255, alpha};
         const Color textColor{255, 246, 178, alpha};
-        const Color shineColor{255, 255, 255, static_cast<unsigned char>(std::clamp(std::lround(150.0f * fadeIn * fadeOut), 0L, 255L))};
-
-        renderer.fillSoftCircle(center, std::max(size.x, size.y) * 0.42f, glowColor);
-        renderer.drawOutlinedText(pos + Vec2{0.0f, 3.0f}, LevelUpText, {196, 118, 255, alpha}, outlineColor, 2, textScale, TextStyle::Italic);
-        renderer.drawOutlinedText(pos, LevelUpText, textColor, outlineColor, 2, textScale, TextStyle::Italic);
-        renderer.drawText(pos + Vec2{std::max(2.0f, size.x * 0.08f), -2.0f}, LevelUpText, shineColor, textScale, TextStyle::Italic);
+        renderer.drawText(pos + Vec2{0.0f, 3.0f}, LevelUpText, shadowColor, textScale, TextStyle::Italic);
+        renderer.drawText(pos, LevelUpText, textColor, textScale, TextStyle::Italic);
     }
 }
 
@@ -1286,56 +1334,46 @@ void EffectSystem::spawnLevelUpPopup(Vec2 position)
     popup->duration = 1.14f;
 }
 
-void EffectSystem::spawnLevelUpSparkles(Vec2 position)
+void EffectSystem::spawnLevelUpEffects(Vec2 position)
 {
-    const Vec2 center = position + Vec2{0.0f, -30.0f};
-    spawnRing(center, 8.0f, 56.0f, {255, 232, 126, 168}, 0.56f, EffectLayer::Foreground);
-    spawnRing(center, 22.0f, 82.0f, {198, 156, 255, 118}, 0.72f, EffectLayer::Foreground);
-
-    for (int i = 0; i < 18; ++i) {
-        const float angle = randomRange(0.0f, Pi * 2.0f);
-        const float distance = randomRange(6.0f, 38.0f);
-        const Vec2 direction = fromAngle(angle);
-        const Color color = mixColor({255, 238, 132, 230}, {214, 244, 255, 205}, randomRange(0.0f, 1.0f));
-        Effect* sparkle = spawnParticle(
-            center + direction * distance + Vec2{randomRange(-4.0f, 4.0f), randomRange(-10.0f, 8.0f)},
-            direction * randomRange(18.0f, 58.0f) + Vec2{randomRange(-8.0f, 8.0f), -randomRange(24.0f, 68.0f)},
-            randomRange(2.8f, 5.2f),
-            color,
-            randomRange(0.62f, 0.92f),
-            {0.0f, -12.0f},
-            randomRange(0.65f, 1.25f),
-            EffectLayer::Foreground,
-            ParticleVisual::Sparkle,
-            0,
-            randomRange(0.0f, Pi * 2.0f),
-            randomRange(-3.5f, 3.5f),
-            randomRange(0.84f, 1.18f));
-        if (sparkle != nullptr) {
-            sparkle->endRadius = sparkle->startRadius * randomRange(0.24f, 0.42f);
-            delayEffect(sparkle, randomRange(0.0f, 0.12f));
+    constexpr float FramesPerSecond = 60.0f;
+    constexpr float PulseDuration = 75.0f / FramesPerSecond;
+    constexpr float SecondPulseDelay = 15.0f / FramesPerSecond;
+    for (int pulseIndex = 0; pulseIndex < 2; ++pulseIndex) {
+        Effect* pulse = effects_.acquire();
+        if (pulse == nullptr) {
+            break;
         }
+        pulse->type = EffectType::LevelUpPulseRing;
+        pulse->layer = EffectLayer::Foreground;
+        pulse->position = position;
+        pulse->color = {255, 232, 126, 210};
+        pulse->duration = PulseDuration;
+        pulse->startRadius = 8.0f;
+        pulse->endRadius = 72.0f;
+        pulse->age = pulseIndex == 0 ? 0.0f : -SecondPulseDelay;
     }
 
-    for (int i = 0; i < 8; ++i) {
+    constexpr int TwinkleCount = 20;
+    for (int i = 0; i < TwinkleCount; ++i) {
         const float angle = randomRange(0.0f, Pi * 2.0f);
-        const Vec2 direction = fromAngle(angle);
-        Effect* spark = spawnParticle(
-            center + direction * randomRange(10.0f, 28.0f),
-            direction * randomRange(76.0f, 128.0f),
-            randomRange(1.8f, 3.0f),
-            mixColor({255, 255, 255, 235}, {255, 206, 102, 220}, randomRange(0.0f, 1.0f)),
-            randomRange(0.28f, 0.44f),
+        const float distance = std::sqrt(randomRange(0.0f, 1.0f)) * 50.0f;
+        const Color color = mixColor({255, 214, 76, 230}, {255, 255, 246, 255}, randomRange(0.0f, 1.0f));
+        const float targetRadius = randomRange(3.4f, 7.2f);
+        const float duration = randomRange(36.0f, 56.0f) / FramesPerSecond;
+        Effect* twinkle = spawnParticle(
+            position + fromAngle(angle) * distance,
             {},
-            2.6f,
-            EffectLayer::Foreground,
-            ParticleVisual::ImpactSpark,
-            0,
-            angle,
             0.0f,
-            randomRange(1.0f, 1.8f));
-        if (spark != nullptr) {
-            spark->endRadius = spark->startRadius * 0.28f;
+            color,
+            duration,
+            {},
+            0.0f,
+            EffectLayer::Foreground,
+            ParticleVisual::LevelUpTwinkle);
+        if (twinkle != nullptr) {
+            twinkle->endRadius = targetRadius;
+            delayEffect(twinkle, randomRange(0.0f, 45.0f) / FramesPerSecond);
         }
     }
 }

@@ -1,5 +1,6 @@
 ﻿#include "game/InventorySystem.hpp"
 
+#include "engine/InputHelpGlyph.hpp"
 #include "engine/Log.hpp"
 #include "game/EffectDispatcher.hpp"
 #include "game/EncyclopediaSystem.hpp"
@@ -741,6 +742,69 @@ bool InventorySystem::useObjectStackById(
     return false;
 }
 
+bool InventorySystem::canUseObjectById(
+    std::string_view objectId,
+    std::string_view instanceId) const
+{
+    const int slotIndex = objectScreenSlotById(objectId, instanceId);
+    return slotIndex >= 0 && canUseScreenItem(slotIndex);
+}
+
+bool InventorySystem::canEquipStaffObjectById(
+    std::string_view objectId,
+    std::string_view instanceId,
+    const SpellRingSystem& spellRing) const
+{
+    const int slotIndex = objectScreenSlotById(objectId, instanceId);
+    if (slotIndex < 0 || !canEquipStaffScreenItem(slotIndex)) {
+        return false;
+    }
+    return instanceId.empty() ||
+        (!isStaffEquipped(instanceId) && !ringContainsInstanceId(spellRing, instanceId));
+}
+
+bool InventorySystem::discardObjectStackById(
+    std::string_view objectId,
+    bool itemDiscardEnabled,
+    std::string* outStatus)
+{
+    const int slotIndex = objectScreenSlotById(objectId, {});
+    if (slotIndex >= 0) {
+        const bool discarded = discardScreenItem(slotIndex, itemDiscardEnabled);
+        if (outStatus != nullptr) {
+            *outStatus = status_;
+        }
+        return discarded;
+    }
+
+    status_ = "アイテムなし";
+    if (outStatus != nullptr) {
+        *outStatus = status_;
+    }
+    return false;
+}
+
+bool InventorySystem::discardObjectInstanceById(
+    std::string_view instanceId,
+    bool itemDiscardEnabled,
+    std::string* outStatus)
+{
+    const int slotIndex = objectScreenSlotById({}, instanceId);
+    if (slotIndex >= 0) {
+        const bool discarded = discardScreenItem(slotIndex, itemDiscardEnabled);
+        if (outStatus != nullptr) {
+            *outStatus = status_;
+        }
+        return discarded;
+    }
+
+    status_ = "アイテムなし";
+    if (outStatus != nullptr) {
+        *outStatus = status_;
+    }
+    return false;
+}
+
 bool InventorySystem::useObjectInstanceById(
     std::string_view instanceId,
     Player& player,
@@ -1455,6 +1519,30 @@ bool InventorySystem::hasScreenItem(int index) const
     return objectStackAtScreenIndex(index) != nullptr || objectInstanceAtScreenIndex(index) != nullptr;
 }
 
+int InventorySystem::objectScreenSlotById(
+    std::string_view objectId,
+    std::string_view instanceId) const
+{
+    if (objectId.empty() && instanceId.empty()) {
+        return -1;
+    }
+    for (int slotIndex = 0; slotIndex < screenSlotCount(); ++slotIndex) {
+        if (!instanceId.empty()) {
+            const InventoryObjectInstance* instance = objectInstanceAtScreenIndex(slotIndex);
+            if (instance != nullptr && instance->instance.instanceId == instanceId) {
+                return slotIndex;
+            }
+            continue;
+        }
+
+        const InventoryObjectStack* stack = objectStackAtScreenIndex(slotIndex);
+        if (stack != nullptr && stack->objectId == objectId && stack->count > 0) {
+            return slotIndex;
+        }
+    }
+    return -1;
+}
+
 bool InventorySystem::canUseScreenItem(int index) const
 {
     if (const InventoryObjectStack* objectStack = objectStackAtScreenIndex(index)) {
@@ -1742,31 +1830,12 @@ bool InventorySystem::equipStaffObject(
         return equipped;
     };
 
-    if (!instanceId.empty()) {
-        for (int slot = 0; slot < screenSlotCount(); ++slot) {
-            const InventoryObjectInstance* instance = screenObjectInstanceAt(slot);
-            if (instance != nullptr && instance->instance.instanceId == instanceId) {
-                return finish(equipStaffScreenItem(slot, spellRing));
-            }
-        }
+    const int slotIndex = objectScreenSlotById(objectId, instanceId);
+    if (slotIndex < 0) {
         status_ = "杖がないよ";
         return finish(false);
     }
-
-    if (objectId.empty()) {
-        status_ = "杖がないよ";
-        return finish(false);
-    }
-
-    for (int slot = 0; slot < screenSlotCount(); ++slot) {
-        const InventoryObjectStack* stack = screenObjectStackAt(slot);
-        if (stack != nullptr && stack->objectId == objectId && stack->count > 0) {
-            return finish(equipStaffScreenItem(slot, spellRing));
-        }
-    }
-
-    status_ = "杖がないよ";
-    return finish(false);
+    return finish(equipStaffScreenItem(slotIndex, spellRing));
 }
 
 InventorySystem::SlotCommandList InventorySystem::buildSlotCommandItems(
@@ -2816,8 +2885,6 @@ void InventorySystem::updateScreen(
     if (input.shortcutCursorDelta() != 0) {
         moveShortcutCursor(input.shortcutCursorDelta());
     }
-    selectShortcutSlot(input.shortcutSlotPressed());
-
     std::array<ItemGridInteractionSlot, ShortcutSlotCount> interactionSlots{};
     for (int i = 0; i < ShortcutSlotCount; ++i) {
         const UiRect rect = inventorySlotRect(i);
@@ -3006,7 +3073,14 @@ void InventorySystem::render(
         "inventory.main",
         screenLayout.window,
         "アイテム",
-        "F/Enter 決定  R リングへ  P 保護  G つかむ/置く  T 並び替え  Esc 戻る",
+        buildInputHelpText({
+            {InputHelpGroup::Primary, {InputAction::Confirm, InputAction::UseSelectedItem}, "決定"},
+            {InputHelpGroup::Back, {InputAction::Cancel, InputAction::Pause}, "戻る"},
+            {InputHelpGroup::Other, {InputAction::PutSelectedItemOnRing}, "リングへ"},
+            {InputHelpGroup::Other, {InputAction::ToggleProtection}, "保護"},
+            {InputHelpGroup::Other, {InputAction::GrabOrPlaceItem}, "つかむ/置く"},
+            {InputHelpGroup::Other, {InputAction::ArrangeItems}, "並び替え"},
+        }),
         UiWindowOptions{true, true});
 
     const auto entryViewForSlot = [this](int slotIndex) {

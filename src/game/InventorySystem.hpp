@@ -170,6 +170,14 @@ public:
     bool setObjectInstanceProtection(std::string_view instanceId, bool enabled);
     bool removeObjectItemCount(std::string_view objectId, int count);
     bool removeObjectInstance(std::string_view instanceId);
+    bool discardObjectStackById(
+        std::string_view objectId,
+        bool itemDiscardEnabled = true,
+        std::string* outStatus = nullptr);
+    bool discardObjectInstanceById(
+        std::string_view instanceId,
+        bool itemDiscardEnabled = true,
+        std::string* outStatus = nullptr);
     bool useObjectStackById(
         std::string_view objectId,
         Player& player,
@@ -186,6 +194,11 @@ public:
         std::vector<EffectDiscoveryEvent>* discoveryEvents,
         const EncyclopediaSystem* encyclopedia,
         std::string* outStatus = nullptr);
+    bool canUseObjectById(std::string_view objectId, std::string_view instanceId) const;
+    bool canEquipStaffObjectById(
+        std::string_view objectId,
+        std::string_view instanceId,
+        const SpellRingSystem& spellRing) const;
     bool takeObjectInstance(std::string_view instanceId, InventoryObjectInstance& outInstance);
     bool repairObjectInstance(std::string_view instanceId);
     bool resetObjectInstanceEnhancement(std::string_view instanceId, const ObjectCatalog& catalog);
@@ -280,6 +293,7 @@ private:
     void selectShortcutIndex(int index);
     void moveShortcutRow(int delta);
     ItemKey itemKeyAtScreenIndex(int index) const;
+    int objectScreenSlotById(std::string_view objectId, std::string_view instanceId) const;
     bool moveItemKeyToScreenSlot(const ItemKey& key, int slotIndex);
     bool addObjectSelectionToRing(SpellRingSystem& spellRing, SpellRingAddResult* outResult = nullptr);
     bool addObjectInstanceSelectionToRing(SpellRingSystem& spellRing, SpellRingAddResult* outResult = nullptr);

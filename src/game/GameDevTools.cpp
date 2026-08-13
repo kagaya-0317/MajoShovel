@@ -193,10 +193,6 @@ constexpr float AudioCueEditPitchMax = 100.0f;
 constexpr int EnemyTestMagnetDropCount = 7;
 constexpr float EnemyTestMagnetDropMinRadius = 72.0f;
 constexpr float EnemyTestMagnetDropMaxRadius = 178.0f;
-constexpr int EnemyTestStealMoneyDropCount = 4;
-constexpr int EnemyTestStealTreasureDropCount = 4;
-constexpr float EnemyTestStealDropMinRadius = 62.0f;
-constexpr float EnemyTestStealDropMaxRadius = 112.0f;
 constexpr int EnemyTestHealSlimeCount = 6;
 constexpr float EnemyTestHealSlimeMinRadius = 46.0f;
 constexpr float EnemyTestHealSlimeMaxRadius = 92.0f;
@@ -265,55 +261,6 @@ bool objectIsEnemyTestMetalDropCandidate(const ObjectDefinition& object)
         !objectDefinitionHasAnyTag(object, {"no_drop", "nodrop", "shop_only", "ショップ専用"});
 }
 
-bool objectIsEnemyTestTreasureDropCandidate(const ObjectDefinition& object)
-{
-    return !object.id.empty() &&
-        (object.category == "\xE5\xAE\x9D" || objectDefinitionHasTag(object, "treasure")) &&
-        !isCodexHiddenObject(object) &&
-        !objectDefinitionHasAnyTag(object, {"no_drop", "nodrop", "shop_only", "ショップ専用"});
-}
-
-const EnemyBehaviorSpec* enemyDefinitionBehaviorSpec(const EnemyDefinition& enemy, std::string_view behaviorId)
-{
-    for (const EnemyBehaviorSpec& spec : enemy.enemyBehaviorSpecs) {
-        if (spec.behavior == behaviorId) {
-            return &spec;
-        }
-    }
-    return nullptr;
-}
-
-std::string enemyTestStealTargetFilter(const EnemyDefinition& enemy)
-{
-    const EnemyBehaviorSpec* spec = enemyDefinitionBehaviorSpec(enemy, "steal_item");
-    if (spec == nullptr) {
-        return {};
-    }
-    const auto targetIt = spec->params.find("target");
-    if (targetIt == spec->params.end()) {
-        return "money|treasure|drop";
-    }
-    return targetIt->second;
-}
-
-bool enemyTestStealTargetContains(std::string_view targetFilter, std::string_view token)
-{
-    std::size_t start = 0;
-    while (start <= targetFilter.size()) {
-        const std::size_t end = targetFilter.find('|', start);
-        const std::size_t count = end == std::string_view::npos ? std::string_view::npos : end - start;
-        const std::string normalized = lowerAscii(trimAscii(std::string(targetFilter.substr(start, count))));
-        if (normalized == std::string(token)) {
-            return true;
-        }
-        if (end == std::string_view::npos) {
-            break;
-        }
-        start = end + 1;
-    }
-    return false;
-}
-
 Vec2 randomEnemyTestMagnetDropPosition(Vec2 center, TileMap& tileMap, std::mt19937& rng)
 {
     std::uniform_real_distribution<float> angleDistribution(0.0f, Pi * 2.0f);
@@ -325,19 +272,6 @@ Vec2 randomEnemyTestMagnetDropPosition(Vec2 center, TileMap& tileMap, std::mt199
         }
     }
     return center + fromAngle(angleDistribution(rng)) * EnemyTestMagnetDropMinRadius;
-}
-
-Vec2 randomEnemyTestStealDropPosition(Vec2 center, TileMap& tileMap, std::mt19937& rng)
-{
-    std::uniform_real_distribution<float> angleDistribution(0.0f, Pi * 2.0f);
-    std::uniform_real_distribution<float> radiusDistribution(EnemyTestStealDropMinRadius, EnemyTestStealDropMaxRadius);
-    for (int attempt = 0; attempt < 16; ++attempt) {
-        const Vec2 candidate = center + fromAngle(angleDistribution(rng)) * radiusDistribution(rng);
-        if (!tileMap.isCircleBlocked(candidate, 12.0f)) {
-            return candidate;
-        }
-    }
-    return center + fromAngle(angleDistribution(rng)) * EnemyTestStealDropMinRadius;
 }
 
 Vec2 randomEnemyTestHealSlimePosition(Vec2 center, std::mt19937& rng)
@@ -8757,7 +8691,7 @@ void Game::addSelectedDebugItem()
     debugItemPickerStatus_ = "追加: " + itemName;
     reloadNotice_ = "Debug add: " + inlineItemTag(objectId) + " " + itemName;
     reloadNoticeTimer_ = 1.6f;
-    recordObjectObtainedForFirstNotice(
+    recordObjectAcquisitionNotice(
         objectId,
         addResult.instanceId,
         addResult.kind == InventoryAddKind::Instance && !addResult.instanceId.empty(),
@@ -10061,61 +9995,6 @@ int Game::spawnEnemyTestMagnetDrops(Vec2 center)
     return spawned;
 }
 
-int Game::spawnEnemyTestStealBaitDrops(const EnemyDefinition& enemy, Vec2 center)
-{
-    const std::string targetFilter = enemyTestStealTargetFilter(enemy);
-    const bool allowAnyDrop = targetFilter.empty() || enemyTestStealTargetContains(targetFilter, "drop");
-    const bool allowMoney = allowAnyDrop || enemyTestStealTargetContains(targetFilter, "money");
-    const bool allowTreasure = allowAnyDrop || enemyTestStealTargetContains(targetFilter, "treasure");
-    if (!allowMoney && !allowTreasure) {
-        return 0;
-    }
-
-    std::vector<const ObjectDefinition*> treasureCandidates;
-    if (allowTreasure) {
-        treasureCandidates.reserve(objectCatalog_.objects.size());
-        for (const ObjectDefinition& object : objectCatalog_.objects) {
-            if (objectIsEnemyTestTreasureDropCandidate(object)) {
-                treasureCandidates.push_back(&object);
-            }
-        }
-    }
-
-    std::mt19937& rng = lootRuntimeRng();
-    int spawned = 0;
-    if (allowMoney) {
-        std::uniform_int_distribution<int> moneyDistribution(16, 55);
-        for (int i = 0; i < EnemyTestStealMoneyDropCount; ++i) {
-            const Vec2 target = randomEnemyTestStealDropPosition(center, tileMap_, rng);
-            if (worldDrops_.spawnMoneyDrop(
-                    moneyDistribution(rng),
-                    target,
-                    runStats_.elapsedSeconds,
-                    makeWorldLootJumpMotion(center, rng))) {
-                ++spawned;
-            }
-        }
-    }
-
-    if (!treasureCandidates.empty()) {
-        std::uniform_int_distribution<std::size_t> objectDistribution(0, treasureCandidates.size() - 1);
-        for (int i = 0; i < EnemyTestStealTreasureDropCount; ++i) {
-            const ObjectDefinition& object = *treasureCandidates[objectDistribution(rng)];
-            const Vec2 target = randomEnemyTestStealDropPosition(center, tileMap_, rng);
-            if (worldDrops_.spawnObjectDrop(
-                    objectCatalog_,
-                    object.id,
-                    target,
-                    runStats_.elapsedSeconds,
-                    makeWorldLootJumpMotion(center, rng),
-                    true)) {
-                ++spawned;
-            }
-        }
-    }
-    return spawned;
-}
-
 int Game::spawnEnemyTestHealSlimes(Vec2 center)
 {
     if (enemyCatalog_.enemiesById.find(std::string(EnemyTestHealSlimeEnemyId)) == enemyCatalog_.enemiesById.end()) {
@@ -10211,14 +10090,6 @@ void Game::spawnSelectedEnemyTestEnemy()
         Vec2 spawnedPosition = desiredPosition;
         enemies_.runtimeEnemyPosition(spawnedRuntimeId, spawnedPosition);
         enemyTestStatus_ = "召喚: " + (enemy.name.empty() ? enemy.id : enemy.name);
-        if (enemyDefinitionHasBehavior(enemy, "steal_item")) {
-            const int baitDropCount = spawnEnemyTestStealBaitDrops(enemy, spawnedPosition);
-            if (baitDropCount > 0) {
-                enemyTestStatus_ += " / 盗み対象 " + std::to_string(baitDropCount) + "個";
-            } else {
-                enemyTestStatus_ += " / 盗み対象なし";
-            }
-        }
         if (enemyDefinitionHasBehavior(enemy, "magnet_disturb")) {
             const int dropCount = spawnEnemyTestMagnetDrops(spawnedPosition);
             if (dropCount > 0) {
@@ -10686,16 +10557,6 @@ void Game::updateBaseEditScreen(const Input& input, UiContext& ui, float)
             resetBaseEditDragState();
         }
     } else if (baseEditMode_ == BaseEditMode::Passability) {
-        if (!baseEditPassPaintActive_ && input.toggleShortcutRowPressed()) {
-            baseEditPassabilityLayer_ = baseEditPassabilityLayer_ == BaseEditPassabilityLayer::Locked
-                ? BaseEditPassabilityLayer::Unlocked
-                : BaseEditPassabilityLayer::Locked;
-            baseStatus_ = baseEditPassabilityLayer_ == BaseEditPassabilityLayer::Unlocked
-                ? "Passability layer: unlocked"
-                : "Passability layer: locked";
-            resetBaseEditDragState();
-            return;
-        }
         if (input.copyShortcutPressed()) {
             copyBasePassabilityLayer();
             baseStatus_ = "Passability copied";
@@ -11582,7 +11443,7 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
     snapshot.dialogueActive = dialogue_.active();
     snapshot.dungeonFocusActive = dungeonFocusActive();
     snapshot.bossPresentationActive = bossEncounterBlocksProgress();
-    snapshot.firstItemNoticeActive = firstItemAcquisitionNoticeActive();
+    snapshot.firstItemNoticeActive = itemAcquisitionNoticeActive();
     snapshot.pendingStoryDelayActive = pendingStoryTriggerDelayActive();
     snapshot.warpReturnConfirmOpen = warpReturnConfirm_.open;
     snapshot.introTutorialActive = introTutorialActive();
@@ -14766,7 +14627,7 @@ bool Game::executeDebugCommand(std::string_view command)
         ringGrabActive_ = false;
         ringGrabOrigin_ = -1;
         ringGrabbedItem_ = {};
-        firstItemAcquisitionNotices_.clear();
+        itemAcquisitionNotices_.clear();
 
         initializeDefaultSpellRing();
         refreshEquipmentModifiers();

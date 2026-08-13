@@ -15,7 +15,6 @@ enum class InputRemapCaptureResult {
     None,
     Captured,
     Cancelled,
-    ClearRequested,
 };
 
 class InputRemapCapture {
@@ -29,12 +28,16 @@ public:
 
     bool shouldConsumeEvent(const SDL_Event& event) const;
     InputRemapCaptureResult handleEvent(const SDL_Event& event, InputBinding& outBinding);
+    InputRemapCaptureResult update();
+    float gamepadCancelHoldProgress() const;
 
 private:
     bool active_ = false;
     InputAction action_ = InputAction::Count;
     InputRemapCaptureDeviceGroup deviceGroup_ = InputRemapCaptureDeviceGroup::KeyboardMouse;
     SDL_Scancode pendingModifierScancode_ = SDL_SCANCODE_UNKNOWN;
+    int pendingGamepadCancelButton_ = -1;
+    Uint64 gamepadCancelHoldStartedAtMs_ = 0;
 };
 
 }

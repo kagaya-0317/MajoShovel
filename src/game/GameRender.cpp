@@ -846,55 +846,137 @@ float magicAuraLightRadius(std::string_view damageType, float hitRadius)
     return 58.0f + base;
 }
 
-std::string firstItemAcquisitionUseEffectSummary(const ObjectDefinition& object)
-{
-    std::vector<std::string> lines;
-    for (const DiscoveryEffectLine& line : object.discoveryEffectLines) {
-        if (line.trigger == DiscoveryTrigger::NormalEffect && !line.text.empty()) {
-            lines.push_back(line.text);
-        }
-    }
-    if (lines.empty()) {
-        return {};
-    }
+constexpr float ItemAcquisitionWindowWidth = 720.0f;
+constexpr float ItemAcquisitionWindowMargin = 16.0f;
+constexpr float ItemAcquisitionBodyMarginX = 30.0f;
+constexpr float ItemAcquisitionBodyTopOffset = 82.0f;
+constexpr float ItemAcquisitionContentButtonGap = 20.0f;
+constexpr float ItemAcquisitionStatusAreaHeight = 28.0f;
+constexpr float ItemAcquisitionButtonBottomGap = 52.0f;
+constexpr Vec2 ItemAcquisitionImagePanelSize{136.0f, 136.0f};
+constexpr float ItemAcquisitionImageDetailGap = 16.0f;
 
-    std::string text;
-    constexpr std::size_t MaxLines = 3;
-    const std::size_t count = std::min(lines.size(), MaxLines);
-    for (std::size_t i = 0; i < count; ++i) {
-        if (!text.empty()) {
-            text += " / ";
-        }
-        text += lines[i];
+enum class ItemAcquisitionPrimaryAction {
+    None,
+    Use,
+    EquipStaff,
+};
+
+ItemAcquisitionPrimaryAction itemAcquisitionPrimaryAction(
+    const InventorySystem& inventory,
+    const SpellRingSystem& spellRing,
+    const ItemData* item,
+    std::string_view objectId,
+    std::string_view instanceId)
+{
+    if (item == nullptr) {
+        return ItemAcquisitionPrimaryAction::None;
     }
-    if (lines.size() > MaxLines) {
-        text += " / ...";
+    if (isStaffObject(*item)) {
+        return inventory.canEquipStaffObjectById(objectId, instanceId, spellRing)
+            ? ItemAcquisitionPrimaryAction::EquipStaff
+            : ItemAcquisitionPrimaryAction::None;
     }
-    return text;
+    return inventory.canUseObjectById(objectId, instanceId)
+        ? ItemAcquisitionPrimaryAction::Use
+        : ItemAcquisitionPrimaryAction::None;
 }
 
-UiRect firstItemAcquisitionNoticeBodyRect(UiRect panel)
+float itemAcquisitionNoticeWidth(int screenWidth)
 {
-    constexpr float BodyMarginX = 30.0f;
-    constexpr float BodyTopOffset = 94.0f;
-    constexpr float BodyBottomGap = 20.0f;
-    const float y = panel.pos.y + BodyTopOffset;
+    return std::min(
+        ItemAcquisitionWindowWidth,
+        std::max(1.0f, static_cast<float>(screenWidth) - ItemAcquisitionWindowMargin * 2.0f));
+}
+
+UiRect itemAcquisitionNoticeRect(
+    int screenWidth,
+    int screenHeight,
+    float contentHeight,
+    bool statusVisible)
+{
+    const float statusHeight = statusVisible ? ItemAcquisitionStatusAreaHeight : 0.0f;
+    const float desiredHeight = ItemAcquisitionBodyTopOffset +
+        std::max(ItemAcquisitionImagePanelSize.y, contentHeight) +
+        ItemAcquisitionContentButtonGap + statusHeight +
+        ui::ButtonHeight + ItemAcquisitionButtonBottomGap;
+    const Vec2 size{
+        itemAcquisitionNoticeWidth(screenWidth),
+        std::min(
+            desiredHeight,
+            std::max(1.0f, static_cast<float>(screenHeight) - ItemAcquisitionWindowMargin * 2.0f)),
+    };
     return {{
-        panel.pos.x + BodyMarginX,
+        (static_cast<float>(screenWidth) - size.x) * 0.5f,
+        (static_cast<float>(screenHeight) - size.y) * 0.5f,
+    }, size};
+}
+
+UiRect itemAcquisitionOkButtonRect(UiRect panel)
+{
+    constexpr Vec2 Size{180.0f, ui::ButtonHeight};
+    return {{
+        panel.pos.x + (panel.size.x - Size.x) * 0.5f,
+        panel.pos.y + panel.size.y - ItemAcquisitionButtonBottomGap - Size.y,
+    }, Size};
+}
+
+UiRect itemAcquisitionNoticeBodyRect(UiRect panel, bool statusVisible)
+{
+    const float statusHeight = statusVisible ? ItemAcquisitionStatusAreaHeight : 0.0f;
+    const float y = panel.pos.y + ItemAcquisitionBodyTopOffset;
+    return {{
+        panel.pos.x + ItemAcquisitionBodyMarginX,
         y,
     }, {
-        panel.size.x - BodyMarginX * 2.0f,
-        std::max(0.0f, firstItemAcquisitionOkButtonRect(panel).pos.y - y - BodyBottomGap),
+        panel.size.x - ItemAcquisitionBodyMarginX * 2.0f,
+        std::max(
+            0.0f,
+            itemAcquisitionOkButtonRect(panel).pos.y - y -
+                ItemAcquisitionContentButtonGap - statusHeight),
     }};
 }
 
-UiRect firstItemAcquisitionNoticeImagePanelRect(UiRect panel)
+UiRect itemAcquisitionNoticeImagePanelRect(UiRect panel, bool statusVisible)
 {
-    constexpr Vec2 ImagePanelSize{136.0f, 136.0f};
-    return {firstItemAcquisitionNoticeBodyRect(panel).pos, ImagePanelSize};
+    return {itemAcquisitionNoticeBodyRect(panel, statusVisible).pos, ItemAcquisitionImagePanelSize};
 }
 
-Vec2 firstItemAcquisitionNoticeImageCenter(UiRect imagePanel)
+UiRect itemAcquisitionNoticeDetailLayoutRect(UiRect panel, bool statusVisible)
+{
+    const UiRect body = itemAcquisitionNoticeBodyRect(panel, statusVisible);
+    return {{
+        body.pos.x + ItemAcquisitionImagePanelSize.x + ItemAcquisitionImageDetailGap,
+        body.pos.y - ui::SubPanelPadding.y,
+    }, {
+        std::max(
+            1.0f,
+            body.size.x - ItemAcquisitionImagePanelSize.x - ItemAcquisitionImageDetailGap),
+        body.size.y + ui::SubPanelPadding.y * 2.0f,
+    }};
+}
+
+UiRect itemAcquisitionNoticeDetailMeasureRect(int screenWidth)
+{
+    const float bodyWidth = itemAcquisitionNoticeWidth(screenWidth) - ItemAcquisitionBodyMarginX * 2.0f;
+    return {{0.0f, -ui::SubPanelPadding.y}, {
+        std::max(
+            1.0f,
+            bodyWidth - ItemAcquisitionImagePanelSize.x - ItemAcquisitionImageDetailGap),
+        1.0f,
+    }};
+}
+
+std::string itemAcquisitionObjectDisplayName(const ItemData& item, int amount)
+{
+    std::string name = item.name;
+    if (amount > 1) {
+        name += " x" + std::to_string(amount);
+    }
+    return name;
+}
+
+Vec2 itemAcquisitionNoticeImageCenter(UiRect imagePanel)
 {
     return imagePanel.pos + imagePanel.size * 0.5f + Vec2{0.0f, -3.0f};
 }
@@ -1525,7 +1607,10 @@ void drawRingPlaceWindow(
         "ring.place",
         panel,
         "アイテム配置",
-        "WASD/矢印 選択  F/Enter 配置  Esc 戻る",
+        buildInputHelpText({
+            {InputHelpGroup::Primary, {InputAction::Confirm, InputAction::UseSelectedItem}, "配置"},
+            {InputHelpGroup::Back, {InputAction::Cancel, InputAction::Pause}, "戻る"},
+        }),
         UiWindowOptions{true, true});
 
     const int slotCount = std::min(inventory.screenSlotCount(), RingPlaceSlotCount);
@@ -2211,7 +2296,7 @@ constexpr int OptionsPageVideo = 0;
 constexpr int OptionsPageAudio = 1;
 constexpr int OptionsPageOperation = 2;
 constexpr int OptionsPageCount = 3;
-constexpr int OperationSettingsCategoryCount = 3;
+constexpr int OperationSettingsCategoryCount = 2;
 constexpr int AudioSettingsRowCount = 3;
 constexpr int VideoSettingsRowCount = 7;
 constexpr int VideoSettingsRowWindowMode = 0;
@@ -2221,6 +2306,33 @@ constexpr int VideoSettingsRowInputIcons = 3;
 constexpr int VideoSettingsRowScreenShake = 4;
 constexpr int VideoSettingsRowLightweight = 5;
 constexpr int VideoSettingsRowVSync = 6;
+
+std::string standardMenuHelpText(std::string_view primaryLabel = "決定", std::string_view backLabel = "戻る")
+{
+    return buildInputHelpText({
+        {InputHelpGroup::Primary, {InputAction::Confirm, InputAction::UseSelectedItem}, std::string(primaryLabel)},
+        {InputHelpGroup::Back, {InputAction::Cancel, InputAction::Pause}, std::string(backLabel)},
+    });
+}
+
+std::string optionsMenuHelpText(int page)
+{
+    std::vector<InputHelpEntry> entries;
+    if (page != OptionsPageAudio) {
+        entries.push_back({
+            InputHelpGroup::Primary,
+            {InputAction::Confirm, InputAction::UseSelectedItem},
+            page == OptionsPageOperation ? "割当操作" : "切替",
+        });
+    }
+    entries.push_back({InputHelpGroup::Back, {InputAction::Cancel, InputAction::Pause}, "戻る"});
+    entries.push_back({
+        InputHelpGroup::Cycle,
+        {InputAction::CyclePrevious, InputAction::CycleNext},
+        "設定切替",
+    });
+    return buildInputHelpText(entries);
+}
 
 struct OptionsSliderUiState {
     std::array<UiSliderState, AudioSettingsRowCount> audio{};
@@ -2240,6 +2352,9 @@ constexpr float OptionsDetailWindowHeightExtension = 30.0f;
 constexpr float OptionsSettingsRowHeight = 38.0f * 1.2f;
 constexpr float OptionsSettingsRowGap = 4.0f;
 constexpr float OperationSettingsTextOffsetY = 2.0f;
+constexpr Color OperationSettingsHoveredRowFill{72, 72, 78, 170};
+constexpr Color OperationSettingsHoveredCellFill{94, 94, 102, 190};
+constexpr Color OperationSettingsSelectedCellFill{56, 76, 154, 190};
 
 struct OperationSettingsActionRow {
     InputAction action;
@@ -2274,7 +2389,6 @@ constexpr std::array<MenuIconImage, OptionsPageCount> OptionsPageIcons{{
 constexpr const char* OperationSettingsCategoryLabels[OperationSettingsCategoryCount] = {
     "基本",
     "リング/アイテム",
-    "ショートカット",
 };
 
 constexpr std::array<UiCommandMenuItem, 4> OperationSettingsCommandItems{{
@@ -2293,16 +2407,17 @@ constexpr VideoResolutionPreset VideoResolutionPresets[] = {
 constexpr int VideoResolutionPresetCount = static_cast<int>(sizeof(VideoResolutionPresets) / sizeof(VideoResolutionPresets[0]));
 
 constexpr OperationSettingsActionRow OperationSettingsActionRows[] = {
-    {InputAction::MoveLeft, "左へ移動", 0},
-    {InputAction::MoveRight, "右へ移動", 0},
-    {InputAction::MoveUp, "上へ移動", 0},
-    {InputAction::MoveDown, "下へ移動", 0},
+    {InputAction::MoveLeft, "左へ移動／選択", 0},
+    {InputAction::MoveRight, "右へ移動／選択", 0},
+    {InputAction::MoveUp, "上へ移動／選択", 0},
+    {InputAction::MoveDown, "下へ移動／選択", 0},
     {InputAction::Confirm, "決定", 0},
     {InputAction::Cancel, "戻る", 0},
     {InputAction::Pause, "メニュー", 0},
-    {InputAction::OpenInventory, "アイテム画面", 0},
-    {InputAction::OpenOptions, "オプション", 0},
-    {InputAction::OpenCredits, "クレジット", 0},
+    {InputAction::OpenInventory, "アイテム画面を開く", 0},
+    {InputAction::OpenOptions, "オプション（タイトル画面）", 0},
+    {InputAction::OpenCredits, "クレジット（タイトル画面）", 0},
+    {InputAction::ToggleFullscreen, "フルスクリーン切替", 0},
     {InputAction::ThrowActiveRing, "リングを投げる", 1},
     {InputAction::OffsetRingCenter, "リングずらし（ドラッグ）", 1},
     {InputAction::ShiftRingLeft, "リングずらし：左", 1},
@@ -2310,16 +2425,18 @@ constexpr OperationSettingsActionRow OperationSettingsActionRows[] = {
     {InputAction::ShiftRingUp, "リングずらし：上", 1},
     {InputAction::ShiftRingDown, "リングずらし：下", 1},
     {InputAction::UseSelectedItem, "選択アイテム使用", 1},
+    {InputAction::DiscardSelectedItem, "選択アイテムを捨てる", 1},
     {InputAction::PutSelectedItemOnRing, "リングへ入れる", 1},
     {InputAction::GrabOrPlaceItem, "つかむ/置く", 1},
     {InputAction::ArrangeItems, "並び替え", 1},
-    {InputAction::PreviousActiveRing, "前のリング", 1},
-    {InputAction::NextActiveRing, "次のリング", 1},
+    {InputAction::SecondaryActionModifier, "サブ操作", 1},
+    {InputAction::CyclePrevious, "前へ切替", 1},
+    {InputAction::CycleNext, "次へ切替", 1},
     {InputAction::ToggleProtection, "アイテム保護切替", 1},
-    {InputAction::ShortcutCursorLeft, "ショートカット左", 2},
-    {InputAction::ShortcutCursorRight, "ショートカット右", 2},
-    {InputAction::PreviousShortcutRow, "前のショートカット行", 2},
-    {InputAction::NextShortcutRow, "次のショートカット行", 2},
+    {InputAction::ShortcutCursorLeft, "左へ移動（アイテムショートカット）", 1},
+    {InputAction::ShortcutCursorRight, "右へ移動（アイテムショートカット）", 1},
+    {InputAction::PreviousShortcutRow, "前の行へ移動（アイテムショートカット）", 1},
+    {InputAction::NextShortcutRow, "次の行へ移動（アイテムショートカット）", 1},
 };
 
 UiRect optionsPanelRect()
@@ -2977,10 +3094,12 @@ const char* operationSettingsActionHelpText(InputAction action)
         return "タイトル画面でオプションを開く";
     case InputAction::OpenCredits:
         return "タイトル画面でクレジットを開く";
+    case InputAction::ToggleFullscreen:
+        return "ウィンドウ表示とフルスクリーン表示を切り替える";
     case InputAction::ThrowActiveRing:
         return "リング投げを発動する";
     case InputAction::OffsetRingCenter:
-        return "マウスでは、押した位置からドラッグした方向と距離に合わせてリング中心をずらすよ";
+        return "マウス右ボタンを押したままドラッグして、リング中心をずらす固定操作";
     case InputAction::ShiftRingLeft:
         return "リング中心を左へずらす";
     case InputAction::ShiftRingRight:
@@ -2991,16 +3110,20 @@ const char* operationSettingsActionHelpText(InputAction action)
         return "リング中心を下へずらす";
     case InputAction::UseSelectedItem:
         return "ショートカットやアイテム画面で、選択中のアイテムを使う";
+    case InputAction::DiscardSelectedItem:
+        return "選択中のアイテムを捨てる（拠点では実行前に確認）";
     case InputAction::PutSelectedItemOnRing:
         return "選択中のアイテムをリングへ入れる";
     case InputAction::GrabOrPlaceItem:
         return "アイテム画面やリング画面で、アイテムをつかむ/置く";
     case InputAction::ArrangeItems:
         return "アイテムやリング上の配置を整列・並び替えする";
-    case InputAction::PreviousActiveRing:
-        return "選択中のリングを前へ切り替える";
-    case InputAction::NextActiveRing:
-        return "選択中のリングを次へ切り替える";
+    case InputAction::SecondaryActionModifier:
+        return "ほかの操作と組み合わせて、全部外すなどのサブ操作を行う";
+    case InputAction::CyclePrevious:
+        return "リング・分類・対象・行き先・ページなどを前へ切り替える";
+    case InputAction::CycleNext:
+        return "リング・分類・対象・行き先・ページなどを次へ切り替える";
     case InputAction::ToggleProtection:
         return "アイテムの保護ON/OFFを切り替える";
     case InputAction::ShortcutCursorLeft:
@@ -3011,8 +3134,6 @@ const char* operationSettingsActionHelpText(InputAction action)
         return "アイテムショートカットの表示行を前へ切り替える";
     case InputAction::NextShortcutRow:
         return "アイテムショートカットの表示行を次へ切り替える";
-    case InputAction::ToggleShortcutRow:
-        return "ショートカットの表示行を切り替えます。";
     default:
         return "";
     }
@@ -3116,6 +3237,14 @@ std::string operationSettingsKeyboardGlyphLabel(int scancode)
         return "Space";
     case SDL_SCANCODE_TAB:
         return "Tab";
+    case SDL_SCANCODE_LEFT:
+        return "←";
+    case SDL_SCANCODE_RIGHT:
+        return "→";
+    case SDL_SCANCODE_UP:
+        return "↑";
+    case SDL_SCANCODE_DOWN:
+        return "↓";
     case SDL_SCANCODE_LSHIFT:
     case SDL_SCANCODE_RSHIFT:
         return "Shift";
@@ -3169,7 +3298,16 @@ std::string operationSettingsBindingGlyphToken(const InputBinding& binding)
         if (binding.code == SDL_BUTTON_MIDDLE) {
             return "{mouse:middle}";
         }
-        return "{mouse:left}";
+        if (binding.code == SDL_BUTTON_LEFT) {
+            return "{mouse:left}";
+        }
+        if (binding.code == SDL_BUTTON_X1) {
+            return "{key:Mouse4}";
+        }
+        if (binding.code == SDL_BUTTON_X2) {
+            return "{key:Mouse5}";
+        }
+        return "{key:Mouse" + std::to_string(binding.code) + "}";
     case InputBindingDevice::GamepadButton:
         return "{pad:" + gamepadButtonName(binding.code) + "}";
     case InputBindingDevice::GamepadAxis:
@@ -3180,7 +3318,7 @@ std::string operationSettingsBindingGlyphToken(const InputBinding& binding)
 
 std::string operationSettingsBindingGlyphText(const InputBindingMap& bindings, InputAction action, int column)
 {
-    std::string text;
+    std::vector<std::string> tokens;
     const std::vector<InputBinding>& actionBindings = bindings[inputActionIndex(action)];
     for (const InputBinding& binding : actionBindings) {
         if (!operationSettingsColumnMatchesBinding(column, binding)) {
@@ -3190,20 +3328,19 @@ std::string operationSettingsBindingGlyphText(const InputBindingMap& bindings, I
         if (token.empty()) {
             continue;
         }
+        if (std::find(tokens.begin(), tokens.end(), token) == tokens.end()) {
+            tokens.push_back(token);
+        }
+    }
+
+    std::string text;
+    for (const std::string& token : tokens) {
         if (!text.empty()) {
             text += " / ";
         }
         text += token;
     }
     return text.empty() ? "未設定" : text;
-}
-
-bool operationSettingsBindingSamePhysicalInput(const InputBinding& lhs, const InputBinding& rhs)
-{
-    return lhs.device == rhs.device &&
-        lhs.code == rhs.code &&
-        lhs.direction == rhs.direction &&
-        lhs.modifiers == rhs.modifiers;
 }
 
 void removeOperationSettingsColumnBindings(std::vector<InputBinding>& bindings, int column)
@@ -3219,7 +3356,7 @@ void removeOperationSettingsBinding(std::vector<InputBinding>& bindings, const I
 {
     bindings.erase(
         std::remove_if(bindings.begin(), bindings.end(), [&target](const InputBinding& binding) {
-            return operationSettingsBindingSamePhysicalInput(binding, target);
+            return inputBindingSamePhysicalInput(binding, target);
         }),
         bindings.end());
 }
@@ -3227,7 +3364,7 @@ void removeOperationSettingsBinding(std::vector<InputBinding>& bindings, const I
 bool hasOperationSettingsBinding(const std::vector<InputBinding>& bindings, const InputBinding& target)
 {
     return std::any_of(bindings.begin(), bindings.end(), [&target](const InputBinding& binding) {
-        return operationSettingsBindingSamePhysicalInput(binding, target);
+        return inputBindingSamePhysicalInput(binding, target);
     });
 }
 
@@ -3239,11 +3376,11 @@ std::vector<InputAction> operationSettingsConflictingActions(
     std::vector<InputAction> conflicts;
     for (int actionIndex = 0; actionIndex < InputActionCount; ++actionIndex) {
         const InputAction action = static_cast<InputAction>(actionIndex);
-        if (action == targetAction) {
+        if (!inputActionsConflict(targetAction, action)) {
             continue;
         }
         for (const InputBinding& binding : bindings[actionIndex]) {
-            if (operationSettingsBindingSamePhysicalInput(binding, targetBinding)) {
+            if (inputBindingSamePhysicalInput(binding, targetBinding)) {
                 conflicts.push_back(action);
                 break;
             }
@@ -3252,20 +3389,33 @@ std::vector<InputAction> operationSettingsConflictingActions(
     return conflicts;
 }
 
+std::string_view operationSettingsActionLabel(InputAction action)
+{
+    const auto row = std::find_if(
+        std::begin(OperationSettingsActionRows),
+        std::end(OperationSettingsActionRows),
+        [action](const OperationSettingsActionRow& candidate) {
+            return candidate.action == action;
+        });
+    return row != std::end(OperationSettingsActionRows)
+        ? std::string_view(row->label)
+        : inputActionName(action);
+}
+
 std::string operationSettingsConflictMessage(
     const std::vector<InputAction>& actions,
     std::string_view editVerb)
 {
-    std::string message = "この入力は別の操作に割り当て済みだよ\n既存の割当を外して";
+    std::string message = "この入力は同じ場面で使う別の操作に割り当て済みだよ\n既存の割当を外して";
     message += editVerb;
     message += "する？";
     if (!actions.empty()) {
-        message += "\n重複する操作: ";
+        message += "\n競合する操作: ";
         for (std::size_t i = 0; i < actions.size(); ++i) {
             if (i > 0) {
                 message += ", ";
             }
-            message += std::string(inputActionName(actions[i]));
+            message += operationSettingsActionLabel(actions[i]);
         }
     }
     return message;
@@ -3385,7 +3535,7 @@ OperationSettingsTableUpdateResult updateOperationSettingsTableClickSelection(
         }
         for (int column = OperationSettingsColumnAction; column <= OperationSettingsColumnGamepad; ++column) {
             const UiRect cellRect = uiSelectableTableCellRect(layout, columns, columnCount, row, column, style);
-            if (columns[column].enabled && ui.hovered(cellRect)) {
+            if (ui.hovered(cellRect)) {
                 hoveredRow = row;
                 hoveredColumn = column;
             }
@@ -3560,7 +3710,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         bool succeeded = false;
         switch (action) {
         case RingPresetMenuAction::Apply:
-            succeeded = applyRingPresetShortcut(presetIndex);
+            succeeded = applyRingPreset(presetIndex);
             break;
         case RingPresetMenuAction::Register:
             succeeded = registerRingPresetShortcut(presetIndex);
@@ -3611,19 +3761,6 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         } else if (!ringPresetMenu_.visible) {
             ringPresetMenuAction_ = RingPresetMenuAction::None;
         }
-        ui.block(ringPanelRect());
-        return;
-    }
-
-    const int registerPreset = input.ringPresetRegisterSlotPressed();
-    if (registerPreset >= 0 && registerPreset < RingPresetSlotCount) {
-        performRingPresetAction(RingPresetMenuAction::Register, registerPreset);
-        ui.block(ringPanelRect());
-        return;
-    }
-    const int applyPreset = input.shortcutSlotPressed();
-    if (applyPreset >= 0 && applyPreset < RingPresetSlotCount) {
-        performRingPresetAction(RingPresetMenuAction::Apply, applyPreset);
         ui.block(ringPanelRect());
         return;
     }
@@ -4304,6 +4441,7 @@ void Game::prepareOptionsMenu()
     operationSettingsCapture_.cancel();
     operationSettingsConflictConfirm_ = {};
     operationSettingsResetAllConfirm_ = {};
+    operationSettingsReadOnlyDialog_ = {};
     clearOperationSettingsPendingEdit();
     optionsStatus_.clear();
     loadOptionsSettings();
@@ -4319,6 +4457,16 @@ bool Game::optionsMenuActive() const
 {
     return (mode_ == ScreenMode::PauseMenu && pausePage_ == PauseMenuPage::Options) ||
         (mode_ == ScreenMode::Title && titleMenuPage_ == TitleMenuPage::Options);
+}
+
+bool Game::operationSettingsModalVisible() const
+{
+    return optionsPage_ == OptionsPageOperation &&
+        (operationSettingsCommandMenu_.visible ||
+            operationSettingsCapture_.active() ||
+            operationSettingsConflictConfirm_.open ||
+            operationSettingsResetAllConfirm_.open ||
+            operationSettingsReadOnlyDialog_.open);
 }
 
 void Game::loadOptionsSettings()
@@ -4364,6 +4512,23 @@ void Game::beginOperationSettingsBindingCapture(OperationSettingsBindingEditMode
     operationSettingsCapture_.begin(
         operationSettingsPendingAction_,
         operationSettingsCaptureGroupForColumn(operationSettingsPendingColumn_));
+}
+
+bool Game::handleOperationSettingsCaptureResult(
+    InputRemapCaptureResult result,
+    InputAction action,
+    int column,
+    const InputBinding& binding)
+{
+    if (result == InputRemapCaptureResult::None) {
+        return false;
+    }
+    if (result == InputRemapCaptureResult::Captured) {
+        queueOperationSettingsBinding(action, column, binding);
+    } else if (result == InputRemapCaptureResult::Cancelled) {
+        clearOperationSettingsPendingEdit();
+    }
+    return true;
 }
 
 void Game::clearOperationSettingsPendingEdit()
@@ -4415,6 +4580,14 @@ void Game::applyOperationSettingsBinding(InputAction action, int column, const I
     if (removeConflicts) {
         for (InputAction conflict : operationSettingsConflictActions_) {
             removeOperationSettingsBinding(candidate[inputActionIndex(conflict)], binding);
+        }
+    }
+    // 開発用ショートカットはプレイヤー操作の割当を予約しない。
+    // 同じ入力が割り当てられた場合は、確認を増やさずプレイヤー操作を優先する。
+    for (int actionIndex = 0; actionIndex < InputActionCount; ++actionIndex) {
+        const InputAction existingAction = static_cast<InputAction>(actionIndex);
+        if (inputActionIsDeveloperOnly(existingAction)) {
+            removeOperationSettingsBinding(candidate[actionIndex], binding);
         }
     }
     auto& target = candidate[inputActionIndex(action)];
@@ -4501,7 +4674,11 @@ bool Game::handleOperationSettingsEvent(const SDL_Event& event)
             static_cast<float>(event.button.y),
         })) {
         operationSettingsCapture_.cancel();
-        clearOperationSettingsPendingEdit();
+        handleOperationSettingsCaptureResult(
+            InputRemapCaptureResult::Cancelled,
+            InputAction::Count,
+            operationSettingsPendingColumn_,
+            {});
         return true;
     }
 
@@ -4509,14 +4686,7 @@ bool Game::handleOperationSettingsEvent(const SDL_Event& event)
     const int column = operationSettingsPendingColumn_;
     InputBinding binding{};
     const InputRemapCaptureResult result = operationSettingsCapture_.handleEvent(event, binding);
-    if (result == InputRemapCaptureResult::Captured) {
-        queueOperationSettingsBinding(action, column, binding);
-    } else if (result == InputRemapCaptureResult::ClearRequested) {
-        clearOperationSettingsBinding(action, column);
-        clearOperationSettingsPendingEdit();
-    } else if (result == InputRemapCaptureResult::Cancelled) {
-        clearOperationSettingsPendingEdit();
-    }
+    handleOperationSettingsCaptureResult(result, action, column, binding);
     return true;
 }
 
@@ -4536,6 +4706,18 @@ void Game::updateOperationSettings(const Input& input, UiContext& ui)
     const UiRect table = operationSettingsTableRect();
     const UiRect dialog = operationSettingsDialogRect();
 
+    if (operationSettingsCapture_.active()) {
+        const InputAction action = operationSettingsCapture_.action();
+        if (handleOperationSettingsCaptureResult(
+                operationSettingsCapture_.update(),
+                action,
+                operationSettingsPendingColumn_,
+                {})) {
+            ui.block(panel);
+            return;
+        }
+    }
+
     if (operationSettingsConflictConfirm_.open) {
         const UiConfirmDialogResult result = updateUiConfirmDialog(operationSettingsConflictConfirm_, ui, input, dialog);
         if (result == UiConfirmDialogResult::Confirmed) {
@@ -4551,6 +4733,12 @@ void Game::updateOperationSettings(const Input& input, UiContext& ui)
         return;
     }
 
+    if (operationSettingsReadOnlyDialog_.open) {
+        updateUiResultDialog(operationSettingsReadOnlyDialog_, ui, input, dialog);
+        ui.block(panel);
+        return;
+    }
+
     if (operationSettingsResetAllConfirm_.open) {
         const UiConfirmDialogResult result = updateUiConfirmDialog(operationSettingsResetAllConfirm_, ui, input, dialog);
         if (result == UiConfirmDialogResult::Confirmed) {
@@ -4561,12 +4749,6 @@ void Game::updateOperationSettings(const Input& input, UiContext& ui)
     }
 
     if (operationSettingsCapture_.active()) {
-        if (uiCancelControlRequested(input, ui, operationSettingsDialogRect())) {
-            operationSettingsCapture_.cancel();
-            clearOperationSettingsPendingEdit();
-            ui.block(panel);
-            return;
-        }
         ui.block(panel);
         return;
     }
@@ -4684,6 +4866,14 @@ void Game::updateOperationSettings(const Input& input, UiContext& ui)
             OperationSettingsColumnKeyboardMouse,
             OperationSettingsColumnGamepad);
         const InputAction action = rows[static_cast<std::size_t>(row)].action;
+        if (!inputActionCanBeRemapped(action)) {
+            openUiResultDialog(
+                operationSettingsReadOnlyDialog_,
+                "",
+                {"この項目は変更できません"});
+            ui.block(panel);
+            return;
+        }
         operationSettingsPendingAction_ = action;
         operationSettingsPendingColumn_ = column;
         const UiRect selectedCell = uiSelectableTableCellRect(
@@ -4936,26 +5126,15 @@ void Game::updateOptionsMenu(const Input& input, UiContext& ui)
     const auto dismissSliderValueBubbles = [] {
         optionsSliderUiState() = {};
     };
-    const bool operationModalOpen = optionsPage_ == OptionsPageOperation &&
-        (operationSettingsCapture_.active() ||
-            operationSettingsConflictConfirm_.open ||
-            operationSettingsResetAllConfirm_.open);
+    const bool operationModalOpen = operationSettingsModalVisible();
     if (!operationModalOpen) {
-        const int pageDelta = uiCycleInputDelta(input, OptionsPageCount);
-        if (pageDelta != 0) {
-            optionsPage_ = (optionsPage_ + pageDelta + OptionsPageCount) % OptionsPageCount;
-            dismissSliderValueBubbles();
-            optionsStatus_.clear();
-            ui.emitSound(UiSoundEvent::TabSwitch);
-        }
-
         const auto tabItems = optionsPageTabItems();
         const auto tabRects = optionsPageTabRects();
-        UiTabsInput tabsInput{};
+        const UiTabsInput pageTabsInput = makeUiCycleTabsInput(input, OptionsPageCount);
         const int selectedTab = updateUiTabs(
             optionsTabs_,
             ui,
-            tabsInput,
+            pageTabsInput,
             optionsPage_,
             tabItems.data(),
             static_cast<int>(tabItems.size()),
@@ -4984,9 +5163,7 @@ void Game::updatePauseMenu(const Input& input, UiContext& ui)
         ? quitConfirmRect()
         : pausePanelForPage(pausePage_);
     const bool operationModalOpen = pausePage_ == PauseMenuPage::Options &&
-        (operationSettingsCapture_.active() ||
-            operationSettingsConflictConfirm_.open ||
-            operationSettingsResetAllConfirm_.open);
+        operationSettingsModalVisible();
     if (pausePage_ != PauseMenuPage::QuitConfirm &&
         !operationModalOpen &&
         !suppressCancelThisFrame &&
@@ -5150,23 +5327,140 @@ void Game::updateAstralResultScreen(const Input& input, UiContext& ui, float dt)
     ui.block(stageClearPanelRect());
 }
 
-void Game::updateFirstItemAcquisitionNotice(const Input& input, UiContext& ui)
+float Game::measureItemAcquisitionNoticeContentHeight(
+    Renderer& renderer,
+    const AcquisitionNotice& notice) const
 {
-    if (firstItemAcquisitionNotices_.empty()) {
+    const UiRect detailLayout = itemAcquisitionNoticeDetailMeasureRect(camera_.width());
+    const UiRect detailContent = uiSubPanelContentRect(detailLayout);
+    const bool objectNotice = notice.kind == AcquisitionNoticeKind::Object;
+    const ObjectDefinition* object = objectNotice
+        ? objectCatalog_.registry.findById(notice.objectId)
+        : nullptr;
+
+    std::string title;
+    std::string category;
+    std::string description;
+    int rarity = 0;
+    std::optional<InventoryUiItemStats> itemStats;
+    if (object != nullptr) {
+        title = itemAcquisitionObjectDisplayName(*object, notice.amount);
+        category = object->category;
+        description = object->description.empty() ? "-" : object->description;
+        rarity = object->rarity;
+        if (const InventoryObjectInstance* instance = inventory_.objectInstanceById(notice.instanceId)) {
+            itemStats = inventoryUiStatsFromInstance(instance->instance);
+        }
+    } else if (notice.kind == AcquisitionNoticeKind::Material) {
+        title = std::string(materialTypeDisplayName(notice.materialType)) +
+            " x" + std::to_string(std::max(1, notice.amount));
+        category = "素材";
+        description = "魔女からのお礼";
+    } else {
+        title = std::to_string(std::max(1, notice.amount)) + "G";
+        category = "お金";
+        description = "魔女からのお礼";
+    }
+
+    float height = measureInventoryUiDetailHeaderHeight(
+        renderer,
+        detailLayout,
+        title,
+        category,
+        rarity);
+    height += renderer.measureWrappedText(description, detailContent.size.x, 2).y + 8.0f;
+    if (object != nullptr) {
+        height += measureInventoryUiItemEffectSections(
+            renderer,
+            detailLayout,
+            *object,
+            objectCatalog_,
+            encyclopedia_,
+            itemStats,
+            unlockedRingCount());
+        height += measureInventoryUiWeightLineHeight(renderer, detailLayout, *object, itemStats);
+    }
+    return height;
+}
+
+void Game::updateItemAcquisitionNotice(
+    const Input& input,
+    UiContext& ui,
+    Renderer& renderer,
+    float dt)
+{
+    if (itemAcquisitionNotices_.empty()) {
         return;
     }
 
-    AcquisitionNotice& notice = firstItemAcquisitionNotices_.front();
-    const UiRect panel = firstItemAcquisitionNoticeRect(camera_.width(), camera_.height());
-    const UiRect okButton = firstItemAcquisitionOkButtonRect(panel);
+    AcquisitionNotice& notice = itemAcquisitionNotices_.front();
+    if (!notice.jinglePlayed) {
+        notice.jinglePlayed = true;
+        if (notice.jingleOnShow) {
+            playItemAcquisitionNoticeJingle();
+        }
+    }
+    const float animationSpeed = notice.presentation == AcquisitionNoticePresentation::Standard ? 2.0f : 1.0f;
+    const float animationStep = std::max(0.0f, dt) * animationSpeed / ui::WindowAnimationSeconds;
+    if (notice.animationPhase == AcquisitionNoticeAnimationPhase::Opening) {
+        notice.animationProgress = std::min(1.0f, notice.animationProgress + animationStep);
+        if (notice.animationProgress >= 1.0f) {
+            notice.animationPhase = AcquisitionNoticeAnimationPhase::Visible;
+        }
+    } else if (notice.animationPhase == AcquisitionNoticeAnimationPhase::Closing) {
+        notice.animationProgress = std::max(0.0f, notice.animationProgress - animationStep);
+        if (notice.animationProgress <= 0.0f) {
+            itemAcquisitionNotices_.pop_front();
+        }
+        ui.block({{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}});
+        return;
+    }
+
+    const UiRect panel = itemAcquisitionNoticeRect(
+        camera_.width(),
+        camera_.height(),
+        measureItemAcquisitionNoticeContentHeight(renderer, notice),
+        !notice.statusText.empty());
+    const UiRect okButton = itemAcquisitionOkButtonRect(panel);
     const bool objectNotice = notice.kind == AcquisitionNoticeKind::Object;
+    const bool dungeonActionsEnabled = mode_ != ScreenMode::Base;
     const bool instanceProtectable =
         objectNotice &&
         notice.protectable &&
         inventory_.objectInstanceProtectionEnabled(notice.instanceId).has_value();
+    const ObjectDefinition* noticeObject = objectNotice
+        ? objectCatalog_.registry.findById(notice.objectId)
+        : nullptr;
+    const ItemAcquisitionPrimaryAction primaryAction = dungeonActionsEnabled
+        ? itemAcquisitionPrimaryAction(
+            inventory_,
+            spellRing_,
+            noticeObject,
+            notice.objectId,
+            notice.instanceId)
+        : ItemAcquisitionPrimaryAction::None;
+    const bool discardable =
+        dungeonActionsEnabled &&
+        noticeObject != nullptr &&
+        !isImportantItem(*noticeObject) &&
+        (notice.instanceId.empty() ||
+            (!inventory_.objectInstanceProtectionEnabled(notice.instanceId).value_or(false) &&
+                !inventory_.isStaffEquipped(notice.instanceId)));
+
+    if (notice.animationPhase != AcquisitionNoticeAnimationPhase::Visible) {
+        ui.block({{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}});
+        return;
+    }
 
     const int unlockedRingCount = unlockedRingHudCount();
-    for (int ringIndex = 0; ringIndex < unlockedRingCount; ++ringIndex) {
+    if (dungeonActionsEnabled && unlockedRingCount > 1 && input.cycleDelta() != 0) {
+        const int previousRingIndex = spellRing_.activeRingIndex();
+        switchActiveRingWithLog(input.cycleDelta());
+        if (spellRing_.activeRingIndex() != previousRingIndex) {
+            ui.emitSound(UiSoundEvent::TabSwitch);
+        }
+    }
+    for (int ringIndex = 0; dungeonActionsEnabled && ringIndex < unlockedRingCount; ++ringIndex) {
         if (!ui.pressed(ringStatusHudRect(ringIndex, unlockedRingCount))) {
             continue;
         }
@@ -5191,30 +5485,99 @@ void Game::updateFirstItemAcquisitionNotice(const Input& input, UiContext& ui)
         }
     }
 
-    if (objectNotice && input.addRingPressed()) {
+    if (primaryAction != ItemAcquisitionPrimaryAction::None && input.useItemPressed()) {
+        std::string status;
+        std::vector<EffectDiscoveryEvent> discoveries;
+        const bool actionSucceeded = primaryAction == ItemAcquisitionPrimaryAction::EquipStaff
+            ? inventory_.equipStaffObject(
+                notice.objectId,
+                notice.instanceId,
+                spellRing_,
+                &status)
+            : (notice.instanceId.empty()
+                ? inventory_.useObjectStackById(
+                    notice.objectId,
+                    player_,
+                    effectDispatcher_,
+                    &magic_,
+                    &discoveries,
+                    &encyclopedia_,
+                    &status)
+                : inventory_.useObjectInstanceById(
+                    notice.instanceId,
+                    player_,
+                    effectDispatcher_,
+                    &magic_,
+                    &discoveries,
+                    &encyclopedia_,
+                    &status));
+        ui.emitActionResult(
+            actionSucceeded,
+            primaryAction == ItemAcquisitionPrimaryAction::EquipStaff
+                ? UiSoundEvent::Equip
+                : UiSoundEvent::ItemUse);
+        notice.statusText = status;
+        if (actionSucceeded) {
+            applyEffectDiscoveries(discoveries);
+            closeItemAcquisitionNotice();
+            return;
+        }
+    }
+
+    if (dungeonActionsEnabled && objectNotice && input.addRingPressed()) {
         SpellRingAddResult result{};
         std::string status;
         if (inventory_.addObjectToRing(notice.objectId, notice.instanceId, spellRing_, &result, &status)) {
             ui.emitSound(UiSoundEvent::Equip);
-            const UiRect imagePanel = firstItemAcquisitionNoticeImagePanelRect(panel);
+            const UiRect imagePanel = itemAcquisitionNoticeImagePanelRect(
+                panel,
+                !notice.statusText.empty());
             spawnRingEquipFx(RingEquipFxRequest{
-                .sourceScreen = firstItemAcquisitionNoticeImageCenter(imagePanel),
+                .sourceScreen = itemAcquisitionNoticeImageCenter(imagePanel),
                 .ringIndex = result.ringIndex,
                 .itemIndex = result.itemIndex,
                 .localAngle = result.localAngle,
                 .objectId = result.objectId,
                 .instanceId = result.instanceId,
             });
-            closeFirstItemAcquisitionNotice();
+            closeItemAcquisitionNotice();
             return;
         }
         ui.rejectAction();
         notice.statusText = status.empty() ? "リングへ配置できないよ" : status;
     }
 
-    if (ui.pressed(okButton) || input.confirmPressed() || input.useItemPressed()) {
+    if (dungeonActionsEnabled && objectNotice && input.discardItemPressed()) {
+        if (!discardable) {
+            ui.rejectAction();
+            notice.statusText = "このアイテムは捨てられないよ";
+            ui.block({{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}});
+            return;
+        }
+        std::string status;
+        const bool discarded = notice.instanceId.empty()
+            ? inventory_.discardObjectStackById(notice.objectId, true, &status)
+            : inventory_.discardObjectInstanceById(notice.instanceId, true, &status);
+        ui.emitActionResult(discarded, UiSoundEvent::ItemUse);
+        notice.statusText = status;
+        if (discarded) {
+            spawnInventoryDiscardRequests(inventory_.consumeDiscardRequests());
+            closeItemAcquisitionNotice();
+            return;
+        }
+    }
+
+    const bool okButtonPressed = ui.pressed(okButton) &&
+        !input.useItemPressed() &&
+        !input.addRingPressed() &&
+        !input.discardItemPressed() &&
+        !input.pressed(InputAction::ToggleProtection);
+    if (okButtonPressed ||
+        input.confirmPressed() ||
+        input.pressed(InputAction::Cancel) ||
+        input.pressed(InputAction::Pause)) {
         ui.emitSound(UiSoundEvent::Confirm);
-        closeFirstItemAcquisitionNotice();
+        closeItemAcquisitionNotice();
     }
 
     ui.block({{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}});
@@ -5513,11 +5876,7 @@ void Game::renderTitleScreen(Renderer& renderer) const
 
     if (titleMenuPage_ == TitleMenuPage::Options) {
         UiCancelControlScope cancelScope(titleCancelState_);
-        const char* help = optionsPage_ == OptionsPageOperation
-            ? "Z/X 設定切替  ↑/↓ 行選択  ←/→ 列選択（端で分類切替）  F/Enter 割当操作  Esc 戻る"
-            : (optionsPage_ == OptionsPageAudio
-                ? "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 音量変更  Esc 戻る"
-                : "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 変更  F/Enter 切替  Esc 戻る");
+        const std::string help = optionsMenuHelpText(optionsPage_);
         UiWindowScope window(
             renderer,
             "title.options",
@@ -5539,9 +5898,9 @@ void Game::renderTitleScreen(Renderer& renderer) const
             titleCreditsScrollOffset_,
             scrollStyle);
         titleCreditsContentHeight_ = layout.contentHeight;
-        const char* help = layout.scrollable
-            ? "↑/↓ スクロール  Esc 戻る"
-            : "Esc 戻る";
+        const std::string help = buildInputHelpText({
+            {InputHelpGroup::Back, {InputAction::Cancel, InputAction::Pause}, "戻る"},
+        });
         UiWindowScope window(
             renderer,
             "title.credits",
@@ -5590,6 +5949,15 @@ void Game::renderTitleScreen(Renderer& renderer) const
         },
         prompt,
         promptStyle);
+
+    drawUiBottomInputHelp(
+        renderer,
+        {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
+        buildInputHelpText({
+            {InputHelpGroup::Primary, {InputAction::Confirm, InputAction::UseSelectedItem}, "ゲーム開始"},
+            {InputHelpGroup::Other, {InputAction::OpenOptions}, "オプション"},
+            {InputHelpGroup::Other, {InputAction::OpenCredits}, "クレジット"},
+        }));
 }
 
 void Game::renderScreenTransitionOverlay(Renderer& renderer)
@@ -5943,13 +6311,13 @@ void Game::renderRingStatusHud(Renderer& renderer) const
     }
 }
 
-void Game::renderFirstItemAcquisitionNotice(Renderer& renderer, float animationSeconds) const
+void Game::renderItemAcquisitionNotice(Renderer& renderer, float animationSeconds) const
 {
-    if (firstItemAcquisitionNotices_.empty()) {
+    if (itemAcquisitionNotices_.empty()) {
         return;
     }
 
-    const AcquisitionNotice& notice = firstItemAcquisitionNotices_.front();
+    const AcquisitionNotice& notice = itemAcquisitionNotices_.front();
     const ObjectDefinition* object = objectCatalog_.registry.findById(notice.objectId);
     const bool objectNotice = notice.kind == AcquisitionNoticeKind::Object;
     if (objectNotice && object == nullptr) {
@@ -5958,7 +6326,12 @@ void Game::renderFirstItemAcquisitionNotice(Renderer& renderer, float animationS
 
     renderer.setScreenSpace();
     const UiRect screen{{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}};
-    const UiRect panel = firstItemAcquisitionNoticeRect(camera_.width(), camera_.height());
+    const bool statusVisible = !notice.statusText.empty();
+    const UiRect panel = itemAcquisitionNoticeRect(
+        camera_.width(),
+        camera_.height(),
+        measureItemAcquisitionNoticeContentHeight(renderer, notice),
+        statusVisible);
     UiModalNavigationScope navigationScope(panel);
     const std::optional<bool> protection =
         objectNotice && notice.protectable ? inventory_.objectInstanceProtectionEnabled(notice.instanceId) : std::nullopt;
@@ -5969,11 +6342,55 @@ void Game::renderFirstItemAcquisitionNotice(Renderer& renderer, float animationS
         }
     }
     const bool canProtect = protection.has_value();
-    const char* helpText = objectNotice
-        ? (canProtect
-            ? "F/Enter OK   R リングへ   P 保護ON/OFF"
-            : "F/Enter OK   R リングへ   P 保護不可")
-        : "F/Enter OK";
+    const bool dungeonActionsEnabled = mode_ != ScreenMode::Base;
+    const ItemAcquisitionPrimaryAction primaryAction = dungeonActionsEnabled
+        ? itemAcquisitionPrimaryAction(
+            inventory_,
+            spellRing_,
+            object,
+            notice.objectId,
+            notice.instanceId)
+        : ItemAcquisitionPrimaryAction::None;
+    const bool discardable =
+        dungeonActionsEnabled &&
+        objectNotice &&
+        object != nullptr &&
+        !isImportantItem(*object) &&
+        (notice.instanceId.empty() ||
+            (!protection.value_or(false) && !inventory_.isStaffEquipped(notice.instanceId)));
+    std::vector<InputHelpEntry> helpEntries{
+        {InputHelpGroup::Primary, {InputAction::Confirm}, "OK"},
+    };
+    if (dungeonActionsEnabled && unlockedRingHudCount() > 1) {
+        helpEntries.push_back({
+            InputHelpGroup::Cycle,
+            {InputAction::CyclePrevious, InputAction::CycleNext},
+            "リング切替",
+        });
+    }
+    if (objectNotice) {
+        if (dungeonActionsEnabled) {
+            if (primaryAction != ItemAcquisitionPrimaryAction::None) {
+                helpEntries.push_back({
+                    InputHelpGroup::Other,
+                    {InputAction::UseSelectedItem},
+                    primaryAction == ItemAcquisitionPrimaryAction::EquipStaff ? "装備する" : "使用する",
+                });
+            }
+            helpEntries.push_back({InputHelpGroup::Other, {InputAction::PutSelectedItemOnRing}, "リングへ"});
+            helpEntries.push_back({
+                InputHelpGroup::Other,
+                {InputAction::DiscardSelectedItem},
+                discardable ? "捨てる" : "捨てる不可",
+            });
+        }
+        helpEntries.push_back({
+            InputHelpGroup::Other,
+            {InputAction::ToggleProtection},
+            canProtect ? "保護ON/OFF" : "保護不可",
+        });
+    }
+    const std::string helpText = buildInputHelpText(helpEntries);
 
     const bool baseUiActive = mode_ == ScreenMode::Base && (
         baseStorageActive_ ||
@@ -5999,27 +6416,26 @@ void Game::renderFirstItemAcquisitionNotice(Renderer& renderer, float animationS
     if (noticeOverlapsUi) {
         drawUiModalBackdrop(renderer, screen, {0, 0, 0, 132});
     }
-    UiWindowScope window(
-        renderer,
-        "first_item_acquisition",
-        panel,
-        notice.title.empty() ? "入手した！" : notice.title,
-        helpText,
-        UiWindowOptions{true, false});
+    const float noticeAnimation = smootherStep(std::clamp(notice.animationProgress, 0.0f, 1.0f));
+    renderer.pushScreenTransform(
+        panel.pos + panel.size * 0.5f,
+        lerp(0.9f, 1.0f, noticeAnimation),
+        noticeAnimation);
+    {
+        UiWindowScope window(
+            renderer,
+            "item_acquisition",
+            panel,
+            notice.title.empty() ? "アイテムを入手した" : notice.title,
+            helpText,
+            UiWindowOptions{false, false});
 
-    const UiRect body = firstItemAcquisitionNoticeBodyRect(panel);
-    constexpr float TopPanelGap = 16.0f;
-    const UiRect imagePanel = firstItemAcquisitionNoticeImagePanelRect(panel);
-    const UiRect detailPanel{{
-        imagePanel.pos.x + imagePanel.size.x + TopPanelGap,
-        body.pos.y,
-    }, {
-        std::max(240.0f, body.size.x - imagePanel.size.x - TopPanelGap),
-        imagePanel.size.y,
-    }};
+    const UiRect body = itemAcquisitionNoticeBodyRect(panel, statusVisible);
+    const UiRect imagePanel = itemAcquisitionNoticeImagePanelRect(panel, statusVisible);
+    const UiRect detailLayout = itemAcquisitionNoticeDetailLayoutRect(panel, statusVisible);
     drawUiSubPanel(renderer, imagePanel);
 
-    const Vec2 imageCenter = firstItemAcquisitionNoticeImageCenter(imagePanel);
+    const Vec2 imageCenter = itemAcquisitionNoticeImageCenter(imagePanel);
     if (objectNotice) {
         ObjectImageDrawOptions imageOptions;
         imageOptions.allowUpscale = true;
@@ -6046,84 +6462,46 @@ void Game::renderFirstItemAcquisitionNotice(Renderer& renderer, float animationS
         }
     }
 
-    const float detailX = detailPanel.pos.x + 4.0f;
-    const float detailWidth = detailPanel.size.x - 8.0f;
     std::string rawNameText;
     std::string descriptionText;
-    std::string subText;
+    std::string categoryText;
+    int rarity = 0;
     if (objectNotice) {
-        rawNameText = object->name;
+        rawNameText = itemAcquisitionObjectDisplayName(*object, notice.amount);
         descriptionText = object->description.empty() ? "-" : object->description;
+        categoryText = object->category;
+        rarity = object->rarity;
     } else if (notice.kind == AcquisitionNoticeKind::Material) {
         rawNameText = std::string(materialTypeDisplayName(notice.materialType)) + " x" + std::to_string(std::max(1, notice.amount));
         descriptionText = "魔女からのお礼";
-        subText = "素材";
+        categoryText = "素材";
     } else {
         rawNameText = std::to_string(std::max(1, notice.amount)) + "G";
         descriptionText = "魔女からのお礼";
-        subText = "お金";
+        categoryText = "お金";
     }
-    const std::string nameText = fittedSingleLineText(renderer, rawNameText, detailWidth, 3);
-    const Vec2 nameSize = renderer.measureText(nameText, 3);
-
-    const std::string metadataText = objectNotice
-        ? std::string{}
-        : fittedSingleLineText(renderer, subText, detailWidth, 2);
-    const Vec2 raritySize = objectNotice
-        ? measureInventoryUiRarityStars(renderer, object->rarity)
-        : renderer.measureText(metadataText, 2);
-    const std::string weightText = objectNotice
-        ? "重量 " + formatInventoryUiWeightText(*object, itemStats)
-        : std::string{};
-    const Vec2 weightSize = objectNotice ? renderer.measureText(weightText, 2) : Vec2{};
-    const Vec2 descriptionSize = renderer.measureWrappedText(descriptionText, detailWidth, 2);
-
-    constexpr float NameRarityGap = 8.0f;
-    constexpr float RarityDescriptionGap = 12.0f;
-    constexpr float RarityWeightGap = 4.0f;
-    const float metadataHeight = objectNotice
-        ? raritySize.y + RarityWeightGap + weightSize.y
-        : raritySize.y;
-    const float detailBlockHeight =
-        nameSize.y + NameRarityGap + metadataHeight + RarityDescriptionGap + descriptionSize.y;
-    const float detailTop = imagePanel.pos.y + std::max(0.0f, (imagePanel.size.y - detailBlockHeight) * 0.5f);
-    const Vec2 detail{detailX, detailTop};
-    const Vec2 rarityPos{detailX, detail.y + nameSize.y + NameRarityGap};
-    const Vec2 weightPos{
-        detailX,
-        rarityPos.y + raritySize.y + RarityWeightGap,
-    };
-    const Vec2 descriptionPos{detailX, rarityPos.y + metadataHeight + RarityDescriptionGap};
-
-    renderer.drawText(detail, nameText, ui::Text, 3);
+    float detailLineY = drawInventoryUiDetailHeader(
+        renderer,
+        detailLayout,
+        rawNameText,
+        categoryText,
+        rarity,
+        animationSeconds);
+    drawUiDetailText(renderer, detailLayout, detailLineY, descriptionText);
     if (objectNotice) {
-        (void)drawInventoryUiRarityStars(
+        drawInventoryUiItemEffectSections(
             renderer,
-            rarityPos,
-            object->rarity,
-            animationSeconds);
-        renderer.drawText(weightPos, weightText, ui::TextMuted, 2);
-    } else {
-        renderer.drawText(rarityPos, metadataText, ui::TextMuted, 2);
-    }
-    renderer.drawWrappedText(
-        descriptionPos,
-        descriptionText,
-        detailWidth,
-        {232, 236, 244, 255},
-        2);
-
-    const std::string useEffectText = objectNotice ? firstItemAcquisitionUseEffectSummary(*object) : std::string{};
-    if (!useEffectText.empty()) {
-        const float effectY = descriptionPos.y + descriptionSize.y + 10.0f;
-        renderer.drawText(
-            {detailX, effectY},
-            fittedSingleLineText(renderer, useEffectText, detailWidth, 2),
-            {232, 236, 244, 255},
-            2);
+            detailLayout,
+            detailLineY,
+            *object,
+            objectCatalog_,
+            encyclopedia_,
+            itemStats,
+            unlockedRingCount());
+        drawInventoryUiWeightLine(renderer, detailLayout, detailLineY, *object, itemStats);
     }
 
-    const UiRect okButton = firstItemAcquisitionOkButtonRect(panel);
+    const UiRect okButton = itemAcquisitionOkButtonRect(panel);
     if (!notice.statusText.empty()) {
         const std::string statusText = fittedSingleLineText(renderer, notice.statusText, body.size.x, 2);
         const Vec2 statusSize = renderer.measureText(statusText, 2);
@@ -6137,6 +6515,9 @@ void Game::renderFirstItemAcquisitionNotice(Renderer& renderer, float animationS
             2);
     }
     drawUiButton(renderer, okButton, "OK", false, uiActionButtonStyle());
+    }
+    renderer.popScreenTransform();
+
 }
 
 void Game::appendCaptureAbsorbRenderEntries(
@@ -6634,7 +7015,9 @@ void Game::renderDungeonMapOverlay(Renderer& renderer, const std::vector<LightSo
         "dungeon.map_overlay",
         panel,
         "探索地図",
-        "Esc 閉じる   ホイール/WASD/矢印 スクロール",
+        buildInputHelpText({
+            {InputHelpGroup::Back, {InputAction::Cancel, InputAction::Pause}, "閉じる"},
+        }),
         UiWindowOptions{true, true});
 
     const UiRect mapRect = dungeonMapOverlayViewportRect();
@@ -7036,34 +7419,53 @@ void Game::renderDungeonControlHelp(Renderer& renderer) const
     const float screenWidth = static_cast<float>(camera_.width());
     const float screenHeight = static_cast<float>(camera_.height());
 
-    std::string help =
-        "WASD/方向キー 移動   {shortcut} アイテム選択   {shortcut-row} アイテム行切替   F 使用   R リングへ   右長押し 中心ずらし   C リング投げ　Esc メニュー";
+    std::string help = buildInputHelpText({
+        {InputHelpGroup::Back, {InputAction::Pause}, "メニュー"},
+        {InputHelpGroup::Other, {InputAction::ShortcutCursorLeft, InputAction::ShortcutCursorRight}, "アイテム選択"},
+        {InputHelpGroup::Other, {InputAction::PreviousShortcutRow, InputAction::NextShortcutRow}, "アイテム行切替"},
+        {InputHelpGroup::Other, {InputAction::UseSelectedItem}, "使用"},
+        {InputHelpGroup::Other, {InputAction::PutSelectedItemOnRing}, "リングへ"},
+        {InputHelpGroup::Other, {InputAction::OffsetRingCenter}, "中心ずらし"},
+        {InputHelpGroup::Other, {InputAction::ThrowActiveRing}, "リング投げ"},
+    });
     bool promptFocused = false;
     if (introTutorialActive()) {
-        help = "WASD/方向キー 移動   Esc メニュー";
+        help = buildInputHelpText({
+            {InputHelpGroup::Back, {InputAction::Pause}, "メニュー"},
+        });
         if (introTutorialPhase_ == IntroTutorialPhase::FreeToExit &&
             dungeonInspectableInRange(
                 introTutorialExitPosition(),
                 {DungeonEntranceImageMaxWidth, DungeonEntranceImageMaxHeight})) {
-            help = "出口   F/Enter 拠点へ帰還";
+            help = buildInputHelpText({
+                {InputHelpGroup::Primary, {InputAction::Confirm, InputAction::UseSelectedItem}, "出口から拠点へ帰還"},
+            });
             promptFocused = true;
         }
     } else if (focusedWarpReturnPointIndex_ == DungeonEntranceReturnFocusIndex) {
-        help = "ダンジョン入口   F/Enter 拠点へ帰還";
+        help = buildInputHelpText({
+            {InputHelpGroup::Primary, {InputAction::Confirm, InputAction::UseSelectedItem}, "ダンジョン入口から拠点へ帰還"},
+        });
         promptFocused = true;
     } else if (warpPointsEnabled_) {
         if (focusedWarpReturnPointIndex_ >= 0 &&
             focusedWarpReturnPointIndex_ < static_cast<int>(warpPoints_.size())) {
             const WarpPoint& point = warpPoints_[static_cast<std::size_t>(focusedWarpReturnPointIndex_)];
             if (point.discovered) {
-                help = "ワープポイント " + std::to_string(point.index + 1) + "   F/Enter 拠点へ帰還";
+                help = buildInputHelpText({{
+                    InputHelpGroup::Primary,
+                    {InputAction::Confirm, InputAction::UseSelectedItem},
+                    "ワープポイント " + std::to_string(point.index + 1) + " から拠点へ帰還",
+                }});
                 promptFocused = true;
             }
         }
     }
     if (!promptFocused && currentStageIsRoguelike() && roguelikeBigHole_.active && focusedRoguelikeBigHole_ != 0) {
         help = roguelikeBigHole_.unlocked
-            ? "大穴   F/Enter 調べる"
+            ? buildInputHelpText({
+                {InputHelpGroup::Primary, {InputAction::Confirm, InputAction::UseSelectedItem}, "大穴を調べる"},
+            })
             : "大穴   星脈竜を倒すと進める";
         promptFocused = true;
     }
@@ -7085,28 +7487,14 @@ void Game::renderDungeonControlHelp(Renderer& renderer) const
     const UiRect shortcutHud = introTutorialHelpLayout
         ? inventory_.shortcutHudPanelRect(camera_.width(), camera_.height())
         : UiRect{};
-    InputHelpStyle helpStyle;
-    helpStyle.text = {232, 232, 238, 235};
-    helpStyle.outline = {0, 0, 0, 190};
-    helpStyle.scale = 2;
-    helpStyle.outlinePx = 4;
-    helpStyle.iconHeight = 24.0f;
-    helpStyle.outlineEnabled = true;
-    const float maxWidth = introTutorialHelpLayout
-        ? std::max(120.0f, shortcutHud.size.x - 32.0f)
-        : std::max(120.0f, screenWidth - 32.0f);
-    help = fittedInputHelpText(renderer, std::move(help), maxWidth, helpStyle);
-    const Vec2 textSize = measureInputHelpText(renderer, help, helpStyle);
-    Vec2 pos{
-        (screenWidth - textSize.x) * 0.5f,
-        std::max(TopInfoBarY + TopInfoBarHeight + 8.0f, screenHeight - textSize.y - 4.0f),
-    };
+    const float safeTop = TopInfoBarY + TopInfoBarHeight + 8.0f;
+    UiRect safeArea{{0.0f, safeTop}, {screenWidth, std::max(0.0f, screenHeight - safeTop)}};
     if (introTutorialHelpLayout) {
-        pos.y = std::max(
-            TopInfoBarY + TopInfoBarHeight + 8.0f,
-            shortcutHud.pos.y - textSize.y - 10.0f);
+        safeArea.pos.x = (screenWidth - shortcutHud.size.x) * 0.5f;
+        safeArea.size.x = shortcutHud.size.x;
+        safeArea.size.y = std::max(0.0f, shortcutHud.pos.y - 10.0f - safeTop);
     }
-    drawInputHelpText(renderer, pos, help, helpStyle);
+    drawUiBottomInputHelp(renderer, safeArea, std::move(help));
 }
 
 void Game::renderWarpReturnUi(Renderer& renderer) const
@@ -7174,15 +7562,32 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     const int presetSlotCount = unlockedRingPresetSlotCount();
     std::string ringHelpText;
     if (ringItemMoveModeActive_) {
-        ringHelpText = "WASD/矢印 位置変更  F/Enter 確定  Esc キャンセル";
+        ringHelpText = buildInputHelpText({
+            {
+                InputHelpGroup::Primary,
+                {InputAction::Confirm, InputAction::UseSelectedItem, InputAction::GrabOrPlaceItem},
+                "確定",
+            },
+            {InputHelpGroup::Back, {InputAction::Cancel, InputAction::Pause}, "キャンセル"},
+        });
     } else {
-        ringHelpText = "F/Enter コマンド  ";
-        ringHelpText += ringCount > 1
-            ? "Z/X リング  "
-            : "WASD/矢印 選択  ";
-        ringHelpText += inlineInputActionTag(InputAction::GrabOrPlaceItem) +
-            " 移動  " + inlineInputActionTag(InputAction::ArrangeItems) +
-            " 並び替え  R 外す  Shift+R 全部外す  P 保護";
+        std::vector<InputHelpEntry> entries{
+            {InputHelpGroup::Primary, {InputAction::Confirm, InputAction::UseSelectedItem}, "コマンド"},
+            {InputHelpGroup::Back, {InputAction::Cancel, InputAction::Pause}, "戻る"},
+        };
+        if (ringCount > 1) {
+            entries.push_back({
+                InputHelpGroup::Cycle,
+                {InputAction::CyclePrevious, InputAction::CycleNext},
+                "リング切替",
+            });
+        }
+        entries.push_back({InputHelpGroup::Other, {InputAction::GrabOrPlaceItem}, "移動"});
+        entries.push_back({InputHelpGroup::Other, {InputAction::ArrangeItems}, "並び替え"});
+        entries.push_back({InputHelpGroup::Other, {InputAction::PutSelectedItemOnRing}, "外す"});
+        entries.push_back({InputHelpGroup::Other, {}, "全部外す", inlineRingRemoveAllInputTag()});
+        entries.push_back({InputHelpGroup::Other, {InputAction::ToggleProtection}, "保護"});
+        ringHelpText = buildInputHelpText(entries);
         if (presetSlotCount > 0 && !inputHelpUsesGamepad()) {
             const std::string slotRange = presetSlotCount == 1 ? "1" : "1-" + std::to_string(presetSlotCount);
             ringHelpText += "  " + slotRange + " 呼出  Shift+" + slotRange + " 登録";
@@ -7327,14 +7732,6 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
                 true,
                 1.0f,
                 &encyclopedia_);
-            std::snprintf(buffer, sizeof(buffer), "%d", i + 1);
-            renderer.drawText(
-                itemCenter + Vec2{-5.0f, 22.0f},
-                buffer,
-                moveMode
-                    ? Color{255, 170, 82, 255}
-                    : (selected ? Color{255, 230, 150, 255} : Color{174, 182, 198, 255}),
-                1);
         }
     }
 
@@ -7528,21 +7925,12 @@ void Game::renderOperationSettings(Renderer& renderer) const
         if (!uiScrollAreaRectVisible(tableLayout.scroll, rowRect)) {
             continue;
         }
-        bool focusedRow = false;
-        for (int column = OperationSettingsColumnKeyboardMouse;
-             column <= OperationSettingsColumnGamepad;
-             ++column) {
-            const UiRect cell = uiSelectableTableCellRect(
-                tableLayout,
-                columns.data(),
-                static_cast<int>(columns.size()),
-                row,
-                column,
-                tableStyle);
-            focusedRow = focusedRow || uiControlVisualState(cell).selected;
-        }
-        if (focusedRow) {
+        const bool selectedRow = row == operationSettingsTable_.selectedRow;
+        const bool hoveredRow = row == operationSettingsHoveredRow_;
+        if (selectedRow) {
             renderer.fillRect(rowRect.pos, rowRect.size, tableStyle.rowFillHot);
+        } else if (hoveredRow) {
+            renderer.fillRect(rowRect.pos, rowRect.size, OperationSettingsHoveredRowFill);
         }
         for (int column = 0; column < OperationSettingsColumnCount; ++column) {
             const UiRect cell = uiSelectableTableCellRect(
@@ -7552,9 +7940,8 @@ void Game::renderOperationSettings(Renderer& renderer) const
                 row,
                 column,
                 tableStyle);
-            const bool preferredCell = row == operationSettingsTable_.selectedRow &&
-                column == operationSettingsTable_.selectedColumn;
-            const bool focusedCell = uiControlVisualState(cell).selected;
+            const bool preferredCell = selectedRow && column == operationSettingsTable_.selectedColumn;
+            const bool hoveredCell = hoveredRow && column == operationSettingsHoveredColumn_;
             if (columns[static_cast<std::size_t>(column)].enabled) {
                 registerUiNavigationTarget(
                     cell,
@@ -7566,8 +7953,10 @@ void Game::renderOperationSettings(Renderer& renderer) const
                 cell,
                 UiControlMotion::PressOnly,
                 columns[static_cast<std::size_t>(column)].enabled);
-            if (focusedCell) {
-                renderer.fillRect(cell.pos, cell.size, Color{56, 76, 154, 190});
+            if (preferredCell) {
+                renderer.fillRect(cell.pos, cell.size, OperationSettingsSelectedCellFill);
+            } else if (hoveredCell) {
+                renderer.fillRect(cell.pos, cell.size, OperationSettingsHoveredCellFill);
             }
             if (column == OperationSettingsColumnAction) {
                 drawOperationSettingsCellText(
@@ -7632,6 +8021,11 @@ void Game::renderOperationSettings(Renderer& renderer) const
             {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
             {0, 0, 0, 120});
         const UiRect dialog = operationSettingsDialogRect();
+        const bool gamepadBinding = operationSettingsPendingColumn_ == OperationSettingsColumnGamepad;
+        const bool gamepadOperationDisplay = inputHelpUsesGamepad();
+        const std::string_view captureHelpText = gamepadOperationDisplay
+            ? "B / ○を１秒長押しで中止"
+            : "×クリックで中止";
         UiExclusiveNavigationScope navigationScope(dialog);
         UiWindowScope captureWindow(
             renderer,
@@ -7640,17 +8034,58 @@ void Game::renderOperationSettings(Renderer& renderer) const
             operationSettingsPendingEditMode_ == OperationSettingsBindingEditMode::Append
                 ? "操作割当の追加"
                 : "操作割当の変更",
-            "×ボタンで中止",
+            captureHelpText,
             UiWindowOptions{true, true});
-        const std::string line = operationSettingsPendingColumn_ == OperationSettingsColumnGamepad
+        const std::string line = gamepadBinding
             ? "ゲームパッドのボタンまたはスティック/トリガーを入力してね"
             : "キーまたはマウスボタンを入力してね";
         const float textMaxWidth = std::max(1.0f, dialog.size.x - 84.0f);
         const Vec2 linePos = dialog.pos + Vec2{42.0f, 104.0f};
         renderer.drawWrappedText(linePos, line, textMaxWidth, ui::Text, 2);
+
+        if (gamepadOperationDisplay) {
+            InputHelpStyle footerHelpStyle;
+            footerHelpStyle.text = ui::TextMuted;
+            footerHelpStyle.scale = 2;
+            footerHelpStyle.iconHeight = 23.0f;
+            const UiRect footer = uiFooterRect(dialog, captureHelpText);
+            const Vec2 footerTextPadding = renderer.hasUiWindowTexture()
+                ? ui::ImageWindowFooterTextPadding
+                : ui::FooterTextPadding;
+            const Vec2 footerTextPos = footer.pos + footerTextPadding + ui::FooterHelpTextOffset;
+            const Vec2 footerTextSize = measureInputHelpText(renderer, captureHelpText, footerHelpStyle);
+            constexpr Vec2 HoldTrackSize{40.0f, 5.0f};
+            constexpr float HoldTrackGap = 12.0f;
+            const UiRect holdTrack{
+                {
+                    footerTextPos.x + footerTextSize.x + HoldTrackGap,
+                    footerTextPos.y + (footerTextSize.y - HoldTrackSize.y) * 0.5f,
+                },
+                HoldTrackSize,
+            };
+            const float holdProgress = operationSettingsCapture_.gamepadCancelHoldProgress();
+            renderer.fillRect(holdTrack.pos, holdTrack.size, {18, 20, 32, 210});
+            if (holdProgress > 0.0f) {
+                renderer.fillRect(
+                    holdTrack.pos,
+                    {holdTrack.size.x * holdProgress, holdTrack.size.y},
+                    {212, 200, 126, 235});
+            }
+            renderer.drawRect(holdTrack.pos, holdTrack.size, {112, 116, 138, 200});
+        }
     }
 
-    if (operationSettingsConflictConfirm_.open) {
+    if (operationSettingsReadOnlyDialog_.open) {
+        drawUiModalBackdrop(
+            renderer,
+            {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
+            {0, 0, 0, 120});
+        drawUiResultDialog(
+            renderer,
+            operationSettingsReadOnlyDialog_,
+            operationSettingsDialogRect(),
+            "operation_settings.read_only");
+    } else if (operationSettingsConflictConfirm_.open) {
         drawUiModalBackdrop(
             renderer,
             {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
@@ -7792,17 +8227,25 @@ void Game::renderPauseMenu(Renderer& renderer) const
     const char* pauseTitle = pausePage_ == PauseMenuPage::Status
         ? "ステータス"
         : (pausePage_ == PauseMenuPage::Options ? "オプション" : "MENU");
-    const char* pauseHelp = pausePage_ == PauseMenuPage::Status
-        ? "Esc 戻る"
-        : (pausePage_ == PauseMenuPage::Ring
-            ? "Z/X 選択リング切替  Esc 戻る"
-            : (pausePage_ == PauseMenuPage::Options
-                ? (optionsPage_ == OptionsPageOperation
-                    ? "Z/X 設定切替  ↑/↓ 行選択  ←/→ 列選択（端で分類切替）  F/Enter 割当操作  Esc 戻る"
-                    : (optionsPage_ == OptionsPageAudio
-                        ? "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 音量変更  Esc 戻る"
-                        : "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 変更  F/Enter 切替  Esc 戻る"))
-                : "F/Enter 決定  Esc 戻る"));
+    std::string pauseHelp;
+    if (pausePage_ == PauseMenuPage::Options) {
+        pauseHelp = optionsMenuHelpText(optionsPage_);
+    } else if (pausePage_ == PauseMenuPage::Ring) {
+        pauseHelp = buildInputHelpText({
+            {InputHelpGroup::Back, {InputAction::Cancel, InputAction::Pause}, "戻る"},
+            {
+                InputHelpGroup::Cycle,
+                {InputAction::CyclePrevious, InputAction::CycleNext},
+                "リング切替",
+            },
+        });
+    } else if (pausePage_ == PauseMenuPage::Status) {
+        pauseHelp = buildInputHelpText({
+            {InputHelpGroup::Back, {InputAction::Cancel, InputAction::Pause}, "戻る"},
+        });
+    } else {
+        pauseHelp = standardMenuHelpText();
+    }
     UiWindowScope pauseWindow(
         renderer,
         "pause.main",
@@ -8112,7 +8555,7 @@ void Game::renderGameOverScreen(Renderer& renderer) const
         return;
     }
     const UiRect panel = gameOverPanelRect();
-    UiWindowScope gameOverWindow(renderer, "game_over", panel, "GAME OVER", "F/Enter 決定");
+    UiWindowScope gameOverWindow(renderer, "game_over", panel, "GAME OVER", standardMenuHelpText("決定", ""));
     renderer.drawText(panel.pos + Vec2{118.0f, 92.0f}, "リザルト", ui::Text, 3);
 
     char buffer[160];
@@ -8144,7 +8587,7 @@ void Game::renderStageClearScreen(Renderer& renderer) const
 
     renderer.setScreenSpace();
     const UiRect panel = stageClearPanelRect();
-    UiWindowScope stageClearWindow(renderer, "stage_clear", panel, "STAGE CLEAR", "F/Enter 決定");
+    UiWindowScope stageClearWindow(renderer, "stage_clear", panel, "STAGE CLEAR", standardMenuHelpText("決定", ""));
     renderer.drawText(panel.pos + Vec2{118.0f, 92.0f}, "クリア結果", ui::Text, 3);
 
     char buffer[160];
@@ -8205,7 +8648,7 @@ void Game::renderAstralResultScreen(Renderer& renderer) const
         }
     }
     const UiRect panel = stageClearPanelRect();
-    UiWindowScope astralWindow(renderer, "astral_result", panel, "ASTRAL RECORD", "F/Enter 決定");
+    UiWindowScope astralWindow(renderer, "astral_result", panel, "ASTRAL RECORD", standardMenuHelpText("決定", ""));
     renderer.drawText(panel.pos + Vec2{118.0f, 82.0f}, "星間記録", ui::Text, 3);
 
     char buffer[192];
@@ -9007,7 +9450,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderDebugItemPicker(renderer);
         renderDebugStoryTest(renderer);
         renderPortraitExpressionPicker(renderer);
-        renderFirstItemAcquisitionNotice(renderer, static_cast<float>(time.totalSeconds()));
+        renderItemAcquisitionNotice(renderer, static_cast<float>(time.totalSeconds()));
         renderLevelUpOverlay(renderer);
         finishUiFrame(renderer);
         renderBaseDebugOverlay(renderer, time);
@@ -9485,7 +9928,7 @@ void Game::render(Renderer& renderer, const Time& time)
                 renderDebugStoryTest(renderer);
             }
             renderPortraitExpressionPicker(renderer);
-            renderFirstItemAcquisitionNotice(renderer, static_cast<float>(time.totalSeconds()));
+            renderItemAcquisitionNotice(renderer, static_cast<float>(time.totalSeconds()));
             renderAutoSimulationIntentOverlay(renderer);
         }
     }

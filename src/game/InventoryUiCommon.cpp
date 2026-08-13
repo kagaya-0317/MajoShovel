@@ -644,6 +644,47 @@ Vec2 drawRarityStars(Renderer& renderer, Vec2 pos, int rarity, float animationSe
     return measureRarityStars(renderer, clampedRarity);
 }
 
+struct InventoryDetailHeaderLayout {
+    UiRect content{};
+    Vec2 categorySize{};
+    Vec2 titleSize{};
+    Vec2 raritySize{};
+    float titleMaxWidth = 0.0f;
+    float trailingY = 0.0f;
+    float height = 0.0f;
+};
+
+InventoryDetailHeaderLayout inventoryDetailHeaderLayout(
+    Renderer& renderer,
+    UiRect panel,
+    std::string_view text,
+    std::string_view category,
+    int rarity)
+{
+    constexpr float NameRarityGap = 3.0f;
+    constexpr float RarityImageGap = 8.0f;
+    constexpr float TrailingTextGap = 12.0f;
+    constexpr int TitleScale = 3;
+    constexpr int TrailingTextScale = 2;
+    InventoryDetailHeaderLayout layout;
+    layout.content = uiSubPanelContentRect(panel);
+    layout.categorySize = category.empty()
+        ? Vec2{}
+        : renderer.measureText(category, TrailingTextScale);
+    const float trailingWidth = layout.categorySize.x;
+    const float titleTrailingGap = trailingWidth > 0.0f ? TrailingTextGap : 0.0f;
+    layout.titleMaxWidth = std::max(1.0f, layout.content.size.x - trailingWidth - titleTrailingGap);
+    layout.titleSize = renderer.measureWrappedText(text, layout.titleMaxWidth, TitleScale);
+    layout.raritySize = rarity > 0 ? measureRarityStars(renderer, rarity) : Vec2{};
+    const float titleLineHeight = renderer.measureText("あ", TitleScale).y;
+    layout.trailingY = layout.content.pos.y +
+        std::max(0.0f, (titleLineHeight - layout.categorySize.y) * 0.5f);
+    layout.height = layout.titleSize.y + (rarity > 0
+        ? NameRarityGap + layout.raritySize.y + RarityImageGap
+        : RarityImageGap);
+    return layout;
+}
+
 float drawInventoryDetailHeader(
     Renderer& renderer,
     UiRect panel,
@@ -653,37 +694,36 @@ float drawInventoryDetailHeader(
     float animationSeconds)
 {
     constexpr float NameRarityGap = 3.0f;
-    constexpr float RarityImageGap = 8.0f;
-    constexpr float TrailingTextGap = 12.0f;
-    constexpr int TitleScale = 3;
-    constexpr int TrailingTextScale = 2;
-    const UiRect content = uiSubPanelContentRect(panel);
-    const Vec2 categorySize = category.empty()
-        ? Vec2{}
-        : renderer.measureText(category, TrailingTextScale);
-    const float trailingWidth = categorySize.x;
-    const float titleTrailingGap = trailingWidth > 0.0f ? TrailingTextGap : 0.0f;
-    const float titleMaxWidth = std::max(1.0f, content.size.x - trailingWidth - titleTrailingGap);
+    const InventoryDetailHeaderLayout layout = inventoryDetailHeaderLayout(
+        renderer,
+        panel,
+        text,
+        category,
+        rarity);
 
-    renderer.drawWrappedText(content.pos, text, titleMaxWidth, ui::Text, TitleScale);
-    renderer.drawWrappedText({content.pos.x + 1.0f, content.pos.y}, text, titleMaxWidth, ui::Text, TitleScale);
-    const Vec2 titleSize = renderer.measureWrappedText(text, titleMaxWidth, TitleScale);
-    const float titleLineHeight = renderer.measureText("あ", TitleScale).y;
-    const float trailingY = content.pos.y + std::max(0.0f, (titleLineHeight - categorySize.y) * 0.5f);
-    const float right = content.pos.x + content.size.x;
+    renderer.drawWrappedText(layout.content.pos, text, layout.titleMaxWidth, ui::Text, 3);
+    renderer.drawWrappedText(
+        {layout.content.pos.x + 1.0f, layout.content.pos.y},
+        text,
+        layout.titleMaxWidth,
+        ui::Text,
+        3);
+    const float right = layout.content.pos.x + layout.content.size.x;
     if (!category.empty()) {
         renderer.drawText(
-            {right - categorySize.x, trailingY},
+            {right - layout.categorySize.x, layout.trailingY},
             category,
             ui::Text,
-            TrailingTextScale);
+            2);
     }
-    const Vec2 raritySize = drawRarityStars(
-        renderer,
-        {content.pos.x, content.pos.y + titleSize.y + NameRarityGap},
-        rarity,
-        animationSeconds);
-    return content.pos.y + titleSize.y + NameRarityGap + raritySize.y + RarityImageGap;
+    if (rarity > 0) {
+        (void)drawRarityStars(
+            renderer,
+            {layout.content.pos.x, layout.content.pos.y + layout.titleSize.y + NameRarityGap},
+            rarity,
+            animationSeconds);
+    }
+    return layout.content.pos.y + layout.height;
 }
 
 ObjectImageDrawOptions inventoryUiObjectImageOptions(
@@ -903,6 +943,27 @@ void drawInventoryEnhancementLine(Renderer& renderer, UiRect panel, float& y, co
 Vec2 measureInventoryUiRarityStars(Renderer& renderer, int rarity)
 {
     return measureRarityStars(renderer, rarity);
+}
+
+float drawInventoryUiDetailHeader(
+    Renderer& renderer,
+    UiRect panel,
+    std::string_view text,
+    std::string_view category,
+    int rarity,
+    float animationSeconds)
+{
+    return drawInventoryDetailHeader(renderer, panel, text, category, rarity, animationSeconds);
+}
+
+float measureInventoryUiDetailHeaderHeight(
+    Renderer& renderer,
+    UiRect panel,
+    std::string_view text,
+    std::string_view category,
+    int rarity)
+{
+    return inventoryDetailHeaderLayout(renderer, panel, text, category, rarity).height;
 }
 
 Vec2 drawInventoryUiRarityStars(
@@ -1181,73 +1242,97 @@ void appendInventoryUiEffectTextRun(
     runs.push_back({std::move(text), color});
 }
 
-void drawInventoryUiEffectTextRuns(
+void advanceInventoryUiEffectTextRuns(
     Renderer& renderer,
     UiRect panel,
     float& y,
     std::span<const UiColoredTextRun> runs,
-    bool bulleted)
+    bool bulleted,
+    bool draw)
 {
     constexpr float TextGap = 8.0f;
     const UiRect content = uiSubPanelContentRect(panel);
     UiWrappedColoredTextStyle style;
     style.hangingIndentText = bulleted ? std::string_view{"・"} : std::string_view{};
-    y += drawUiWrappedColoredText(renderer, {content.pos.x, y}, runs, content.size.x, style) + TextGap;
+    const float textHeight = draw
+        ? drawUiWrappedColoredText(renderer, {content.pos.x, y}, runs, content.size.x, style)
+        : measureUiWrappedColoredText(renderer, runs, content.size.x, style);
+    y += textHeight + TextGap;
 }
 
-void drawInventoryUiEffectLines(
-    Renderer& renderer,
-    UiRect panel,
-    float& y,
+struct InventoryUiEffectTextLayout {
+    std::vector<InventoryUiEffectTextRun> ownedRuns;
+    bool bulleted = true;
+};
+
+InventoryUiEffectTextLayout inventoryUiEffectTextLayout(
     const std::vector<ObjectEffectDisplayLine>& lines,
     const ItemData& item,
     const std::optional<InventoryUiItemStats>& stats)
 {
+    InventoryUiEffectTextLayout layout;
     if (lines.empty()) {
-        return;
+        return layout;
     }
 
-    std::vector<InventoryUiEffectTextRun> ownedRuns;
-    ownedRuns.reserve(lines.size() * 3);
+    layout.ownedRuns.reserve(lines.size() * 3);
     const bool omitBullet = lines.size() == 1 && lines.front().text == "なし";
+    layout.bulleted = !omitBullet;
     for (std::size_t index = 0; index < lines.size(); ++index) {
         if (index > 0) {
-            appendInventoryUiEffectTextRun(ownedRuns, "\n", ui::Text);
+            appendInventoryUiEffectTextRun(layout.ownedRuns, "\n", ui::Text);
         }
         const ObjectEffectDisplayLine& line = lines[index];
         const std::string bullet = omitBullet ? std::string{} : std::string{"・"};
         if (inventoryUiPowerGrantedByEnhancement(line, item, stats)) {
-            appendInventoryUiEffectTextRun(ownedRuns, bullet, ui::Text);
-            appendInventoryUiEffectTextRun(ownedRuns, line.text, InventoryEnhancedPowerColor);
+            appendInventoryUiEffectTextRun(layout.ownedRuns, bullet, ui::Text);
+            appendInventoryUiEffectTextRun(layout.ownedRuns, line.text, InventoryEnhancedPowerColor);
             continue;
         }
         const std::optional<InventoryUiEffectPowerValue> power =
             inventoryUiEnhancedEffectPowerValue(line, item, stats);
         if (!power) {
-            appendInventoryUiEffectTextRun(ownedRuns, bullet + line.text, ui::Text);
+            appendInventoryUiEffectTextRun(layout.ownedRuns, bullet + line.text, ui::Text);
             continue;
         }
 
         appendInventoryUiEffectTextRun(
-            ownedRuns,
+            layout.ownedRuns,
             bullet + line.text.substr(0, power->begin),
             ui::Text);
         appendInventoryUiEffectTextRun(
-            ownedRuns,
+            layout.ownedRuns,
             power->text,
             InventoryEnhancedPowerColor);
         appendInventoryUiEffectTextRun(
-            ownedRuns,
+            layout.ownedRuns,
             line.text.substr(power->end),
             ui::Text);
     }
 
+    return layout;
+}
+
+void advanceInventoryUiEffectLines(
+    Renderer& renderer,
+    UiRect panel,
+    float& y,
+    const std::vector<ObjectEffectDisplayLine>& lines,
+    const ItemData& item,
+    const std::optional<InventoryUiItemStats>& stats,
+    bool draw)
+{
+    const InventoryUiEffectTextLayout layout = inventoryUiEffectTextLayout(lines, item, stats);
+    if (layout.ownedRuns.empty()) {
+        return;
+    }
+
     std::vector<UiColoredTextRun> runs;
-    runs.reserve(ownedRuns.size());
-    for (const InventoryUiEffectTextRun& run : ownedRuns) {
+    runs.reserve(layout.ownedRuns.size());
+    for (const InventoryUiEffectTextRun& run : layout.ownedRuns) {
         runs.push_back({run.text, run.color});
     }
-    drawInventoryUiEffectTextRuns(renderer, panel, y, runs, !omitBullet);
+    advanceInventoryUiEffectTextRuns(renderer, panel, y, runs, layout.bulleted, draw);
 }
 
 std::string formatInventoryUiWeightText(const ItemData& item, const std::optional<InventoryUiItemStats>& stats)
@@ -1272,27 +1357,70 @@ std::string formatInventoryUiWeightText(const ItemData& item, const std::optiona
     return buffer;
 }
 
-void drawInventoryUiEffectHeading(Renderer& renderer, UiRect panel, float& y, std::string_view text)
+float measureInventoryUiWeightLineHeight(
+    Renderer& renderer,
+    UiRect panel,
+    const ItemData& item,
+    const std::optional<InventoryUiItemStats>& stats)
+{
+    const UiRect content = uiSubPanelContentRect(panel);
+    const float valueWidth = std::max(1.0f, content.size.x - InventoryDetailLineStyle.labelWidth);
+    return std::max(
+        renderer.measureText("重量", InventoryDetailLineStyle.scale).y,
+        renderer.measureWrappedText(
+            formatInventoryUiWeightText(item, stats),
+            valueWidth,
+            InventoryDetailLineStyle.scale).y);
+}
+
+void drawInventoryUiWeightLine(
+    Renderer& renderer,
+    UiRect panel,
+    float& y,
+    const ItemData& item,
+    const std::optional<InventoryUiItemStats>& stats)
+{
+    drawUiDetailLine(
+        renderer,
+        panel,
+        y,
+        "重量",
+        formatInventoryUiWeightText(item, stats),
+        InventoryDetailLineStyle);
+}
+
+void advanceInventoryUiEffectHeading(
+    Renderer& renderer,
+    UiRect panel,
+    float& y,
+    std::string_view text,
+    bool draw)
 {
     UiDetailTextStyle style;
     style.color = InventoryEffectHeadingColor;
     style.bottomGap = 0.0f;
-    drawUiDetailText(renderer, panel, y, text, style);
+    if (draw) {
+        drawUiDetailText(renderer, panel, y, text, style);
+        return;
+    }
+    const UiRect content = uiSubPanelContentRect(panel);
+    y += renderer.measureWrappedText(text, content.size.x, style.scale).y;
 }
 
-void drawInventoryUiPlainEffectLines(
+void advanceInventoryUiPlainEffectLines(
     Renderer& renderer,
     UiRect panel,
     float& y,
-    const std::vector<std::string>& lines)
+    const std::vector<std::string>& lines,
+    bool draw)
 {
     const std::string text = joinInventoryUiEffectLines(lines);
     const std::array<UiColoredTextRun, 1> runs{{{text, ui::Text}}};
     const bool omitBullet = lines.size() == 1 && lines.front() == "なし";
-    drawInventoryUiEffectTextRuns(renderer, panel, y, runs, !omitBullet);
+    advanceInventoryUiEffectTextRuns(renderer, panel, y, runs, !omitBullet, draw);
 }
 
-void drawItemEffectDetailSections(
+void advanceInventoryUiItemEffectSections(
     Renderer& renderer,
     UiRect panel,
     float& y,
@@ -1300,7 +1428,8 @@ void drawItemEffectDetailSections(
     const ObjectCatalog& catalog,
     const EncyclopediaSystem& encyclopedia,
     const std::optional<InventoryUiItemStats>& stats,
-    int unlockedRingCount)
+    int unlockedRingCount,
+    bool draw)
 {
     ObjectEffectDisplaySections sections =
         encyclopedia.buildObjectEffectDisplaySections(item.id, catalog, EffectRevealMode::WithUnknown);
@@ -1359,23 +1488,68 @@ void drawItemEffectDetailSections(
         std::vector<std::string> equipmentLines = staffEquipmentEffectLines(item, catalog, unlockedRingCount);
         applyStaffManualEquipmentEffectText(item, equipmentLines, sections.ringLines.size());
         if (!equipmentLines.empty()) {
-            drawInventoryUiEffectHeading(renderer, panel, y, "装備時効果");
-            drawInventoryUiPlainEffectLines(renderer, panel, y, equipmentLines);
+            advanceInventoryUiEffectHeading(renderer, panel, y, "装備時効果", draw);
+            advanceInventoryUiPlainEffectLines(renderer, panel, y, equipmentLines, draw);
         }
         if (!sections.ringLines.empty()) {
-            drawInventoryUiEffectHeading(renderer, panel, y, "リングに乗せたときの効果");
-            drawInventoryUiEffectLines(renderer, panel, y, sections.ringLines, item, stats);
+            advanceInventoryUiEffectHeading(renderer, panel, y, "リングに乗せたときの効果", draw);
+            advanceInventoryUiEffectLines(renderer, panel, y, sections.ringLines, item, stats, draw);
         }
         return;
     }
     if (!sections.useLines.empty()) {
-        drawInventoryUiEffectHeading(renderer, panel, y, "使用時の効果");
-        drawInventoryUiEffectLines(renderer, panel, y, sections.useLines, item, stats);
+        advanceInventoryUiEffectHeading(renderer, panel, y, "使用時の効果", draw);
+        advanceInventoryUiEffectLines(renderer, panel, y, sections.useLines, item, stats, draw);
     }
     if (!sections.ringLines.empty()) {
-        drawInventoryUiEffectHeading(renderer, panel, y, "リングに乗せたときの効果");
-        drawInventoryUiEffectLines(renderer, panel, y, sections.ringLines, item, stats);
+        advanceInventoryUiEffectHeading(renderer, panel, y, "リングに乗せたときの効果", draw);
+        advanceInventoryUiEffectLines(renderer, panel, y, sections.ringLines, item, stats, draw);
     }
+}
+
+float measureInventoryUiItemEffectSections(
+    Renderer& renderer,
+    UiRect panel,
+    const ItemData& item,
+    const ObjectCatalog& catalog,
+    const EncyclopediaSystem& encyclopedia,
+    const std::optional<InventoryUiItemStats>& stats,
+    int unlockedRingCount)
+{
+    float height = 0.0f;
+    advanceInventoryUiItemEffectSections(
+        renderer,
+        panel,
+        height,
+        item,
+        catalog,
+        encyclopedia,
+        stats,
+        unlockedRingCount,
+        false);
+    return height;
+}
+
+void drawInventoryUiItemEffectSections(
+    Renderer& renderer,
+    UiRect panel,
+    float& y,
+    const ItemData& item,
+    const ObjectCatalog& catalog,
+    const EncyclopediaSystem& encyclopedia,
+    const std::optional<InventoryUiItemStats>& stats,
+    int unlockedRingCount)
+{
+    advanceInventoryUiItemEffectSections(
+        renderer,
+        panel,
+        y,
+        item,
+        catalog,
+        encyclopedia,
+        stats,
+        unlockedRingCount,
+        true);
 }
 
 Vec2 measureInlineItemText(Renderer& renderer, std::string_view text, const InlineItemTextStyle& style)
@@ -1594,6 +1768,8 @@ void drawInventoryUiPowerBadges(
     constexpr Color BlackBorderColor{0, 0, 0, 255};
     constexpr Vec2 BadgeOffset{0.0f, 16.0f};
     constexpr Vec2 TextOffset{3.0f, 3.0f};
+    constexpr Vec2 UnknownTextOffset{-2.0f, 0.0f};
+    constexpr Color UnknownTextColor{202, 206, 214, 255};
     constexpr float MultiDigitTextHeightReduction = 2.0f;
     constexpr Color TextOutlineColor{0, 0, 0, 180};
     constexpr float TextOutlineWidth = 2.0f;
@@ -1623,7 +1799,10 @@ void drawInventoryUiPowerBadges(
         const int sourceOutlineWidth = std::max(
             1,
             static_cast<int>(std::lround(TextOutlineWidth / textVisualScale)));
-        const Vec2 textCenter = center + TextOffset;
+        const Vec2 textCenter = center + TextOffset + (known ? Vec2{} : UnknownTextOffset);
+        const Color textColor = known
+            ? (enhanced ? InventoryEnhancedPowerColor : Color{255, 255, 255, 255})
+            : UnknownTextColor;
         renderer.pushScreenTransform(textCenter, textVisualScale, 1.0f);
         renderer.drawOutlinedText(
             textCenter - textSize * 0.5f,
@@ -1644,7 +1823,7 @@ void drawInventoryUiPowerBadges(
         renderer.drawText(
             textCenter - textSize * 0.5f,
             text,
-            scaleAlpha(enhanced ? InventoryEnhancedPowerColor : Color{255, 255, 255, 255}, alphaScale),
+            scaleAlpha(textColor, alphaScale),
             textScale);
         renderer.popScreenTransform();
     };
@@ -2016,7 +2195,7 @@ void drawInventoryUiDetailPanel(
     }
 
     drawUiSubPanel(renderer, panel);
-    float detailLineY = drawInventoryDetailHeader(
+    float detailLineY = drawInventoryUiDetailHeader(
         renderer,
         panel,
         detailTitle,
@@ -2032,7 +2211,7 @@ void drawInventoryUiDetailPanel(
         *entry.item,
         broken);
     drawUiDetailText(renderer, panel, detailLineY, entry.item->description.empty() ? "-" : entry.item->description);
-    drawItemEffectDetailSections(
+    drawInventoryUiItemEffectSections(
         renderer,
         panel,
         detailLineY,
@@ -2055,13 +2234,7 @@ void drawInventoryUiDetailPanel(
     }
     drawUiDetailLine(renderer, panel, detailLineY, "耐久力", buffer, InventoryDetailLineStyle);
 
-    drawUiDetailLine(
-        renderer,
-        panel,
-        detailLineY,
-        "重量",
-        formatInventoryUiWeightText(*entry.item, stats),
-        InventoryDetailLineStyle);
+    drawInventoryUiWeightLine(renderer, panel, detailLineY, *entry.item, stats);
 
     if (options.showEnhanceCount && stats) {
         drawInventoryEnhancementLine(renderer, panel, detailLineY, *stats);

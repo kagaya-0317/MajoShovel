@@ -117,6 +117,7 @@ enum class UiNavigationRole {
     Control,
     Tab,
     Grid,
+    Slider,
 };
 
 enum class UiControlMotion {
@@ -322,6 +323,7 @@ struct UiSliderStyle {
     float trackThickness = 4.0f;
     float thumbRadius = -1.0f;
     bool showValueBubble = true;
+    bool navigationEnabled = false;
 };
 
 enum class UiSliderInteractionState : unsigned char {
@@ -627,6 +629,12 @@ public:
         UiRect rect,
         UiControlMotion motion = UiControlMotion::HoverAndPress,
         bool enabled = true);
+    UiControlMotionScope(
+        Renderer& renderer,
+        UiRect visualRect,
+        UiRect controlRect,
+        UiControlMotion motion,
+        bool enabled = true);
     ~UiControlMotionScope();
     UiControlMotionScope(const UiControlMotionScope&) = delete;
     UiControlMotionScope& operator=(const UiControlMotionScope&) = delete;
@@ -790,6 +798,12 @@ void drawUiPanel(Renderer& renderer, UiRect panel, UiWindowFrame frame = UiWindo
 void drawUiSubPanel(Renderer& renderer, UiRect panel);
 void drawUiHeader(Renderer& renderer, UiRect panel, std::string_view title, UiWindowFrame frame = UiWindowFrame::Default);
 void drawUiFooter(Renderer& renderer, UiRect panel, std::string_view helpText, UiWindowFrame frame = UiWindowFrame::Default);
+void drawUiBottomInputHelp(
+    Renderer& renderer,
+    UiRect safeArea,
+    std::string helpText,
+    float horizontalInset = 16.0f,
+    float bottomInset = 4.0f);
 void drawUiWindow(Renderer& renderer, UiRect panel, std::string_view title, std::string_view helpText = {});
 void drawUiModalBackdrop(Renderer& renderer, UiRect bounds, Color color = {0, 0, 0, 150});
 void drawUiCancelButton(Renderer& renderer, UiRect panel);
@@ -801,7 +815,8 @@ UiSliderResult updateUiSlider(
     UiRect rect,
     float value,
     const UiSliderSpec& spec,
-    UiSliderState& state);
+    UiSliderState& state,
+    const UiSliderStyle& style = {});
 void drawUiSlider(
     Renderer& renderer,
     UiRect rect,
@@ -851,6 +866,14 @@ void drawUiFlexibleButtonFrame(
     UiRect rect,
     bool preferred,
     UiButtonState state,
+    const UiButtonStyle& style = {});
+// Draws the flexible frame with a caller-owned persistent selection style.
+// No motion transform is applied so the caller can wrap the complete control content in UiControlMotionScope.
+void drawUiFlexibleButtonFrameWithVisualSelection(
+    Renderer& renderer,
+    UiRect rect,
+    bool preferred,
+    bool visuallySelected,
     const UiButtonStyle& style = {});
 void drawUiFlexibleButton(Renderer& renderer, UiRect rect, std::string_view label, bool preferred, const UiButtonStyle& style = {});
 void drawUiFlexibleButton(
@@ -918,6 +941,11 @@ void drawUiWindowBodyText(
     int textScale = 2,
     UiWindowFrame frame = UiWindowFrame::Default);
 void drawUiSystemMessage(Renderer& renderer, std::string_view message, Vec2 pos, const UiSystemMessageStyle& style = {});
+[[nodiscard]] float measureUiWrappedColoredText(
+    Renderer& renderer,
+    std::span<const UiColoredTextRun> runs,
+    float maxWidth,
+    const UiWrappedColoredTextStyle& style = {});
 [[nodiscard]] float drawUiWrappedColoredText(
     Renderer& renderer,
     Vec2 pos,
@@ -962,7 +990,7 @@ void openUiConfirmDialog(
     int defaultSelection = 1);
 UiConfirmDialogResult updateUiConfirmDialog(UiConfirmDialogState& state, UiContext& ui, const Input& input, UiRect panel);
 void drawUiConfirmDialog(Renderer& renderer, const UiConfirmDialogState& state, UiRect panel, std::string_view id);
-std::string_view uiConfirmDialogHelpText();
+std::string uiConfirmDialogHelpText();
 void drawUiConfirmDialogButtons(Renderer& renderer, const UiConfirmDialogState& state, UiRect panel);
 UiRect uiConfirmDialogButtonRect(UiRect panel, int index);
 void openUiQuantityDialog(

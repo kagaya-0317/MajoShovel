@@ -20,34 +20,26 @@ enum class InputAction {
     ShiftRingRight,
     ShiftRingUp,
     ShiftRingDown,
-    RingCommandModifier,
+    SecondaryActionModifier,
     ShortcutCursorLeft,
     ShortcutCursorRight,
-    DirectShortcut1,
-    DirectShortcut2,
-    DirectShortcut3,
-    DirectShortcut4,
-    DirectShortcut5,
-    DirectShortcut6,
-    DirectShortcut7,
-    DirectShortcut8,
     PreviousShortcutRow,
     NextShortcutRow,
-    ToggleShortcutRow,
     UseSelectedItem,
+    DiscardSelectedItem,
     Confirm,
     PutSelectedItemOnRing,
     GrabOrPlaceItem,
     ArrangeItems,
-    PreviousActiveRing,
-    NextActiveRing,
-    CaptureNet,
+    CyclePrevious,
+    CycleNext,
     ToggleProtection,
     Cancel,
     Pause,
     OpenInventory,
     OpenOptions,
     OpenCredits,
+    ToggleFullscreen,
     ToggleDebug,
     ToggleDebugPause,
     TestRestart,
@@ -122,7 +114,11 @@ InputBindingMap defaultInputBindings();
 InputBindingMap sanitizeInputBindings(InputBindingMap bindings);
 
 bool inputBindingEquals(const InputBinding& lhs, const InputBinding& rhs);
+bool inputBindingSamePhysicalInput(const InputBinding& lhs, const InputBinding& rhs);
 bool inputActionRequiresBinding(InputAction action);
+bool inputActionCanBeRemapped(InputAction action);
+bool inputActionIsDeveloperOnly(InputAction action);
+bool inputActionsConflict(InputAction lhs, InputAction rhs);
 std::string inputBindingDisplayName(const InputBinding& binding);
 
 std::string keyboardScancodeName(int scancode);

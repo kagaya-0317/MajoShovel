@@ -102,6 +102,7 @@ public:
         std::size_t indexCount,
         const ImageTriangleDrawOptions& options);
     void fillSoftCircle(Vec2 center, float radius, Color color);
+    void drawAntialiasedRing(Vec2 center, float radius, float width, Color color);
     void drawSoftRing(Vec2 center, float radius, float width, Color color);
     void fillSoftRingArc(
         Vec2 center,

@@ -89,6 +89,76 @@ function Exit-MajoShovelMutex($Mutex) {
     }
 }
 
+function New-MajoShovelSourceCoordinationMutex([string]$Root) {
+    $mutexName = Get-MajoShovelBuildMutexName $Root "SourceCoordination"
+    return [System.Threading.Mutex]::new($false, $mutexName)
+}
+
+function Try-Enter-MajoShovelSourceCoordinationLock([string]$Root) {
+    $mutex = New-MajoShovelSourceCoordinationMutex $Root
+    $acquired = $false
+    try {
+        try {
+            $acquired = $mutex.WaitOne(0)
+        }
+        catch [System.Threading.AbandonedMutexException] {
+            $acquired = $true
+        }
+        if ($acquired) {
+            return $mutex
+        }
+        $mutex.Dispose()
+        return $null
+    }
+    catch {
+        if (-not $acquired) {
+            $mutex.Dispose()
+        }
+        throw
+    }
+}
+
+function Enter-MajoShovelSourceCoordinationLock(
+    [string]$Root,
+    [string]$LogPrefix,
+    [int]$WaitSeconds = 3600
+) {
+    $mutex = New-MajoShovelSourceCoordinationMutex $Root
+    $acquired = $false
+    $reportedWait = $false
+    $deadline = if ($WaitSeconds -le 0) { [DateTime]::MaxValue } else { (Get-Date).AddSeconds($WaitSeconds) }
+    try {
+        while (-not $acquired) {
+            try {
+                $acquired = $mutex.WaitOne(1000)
+            }
+            catch [System.Threading.AbandonedMutexException] {
+                $acquired = $true
+            }
+            if ($acquired) {
+                break
+            }
+            if (-not $reportedWait) {
+                Write-Host "$LogPrefix a source verification build is running; waiting before opening an edit session."
+                $reportedWait = $true
+            }
+            if ((Get-Date) -ge $deadline) {
+                throw "Timed out waiting for the source coordination lock for '$Root'."
+            }
+        }
+        if ($reportedWait) {
+            Write-Host "$LogPrefix the source verification build finished; editing may continue."
+        }
+        return $mutex
+    }
+    catch {
+        if (-not $acquired) {
+            $mutex.Dispose()
+        }
+        throw
+    }
+}
+
 function ConvertTo-MajoShovelCommandLineArgument([string]$Value) {
     if ($null -eq $Value) {
         return '""'
@@ -184,6 +254,114 @@ function Get-MajoShovelRepositoryRelativePath([string]$Root, [string]$Path) {
         throw "Path is outside the repository: $Path"
     }
     return $fullPath.Substring($rootPrefix.Length).Replace('\', '/')
+}
+
+function Get-MajoShovelCodexEditSessionRoot([string]$Root) {
+    $base = $env:LOCALAPPDATA
+    if ([string]::IsNullOrWhiteSpace($base)) {
+        $base = Join-Path $Root ".local"
+    }
+    $rootKey = (Get-MajoShovelBuildMutexName $Root "EditSessions").Split('.')[-1]
+    return Join-Path $base "MajoShovel\codex-edit-sessions\$rootKey"
+}
+
+function Get-MajoShovelCodexEditSessionPath([string]$Root, [string]$SessionId) {
+    $sessionBytes = [System.Text.Encoding]::UTF8.GetBytes($SessionId)
+    $sessionKey = Get-MajoShovelSha256HexFromBytes $sessionBytes
+    return Join-Path (Get-MajoShovelCodexEditSessionRoot $Root) "active\$sessionKey.json"
+}
+
+function Write-MajoShovelJsonFile([string]$Path, $Value) {
+    $directory = Split-Path $Path -Parent
+    New-Item -ItemType Directory -Force -Path $directory | Out-Null
+    $temporaryPath = "$Path.$PID.$([Guid]::NewGuid().ToString('N')).tmp"
+    $json = $Value | ConvertTo-Json -Depth 8
+    $utf8Bom = [System.Text.UTF8Encoding]::new($true)
+    try {
+        [System.IO.File]::WriteAllText($temporaryPath, $json + [Environment]::NewLine, $utf8Bom)
+        Move-Item -LiteralPath $temporaryPath -Destination $Path -Force
+    }
+    finally {
+        Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-MajoShovelCodexEditSessions([string]$Root, [bool]$RemoveExpired = $false) {
+    $activeRoot = Join-Path (Get-MajoShovelCodexEditSessionRoot $Root) "active"
+    if (-not (Test-Path -LiteralPath $activeRoot -PathType Container)) {
+        return @()
+    }
+
+    $rootPath = [System.IO.Path]::GetFullPath($Root)
+    $nowUtc = [DateTime]::UtcNow
+    $sessions = [System.Collections.Generic.List[object]]::new()
+    foreach ($file in @(Get-ChildItem -LiteralPath $activeRoot -Filter "*.json" -File -ErrorAction SilentlyContinue)) {
+        try {
+            $session = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
+            $matchesRoot = [string]::Equals(
+                [System.IO.Path]::GetFullPath([string]$session.repositoryRoot),
+                $rootPath,
+                [System.StringComparison]::OrdinalIgnoreCase)
+            $expired = ([DateTime]$session.expiresAtUtc).ToUniversalTime() -le $nowUtc
+            if ($session.schemaVersion -ne 1 -or -not $matchesRoot -or $expired) {
+                if ($RemoveExpired) {
+                    Remove-Item -LiteralPath $file.FullName -Force -ErrorAction SilentlyContinue
+                }
+                continue
+            }
+            Add-Member -InputObject $session -NotePropertyName leasePath -NotePropertyValue $file.FullName -Force
+            $sessions.Add($session)
+        }
+        catch {
+            if ($RemoveExpired) {
+                Remove-Item -LiteralPath $file.FullName -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    return @($sessions)
+}
+
+function Test-MajoShovelCodexEditSessionBlocksBuild($Session) {
+    foreach ($path in @($Session.paths)) {
+        $normalized = ([string]$path).Replace('\', '/').TrimStart('/')
+        if ([string]::Equals($normalized, "CMakeLists.txt", [System.StringComparison]::OrdinalIgnoreCase) -or
+            $normalized.StartsWith("src/", [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Enter-MajoShovelSourceVerificationWindow(
+    [string]$Root,
+    [string]$LogPrefix,
+    [int]$WaitSeconds = 3600
+) {
+    $deadline = if ($WaitSeconds -le 0) { [DateTime]::MaxValue } else { (Get-Date).AddSeconds($WaitSeconds) }
+    $reportedWait = $false
+    while ($true) {
+        $mutex = Enter-MajoShovelSourceCoordinationLock $Root $LogPrefix $WaitSeconds
+        $sessions = @(Get-MajoShovelCodexEditSessions $Root $true | Where-Object {
+            Test-MajoShovelCodexEditSessionBlocksBuild $_
+        })
+        if ($sessions.Count -eq 0) {
+            if ($reportedWait) {
+                Write-Host "$LogPrefix all Codex edit sessions finished; starting source verification."
+            }
+            return $mutex
+        }
+
+        Exit-MajoShovelMutex $mutex
+        if (-not $reportedWait) {
+            $sessionIds = @($sessions | ForEach-Object { $_.sessionId }) -join ", "
+            Write-Host "$LogPrefix Codex edit sessions are active; postponing source verification: $sessionIds"
+            $reportedWait = $true
+        }
+        if ((Get-Date) -ge $deadline) {
+            throw "Timed out waiting for Codex edit sessions to finish for '$Root'."
+        }
+        Start-Sleep -Seconds 1
+    }
 }
 
 function Get-MajoShovelBuildInputSnapshot([string]$Root) {

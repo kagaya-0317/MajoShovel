@@ -1202,6 +1202,54 @@ void Renderer::fillSoftCircle(Vec2 center, float radius, Color color)
     SDL_RenderGeometry(renderer_, nullptr, vertices.data(), static_cast<int>(vertices.size()), indices.data(), static_cast<int>(indices.size()));
 }
 
+void Renderer::drawAntialiasedRing(Vec2 center, float radius, float width, Color color)
+{
+    if (radius <= 0.0f || width <= 0.0f || color.a == 0) {
+        return;
+    }
+
+    const Vec2 c = transform(center);
+    const float scale = screenScale();
+    const float midR = radius * scale;
+    const float halfW = std::max(0.5f, width * scale * 0.5f);
+    const float antialiasWidth = std::min(1.0f, halfW);
+    const float innerR = std::max(0.0f, midR - halfW - antialiasWidth);
+    const float coreInnerR = std::max(0.0f, midR - halfW);
+    const float coreOuterR = midR + halfW;
+    const float outerR = coreOuterR + antialiasWidth;
+
+    constexpr int Segments = 96;
+    Color transformed = transformColor(color);
+    Color transparent = transformed;
+    transparent.a = 0;
+
+    std::vector<SDL_Vertex> vertices;
+    std::vector<int> indices;
+    vertices.reserve(Segments * 4);
+    indices.reserve(Segments * 18);
+    for (int i = 0; i < Segments; ++i) {
+        const float angle = (static_cast<float>(i) / static_cast<float>(Segments)) * Pi * 2.0f;
+        const Vec2 direction{std::cos(angle), std::sin(angle)};
+        vertices.push_back(SDL_Vertex{{c.x + direction.x * innerR, c.y + direction.y * innerR}, vertexColor(transparent), {0.0f, 0.0f}});
+        vertices.push_back(SDL_Vertex{{c.x + direction.x * coreInnerR, c.y + direction.y * coreInnerR}, vertexColor(transformed), {0.0f, 0.0f}});
+        vertices.push_back(SDL_Vertex{{c.x + direction.x * coreOuterR, c.y + direction.y * coreOuterR}, vertexColor(transformed), {0.0f, 0.0f}});
+        vertices.push_back(SDL_Vertex{{c.x + direction.x * outerR, c.y + direction.y * outerR}, vertexColor(transparent), {0.0f, 0.0f}});
+    }
+    for (int i = 0; i < Segments; ++i) {
+        const int current = i * 4;
+        const int next = ((i + 1) % Segments) * 4;
+        for (int lane = 0; lane < 3; ++lane) {
+            indices.push_back(current + lane);
+            indices.push_back(next + lane);
+            indices.push_back(next + lane + 1);
+            indices.push_back(current + lane);
+            indices.push_back(next + lane + 1);
+            indices.push_back(current + lane + 1);
+        }
+    }
+    SDL_RenderGeometry(renderer_, nullptr, vertices.data(), static_cast<int>(vertices.size()), indices.data(), static_cast<int>(indices.size()));
+}
+
 void Renderer::drawSoftRing(Vec2 center, float radius, float width, Color color)
 {
     if (radius <= 0.0f || width <= 0.0f || color.a == 0) {

@@ -30,7 +30,6 @@ constexpr std::string_view AudioSeRingWorkshopUpgrade = "se.facility.ring_worksh
 constexpr std::string_view AudioSeRingWorkshopRespec = "se.facility.ring_workshop_respec";
 constexpr std::string_view AudioSeMerchantTransaction = "se.merchant.transaction";
 constexpr std::string_view AudioSeDiarySave = "se.facility.diary_save";
-constexpr std::string_view BaseFacilityWindowHelpText = "↑/↓ 選択  F/Enter 決定  Esc 戻る";
 constexpr float BaseDiaryRecordPanelHeight = 248.0f;
 constexpr float BaseDiaryInfoRowHeight = 36.0f;
 constexpr std::string_view MiningToolCategory = "\xE6\x8E\x98\xE5\x89\x8A";
@@ -41,7 +40,6 @@ constexpr float BaseMiningRescueDropEndSeconds = 1.55f;
 constexpr std::string_view BaseRandomTalkTriggerPrefix = "base_random_talk:";
 constexpr int BookshelfEndingReplayMenuIndex = BookshelfMenuItemCount;
 constexpr float BookshelfEndingCommandMinWidth = 240.0f;
-constexpr std::string_view BookshelfCodexHelpText = "WASD/矢印 選択  Esc 戻る";
 constexpr Vec2 BookshelfRecordCountOffset{32.0f, 86.0f};
 constexpr Vec2 BookshelfGridViewportPosition{72.0f, 172.0f};
 constexpr float BookshelfGridViewportHeightExtension = 20.0f;
@@ -681,47 +679,43 @@ constexpr std::string_view BaseHintBookshelfStage1Trigger = "base_hint:bookshelf
 
 void drawBaseControlHelp(Renderer& renderer, int screenWidth, int screenHeight, std::string help)
 {
-    if (help.empty()) {
-        return;
-    }
-
-    InputHelpStyle helpStyle;
-    helpStyle.text = {232, 232, 238, 235};
-    helpStyle.outline = {0, 0, 0, 190};
-    helpStyle.scale = 2;
-    helpStyle.outlinePx = 4;
-    helpStyle.iconHeight = 24.0f;
-    helpStyle.outlineEnabled = true;
-
     const float screenW = static_cast<float>(screenWidth);
     const float screenH = static_cast<float>(screenHeight);
-    const float maxWidth = std::max(120.0f, screenW - 32.0f);
-    help = fittedInputHelpText(renderer, std::move(help), maxWidth, helpStyle);
-    const Vec2 textSize = measureInputHelpText(renderer, help, helpStyle);
-    const Vec2 pos{
-        (screenW - textSize.x) * 0.5f,
-        std::max(TopInfoBarY + TopInfoBarHeight + 8.0f, screenH - textSize.y - 4.0f),
-    };
-    drawInputHelpText(renderer, pos, help, helpStyle);
+    const float safeTop = TopInfoBarY + TopInfoBarHeight + 8.0f;
+    drawUiBottomInputHelp(
+        renderer,
+        {{0.0f, safeTop}, {screenW, std::max(0.0f, screenH - safeTop)}},
+        std::move(help));
 }
 
 std::string baseExplorationControlHelp(const BaseFacility* facility)
 {
     if (facility == nullptr) {
-        return "WASD/方向キー 移動   Enter 近くの施設を調べる   Esc メニュー";
+        return buildInputHelpText({
+            {InputHelpGroup::Primary, {InputAction::Confirm}, "近くの施設を調べる"},
+            {InputHelpGroup::Back, {InputAction::Pause}, "メニュー"},
+        });
     }
 
+    std::string actionLabel;
     switch (facility->verb) {
     case BaseInteractionVerb::Inspect:
-        return std::string("Enter ") + facility->displayName + "を調べる   Esc メニュー";
+        actionLabel = std::string(facility->displayName) + "を調べる";
+        break;
     case BaseInteractionVerb::Talk:
-        return std::string("Enter ") + facility->displayName + "と話す   Esc メニュー";
+        actionLabel = std::string(facility->displayName) + "と話す";
+        break;
     case BaseInteractionVerb::Enter:
-        return std::string("Enter ") + facility->displayName + "に入る   Esc メニュー";
+        actionLabel = std::string(facility->displayName) + "に入る";
+        break;
     case BaseInteractionVerb::Exit:
-        return "Enter 屋外へ戻る   Esc メニュー";
+        actionLabel = "屋外へ戻る";
+        break;
     }
-    return std::string("Enter ") + facility->displayName + "を調べる   Esc メニュー";
+    return buildInputHelpText({
+        {InputHelpGroup::Primary, {InputAction::Confirm}, std::move(actionLabel)},
+        {InputHelpGroup::Back, {InputAction::Pause}, "メニュー"},
+    });
 }
 
 const char* baseFacilityTutorialTrigger(BaseFacilityAction action)
@@ -2109,7 +2103,7 @@ UiRect smallActionDialogRect(int choiceCount = 2)
         {410.0f, 170.0f},
         460.0f,
         choiceCount,
-        BaseFacilityWindowHelpText);
+        uiConfirmDialogHelpText());
 }
 
 UiRect smallActionChoiceRectForDialog(UiRect dialog, int index)
@@ -2498,11 +2492,12 @@ UiSliderSpec ringWorkshopRadiusSliderSpec(float minMeters, float maxMeters)
     return spec;
 }
 
-UiSliderStyle ringWorkshopRadiusSliderStyle(bool enabled)
+UiSliderStyle ringWorkshopRadiusSliderStyle(bool enabled, bool navigationEnabled = false)
 {
     UiSliderStyle style;
     style.trackThickness = 4.0f;
     style.thumbRadius = 8.0f;
+    style.navigationEnabled = navigationEnabled;
     if (!enabled) {
         style.track = {76, 84, 104, 130};
         style.activeTrack = ui::TextDisabled;
@@ -2514,14 +2509,15 @@ UiSliderStyle ringWorkshopRadiusSliderStyle(bool enabled)
 
 UiTabsInput ringWorkshopRingTabsInput(const Input& input, int ringCount)
 {
-    UiTabsInput tabsInput = makeUiCycleTabsInput(input, ringCount);
+    return makeUiCycleTabsInput(input, ringCount);
+}
 
-    const int directRingFocus = input.shortcutSlotPressed();
-    if (directRingFocus >= 0 && directRingFocus < ringCount) {
-        tabsInput.directFocusIndex = directRingFocus;
+int navigationFocusedTabSelection(const UiTabsState& state, int selectedIndex)
+{
+    if (!state.navigationFocused || state.focusedIndex == selectedIndex) {
+        return -1;
     }
-    tabsInput.commit = tabsInput.focusDelta != 0 || tabsInput.directFocusIndex >= 0;
-    return tabsInput;
+    return state.focusedIndex;
 }
 
 template <std::size_t N>
@@ -2735,6 +2731,30 @@ UiRect ringWorkshopUpgradeItemRect(const UiScrollAreaLayout& scroll, int index)
         RingWorkshopScrollButtonWidth,
         RingWorkshopScrollButtonHeight,
     }};
+}
+
+void prioritizeRingWorkshopUpgradeScrollUp(
+    const Input& input,
+    UiContext& ui,
+    bool upgradeListFocused,
+    int selectedIndex,
+    float& scrollOffset)
+{
+    if (!ui.navigationActive() ||
+        !upgradeListFocused ||
+        selectedIndex != 0 ||
+        !input.pressed(InputAction::MoveUp) ||
+        scrollOffset <= 0.0f) {
+        return;
+    }
+
+    scrollOffset = std::max(0.0f, scrollOffset - RingWorkshopScrollButtonPitch);
+    const UiScrollAreaLayout scrollLayout = makeUiScrollAreaLayout(
+        ringWorkshopUpgradeScrollViewportRect(),
+        ringWorkshopUpgradeScrollContentHeight(),
+        scrollOffset,
+        ringWorkshopScrollAreaStyle());
+    ui.setNavigationFocus(ringWorkshopUpgradeItemRect(scrollLayout, selectedIndex));
 }
 
 UiRect ringWorkshopUpgradeDetailPanelRect()
@@ -3127,31 +3147,71 @@ std::string batchItemWindowHelpText(
     bool active,
     std::string_view actionLabel,
     std::string_view modeLabel,
-    bool arrangeAvailable)
+    bool arrangeAvailable,
+    int cycleItemCount = 1,
+    std::string_view cycleLabel = {})
 {
     const std::string batchAction = batchItemActionInputTag();
+    std::vector<InputHelpEntry> entries;
     if (active) {
-        return "F/Enter 選択  " + inlineInputActionTag(InputAction::ArrangeItems) +
-            " 全選択  " + batchAction + " " + std::string(actionLabel) + "  Esc 全解除/戻る";
+        entries = {
+            {InputHelpGroup::Primary, {InputAction::Confirm, InputAction::UseSelectedItem}, "選択"},
+            {InputHelpGroup::Back, {InputAction::Cancel, InputAction::Pause}, "全解除/戻る"},
+        };
+        if (cycleItemCount > 1 && !cycleLabel.empty()) {
+            entries.push_back({
+                InputHelpGroup::Cycle,
+                {InputAction::CyclePrevious, InputAction::CycleNext},
+                std::string(cycleLabel),
+            });
+        }
+        entries.push_back({
+            InputHelpGroup::Other,
+            {},
+            "全選択",
+            inlineInputActionTag(InputAction::ArrangeItems),
+        });
+        entries.push_back({InputHelpGroup::Other, {}, std::string(actionLabel), batchAction});
+        return buildInputHelpText(entries);
     }
-    std::string help = "F/Enter 決定  ";
+    entries = {
+        {InputHelpGroup::Primary, {InputAction::Confirm, InputAction::UseSelectedItem}, "決定"},
+        {InputHelpGroup::Back, {InputAction::Cancel, InputAction::Pause}, "戻る"},
+    };
+    if (cycleItemCount > 1 && !cycleLabel.empty()) {
+        entries.push_back({
+            InputHelpGroup::Cycle,
+            {InputAction::CyclePrevious, InputAction::CycleNext},
+            std::string(cycleLabel),
+        });
+    }
     if (arrangeAvailable) {
-        help += inlineInputActionTag(InputAction::ArrangeItems) + " 並び替え  ";
+        entries.push_back({InputHelpGroup::Other, {InputAction::ArrangeItems}, "並び替え"});
     }
-    help += inlineInputActionTag(InputAction::GrabOrPlaceItem) +
-        " つかむ/置く  P 保護  ";
-    return help + batchAction + " " + std::string(modeLabel) + "  Esc 戻る";
+    entries.push_back({InputHelpGroup::Other, {InputAction::GrabOrPlaceItem}, "つかむ/置く"});
+    entries.push_back({InputHelpGroup::Other, {InputAction::ToggleProtection}, "保護"});
+    entries.push_back({InputHelpGroup::Other, {}, std::string(modeLabel), batchAction});
+    return buildInputHelpText(entries);
 }
 
 std::string withUiCycleHelp(
-    std::string help,
+    std::string_view primaryLabel,
+    std::string_view backLabel,
     int itemCount,
     std::string_view targetLabel)
 {
-    if (itemCount <= 1) {
-        return help;
+    std::vector<InputHelpEntry> entries{
+        {InputHelpGroup::Primary, {InputAction::Confirm, InputAction::UseSelectedItem}, std::string(primaryLabel)},
+        {InputHelpGroup::Back, {InputAction::Cancel, InputAction::Pause}, std::string(backLabel)},
+    };
+    if (itemCount > 1) {
+        entries.push_back({
+            InputHelpGroup::Cycle,
+            {InputAction::CyclePrevious, InputAction::CycleNext},
+            std::string(targetLabel),
+        });
     }
-    return "Z/X " + std::string(targetLabel) + "  " + help;
+    return buildInputHelpText(entries);
 }
 
 UiRect baseItemSourceSlotRect(UiRect(*sourceSlotRect)(int), int index)
@@ -3604,13 +3664,6 @@ void drawBaseRingPreview(
                 showProtectionIcon,
                 contentAlpha,
                 &encyclopedia);
-            char label[16];
-            std::snprintf(label, sizeof(label), "%d", i + 1);
-            renderer.drawText(
-                itemCenter + Vec2{-5.0f, 22.0f},
-                label,
-                selected ? Color{255, 230, 150, 255} : Color{174, 182, 198, 255},
-                1);
         }
     }
 }
@@ -5799,7 +5852,7 @@ bool Game::buyMerchantProduct(int index, int count)
     money_ -= product.price * purchaseCount;
     product.quantity -= purchaseCount;
     for (const InventoryAddResult& addResult : addResults) {
-        recordObjectObtainedForFirstNotice(
+        recordObjectAcquisitionNotice(
             product.objectId,
             addResult.instanceId,
             addResult.kind == InventoryAddKind::Instance && !addResult.instanceId.empty(),
@@ -10291,11 +10344,12 @@ void Game::recordMainCapturedEnemy(std::string_view enemyId)
     mainCapturedEnemyIds_.insert(std::string(enemyId));
 }
 
-void Game::recordObjectObtainedForFirstNotice(
+void Game::recordObjectAcquisitionNotice(
     std::string_view objectId,
     std::string_view instanceId,
     bool protectable,
-    Vec2 position)
+    Vec2 position,
+    int amount)
 {
     if (!gameplayRewardsEnabled() || objectId.empty()) {
         return;
@@ -10306,27 +10360,29 @@ void Game::recordObjectObtainedForFirstNotice(
     }
     recordMainObjectObtained(objectId);
     const bool codexHidden = isCodexHiddenObject(*object);
-    if (!codexHidden && !encyclopedia_.noteItemObtained(*object, position)) {
+    const bool firstDiscovery = !codexHidden && encyclopedia_.noteItemObtained(*object, position);
+    const int acquiredAmount = std::max(1, amount);
+    if (instanceId.empty() &&
+        !itemAcquisitionNotices_.empty() &&
+        itemAcquisitionNotices_.back().kind == AcquisitionNoticeKind::Object &&
+        itemAcquisitionNotices_.back().objectId == objectId &&
+        itemAcquisitionNotices_.back().instanceId.empty()) {
+        itemAcquisitionNotices_.back().amount += acquiredAmount;
         return;
     }
 
-    const bool playJingle = firstItemAcquisitionNotices_.empty();
-    firstItemAcquisitionNotices_.push_back(AcquisitionNotice{
+    itemAcquisitionNotices_.push_back(AcquisitionNotice{
         .kind = AcquisitionNoticeKind::Object,
-        .title = codexHidden ? "入手した！" : "はじめて入手した！",
+        .presentation = firstDiscovery
+            ? AcquisitionNoticePresentation::FirstDiscovery
+            : AcquisitionNoticePresentation::Standard,
+        .title = firstDiscovery ? "はじめて入手した！" : "アイテムを入手した",
         .objectId = std::string(objectId),
         .instanceId = std::string(instanceId),
+        .amount = acquiredAmount,
         .protectable = protectable && !instanceId.empty(),
+        .jingleOnShow = firstDiscovery,
     });
-    if (playJingle) {
-        playAudioJingle(
-            AudioSeNewItemJingle,
-            NewItemJingleFallbackSeconds,
-            0.06f,
-            0.22f,
-            1.0f,
-            1.0f);
-    }
 }
 
 void Game::recordRewardObjectAcquisitionNotice(
@@ -10345,23 +10401,15 @@ void Game::recordRewardObjectAcquisitionNotice(
     recordMainObjectObtained(objectId);
     (void)encyclopedia_.noteItemObtained(*object, position);
 
-    const bool playJingle = firstItemAcquisitionNotices_.empty();
-    firstItemAcquisitionNotices_.push_back(AcquisitionNotice{
+    itemAcquisitionNotices_.push_back(AcquisitionNotice{
         .kind = AcquisitionNoticeKind::Object,
+        .presentation = AcquisitionNoticePresentation::Reward,
         .title = "お礼をもらった！",
         .objectId = std::string(objectId),
         .instanceId = std::string(instanceId),
         .protectable = protectable && !instanceId.empty(),
+        .jingleOnShow = true,
     });
-    if (playJingle) {
-        playAudioJingle(
-            AudioSeNewItemJingle,
-            NewItemJingleFallbackSeconds,
-            0.06f,
-            0.22f,
-            1.0f,
-            1.0f);
-    }
 }
 
 void Game::recordRewardMaterialAcquisitionNotice(MaterialType materialType, int amount)
@@ -10370,22 +10418,14 @@ void Game::recordRewardMaterialAcquisitionNotice(MaterialType materialType, int 
         return;
     }
 
-    const bool playJingle = firstItemAcquisitionNotices_.empty();
-    firstItemAcquisitionNotices_.push_back(AcquisitionNotice{
+    itemAcquisitionNotices_.push_back(AcquisitionNotice{
         .kind = AcquisitionNoticeKind::Material,
+        .presentation = AcquisitionNoticePresentation::Reward,
         .title = "お礼をもらった！",
         .materialType = materialType,
         .amount = amount,
+        .jingleOnShow = true,
     });
-    if (playJingle) {
-        playAudioJingle(
-            AudioSeNewItemJingle,
-            NewItemJingleFallbackSeconds,
-            0.06f,
-            0.22f,
-            1.0f,
-            1.0f);
-    }
 }
 
 void Game::recordRewardMoneyAcquisitionNotice(int amount)
@@ -10394,32 +10434,35 @@ void Game::recordRewardMoneyAcquisitionNotice(int amount)
         return;
     }
 
-    const bool playJingle = firstItemAcquisitionNotices_.empty();
-    firstItemAcquisitionNotices_.push_back(AcquisitionNotice{
+    itemAcquisitionNotices_.push_back(AcquisitionNotice{
         .kind = AcquisitionNoticeKind::Money,
+        .presentation = AcquisitionNoticePresentation::Reward,
         .title = "お礼をもらった！",
         .amount = amount,
+        .jingleOnShow = true,
     });
-    if (playJingle) {
-        playAudioJingle(
-            AudioSeNewItemJingle,
-            NewItemJingleFallbackSeconds,
-            0.06f,
-            0.22f,
-            1.0f,
-            1.0f);
-    }
 }
 
-bool Game::firstItemAcquisitionNoticeActive() const
+bool Game::itemAcquisitionNoticeActive() const
 {
-    return !firstItemAcquisitionNotices_.empty();
+    return !itemAcquisitionNotices_.empty();
 }
 
-void Game::closeFirstItemAcquisitionNotice()
+void Game::playItemAcquisitionNoticeJingle()
 {
-    if (!firstItemAcquisitionNotices_.empty()) {
-        firstItemAcquisitionNotices_.pop_front();
+    playAudioJingle(
+        AudioSeNewItemJingle,
+        NewItemJingleFallbackSeconds,
+        0.06f,
+        0.22f,
+        1.0f,
+        1.0f);
+}
+
+void Game::closeItemAcquisitionNotice()
+{
+    if (!itemAcquisitionNotices_.empty()) {
+        itemAcquisitionNotices_.front().animationPhase = AcquisitionNoticeAnimationPhase::Closing;
     }
 }
 
@@ -10901,7 +10944,7 @@ bool Game::shouldStartBaseMiningRescueDropEvent() const
         !pendingStoryTriggerDelayActive() &&
         pendingStoryTrigger_.empty() &&
         pendingStoryTriggers_.empty() &&
-        !firstItemAcquisitionNoticeActive() &&
+        !itemAcquisitionNoticeActive() &&
         !screenTransition_.active() &&
         !hasAnyMiningToolForBaseRescue() &&
         !canAffordMerchantMiningToolForBaseRescue();
@@ -11941,7 +11984,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 ringTabRects[static_cast<std::size_t>(i)] = ringWorkshopRingTabRect(i, ringCount);
             }
             const UiTabsInput ringTabsInput = ringWorkshopRingTabsInput(input, ringCount);
-            const int ringSelection = updateUiTabs(
+            int ringSelection = updateUiTabs(
                 baseRingWorkshopRingTabs_,
                 ui,
                 ringTabsInput,
@@ -11949,8 +11992,16 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 ringTabs.data(),
                 ringCount,
                 ringTabRects.data());
+            if (ringSelection < 0) {
+                ringSelection = navigationFocusedTabSelection(
+                    baseRingWorkshopRingTabs_,
+                    baseRingWorkshopRingIndex_);
+            }
             if (ringSelection >= 0) {
                 baseRingWorkshopRingIndex_ = ringSelection;
+                if (ui.navigationActive() && ui.navigationFocusRole() == UiNavigationRole::Tab) {
+                    baseRingWorkshopUpgradeTabs_.navigationFocused = false;
+                }
                 ui.block(workshopBounds);
                 return;
             }
@@ -12037,6 +12088,15 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseRingWorkshopRingIndex_ = std::clamp(baseRingWorkshopRingIndex_, 0, ringCount - 1);
             baseRingWorkshopSelection_ = std::clamp(baseRingWorkshopSelection_, 0, RingWorkshopUpgradeDisplayCount - 1);
 
+            // 先頭項目より上に内容が残っている間は、空間ナビゲーションでタブへ抜ける前に
+            // スクロールを上端へ戻す。上端に達した後は共通ナビゲーションへ任せる。
+            prioritizeRingWorkshopUpgradeScrollUp(
+                input,
+                ui,
+                baseRingWorkshopUpgradeTabs_.navigationFocused,
+                baseRingWorkshopSelection_,
+                baseRingWorkshopUpgradeScrollOffset_);
+
             std::array<UiTabItem, SpellRingCount> ringTabs{};
             std::array<UiRect, SpellRingCount> ringTabRects{};
             std::array<std::string, SpellRingCount> ringTabLabels{};
@@ -12050,7 +12110,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 ringTabRects[static_cast<std::size_t>(i)] = ringWorkshopRingTabRect(i, ringCount);
             }
             const UiTabsInput ringTabsInput = ringWorkshopRingTabsInput(input, ringCount);
-            const int ringSelection = updateUiTabs(
+            int ringSelection = updateUiTabs(
                 baseRingWorkshopRingTabs_,
                 ui,
                 ringTabsInput,
@@ -12058,8 +12118,16 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 ringTabs.data(),
                 ringCount,
                 ringTabRects.data());
+            if (ringSelection < 0) {
+                ringSelection = navigationFocusedTabSelection(
+                    baseRingWorkshopRingTabs_,
+                    baseRingWorkshopRingIndex_);
+            }
             if (ringSelection >= 0) {
                 baseRingWorkshopRingIndex_ = ringSelection;
+                if (ui.navigationActive() && ui.navigationFocusRole() == UiNavigationRole::Tab) {
+                    baseRingWorkshopUpgradeTabs_.navigationFocused = false;
+                }
                 ui.block(workshopBounds);
                 return;
             }
@@ -12112,14 +12180,19 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                     false,
                     false,
                 };
-                if (radiusSliderState.dragging() || scrollViewport.contains(ui.mouse())) {
+                const UiRect radiusSliderRect = ringWorkshopRadiusSliderRect(scrollLayout);
+                const bool radiusSliderVisible = uiScrollAreaRectVisible(scrollLayout, radiusSliderRect);
+                if (radiusSliderState.dragging() ||
+                    scrollViewport.contains(ui.mouse()) ||
+                    ui.navigationFocusRole() == UiNavigationRole::Slider) {
                     radiusResult = updateUiSlider(
                         ui,
                         input,
-                        ringWorkshopRadiusSliderRect(scrollLayout),
+                        radiusSliderRect,
                         radiusResult.value,
                         ringWorkshopRadiusSliderSpec(minMeters, maxMeters),
-                        radiusSliderState);
+                        radiusSliderState,
+                        ringWorkshopRadiusSliderStyle(true, radiusSliderVisible));
                 } else if (input.mouseLeftPressed()) {
                     radiusSliderState.dismissValue();
                 }
@@ -12134,21 +12207,23 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 ringWorkshopRadiusSliderState().dismissValue();
             }
 
+            const UiRect confirmRect = ringWorkshopUpgradeConfirmRect();
             const auto chooseUpgradeItem = [this, &ui](int item) {
                 const bool implemented = item >= 0 && item < RingWorkshopImplementedUpgradeCount;
+                if (!implemented) {
+                    baseStatus_ = "この項目は未解禁だよ";
+                    ui.rejectAction();
+                    return;
+                }
+
                 const RingWorkshopUpgrade upgrade = ringWorkshopUpgradeForDisplayIndex(item);
-                const UiButtonState buttonState = uiButtonState(
-                    implemented && ringWorkshopUpgradeExecutable(upgrade));
-                if (tryActivateUiButton(ui, buttonState)) {
-                    ui.emitSound(UiSoundEvent::Confirm);
+                if (!ringWorkshopUpgradeExecutable(upgrade)) {
+                    ui.rejectAction();
                     buyRingWorkshopUpgrade(upgrade);
                     return;
                 }
-                if (implemented) {
-                    buyRingWorkshopUpgrade(upgrade);
-                } else {
-                    baseStatus_ = "この項目は未解禁だよ";
-                }
+                ui.emitSound(UiSoundEvent::Confirm);
+                buyRingWorkshopUpgrade(upgrade);
             };
 
             std::array<UiVerticalTabItem, RingWorkshopUpgradeDisplayCount> upgradeTabs{};
@@ -12180,17 +12255,35 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             }
             if (selectedTab >= 0) {
                 baseRingWorkshopSelection_ = selectedTab;
-                if (!ui.navigationActive()) {
-                    ui.block(workshopBounds);
-                    return;
+                if (ui.navigationActive()) {
+                    baseRingWorkshopUpgradeTabs_.navigationFocused = false;
+                    ui.setNavigationFocus(confirmRect);
+                    ui.emitSound(UiSoundEvent::CursorMove);
                 }
+                ui.block(workshopBounds);
+                return;
             }
-            if (ui.pressed(ringWorkshopUpgradeConfirmRect())) {
+
+            if (baseRingWorkshopUpgradeTabs_.navigationFocused && input.pressed(InputAction::MoveRight)) {
+                baseRingWorkshopUpgradeTabs_.navigationFocused = false;
+                ui.setNavigationFocus(confirmRect);
+                ui.emitSound(UiSoundEvent::CursorMove);
+                ui.block(workshopBounds);
+                return;
+            }
+            if (ui.navigationFocused(confirmRect) && input.pressed(InputAction::MoveLeft)) {
+                baseRingWorkshopUpgradeTabs_.navigationFocused = true;
+                ui.setNavigationFocus(ringWorkshopUpgradeItemRect(scrollLayout, baseRingWorkshopSelection_));
+                ui.emitSound(UiSoundEvent::CursorMove);
+                ui.block(workshopBounds);
+                return;
+            }
+            if (ui.pressed(confirmRect)) {
                 chooseUpgradeItem(baseRingWorkshopSelection_);
                 ui.block(workshopBounds);
                 return;
             }
-            if (input.confirmPressed() || input.useItemPressed()) {
+            if (!ui.navigationActive() && (input.confirmPressed() || input.useItemPressed())) {
                 chooseUpgradeItem(baseRingWorkshopSelection_);
                 ui.block(workshopBounds);
                 return;
@@ -12424,16 +12517,6 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         }
 
         if (baseStorageCommandMenu_.open) {
-            ui.block(storageBounds);
-            return;
-        }
-
-        const int storagePresetShortcut = input.shortcutSlotPressed();
-        if (storagePresetShortcut >= 0 && storagePresetShortcut < RingPresetSlotCount) {
-            const bool registered = storagePresetShortcut < unlockedRingPresetSlotCount() &&
-                ringPresets_.registered(storagePresetShortcut);
-            prepareRingPresetFromWarehouse(storagePresetShortcut);
-            ui.emitActionResult(registered);
             ui.block(storageBounds);
             return;
         }
@@ -13108,13 +13191,8 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             sourceTabRects[static_cast<std::size_t>(i)] = baseProcessingSourceRect(i, sourceCount);
         }
         UiTabsInput sourceTabsInput = makeUiCycleTabsInput(input, sourceCount);
-        const int directSourceFocus = input.shortcutSlotPressed();
-        if (directSourceFocus >= 0 && directSourceFocus < sourceCount) {
-            sourceTabsInput.directFocusIndex = directSourceFocus;
-        }
         sourceTabsInput.commit =
             sourceTabsInput.focusDelta != 0 ||
-            sourceTabsInput.directFocusIndex >= 0 ||
             (!ui.navigationActive() && (input.confirmPressed() || input.useItemPressed()));
         const int sourceSelection = updateUiTabs(
             baseProcessingSourceTabs_,
@@ -13507,13 +13585,8 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 sourceTabRects[static_cast<std::size_t>(i)] = merchantSellSourceRect(i, sourceCount);
             }
             UiTabsInput sourceTabsInput = makeUiCycleTabsInput(input, sourceCount);
-            const int directSourceFocus = input.shortcutSlotPressed();
-            if (directSourceFocus >= 0 && directSourceFocus < sourceCount) {
-                sourceTabsInput.directFocusIndex = directSourceFocus;
-            }
             sourceTabsInput.commit =
                 sourceTabsInput.focusDelta != 0 ||
-                sourceTabsInput.directFocusIndex >= 0 ||
                 (!ui.navigationActive() && (input.confirmPressed() || input.useItemPressed()));
             const int sourceSelection = updateUiTabs(
                 baseMerchantSellSourceTabs_,
@@ -14467,7 +14540,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         !pendingStoryTriggerDelayActive() &&
         pendingStoryTrigger_.empty() &&
         pendingStoryTriggers_.empty() &&
-        !firstItemAcquisitionNoticeActive() &&
+        !itemAcquisitionNoticeActive() &&
         !screenTransition_.active();
     updateHiddenBaseOrbit(input, ui, dt, hiddenBaseRingInteractionsEnabled);
 
@@ -15059,7 +15132,7 @@ bool Game::baseInteractionHintsVisible() const
         pendingStoryTriggerDelayActive() ||
         !pendingStoryTrigger_.empty() ||
         !pendingStoryTriggers_.empty() ||
-        firstItemAcquisitionNoticeActive() ||
+        itemAcquisitionNoticeActive() ||
         debugNamedSaveDialogMode_ != DebugNamedSaveDialogMode::Closed ||
         debugItemPickerActive_ ||
         debugStoryTestActive_ ||
@@ -15251,7 +15324,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         pendingStoryTriggerDelayActive() ||
         !pendingStoryTrigger_.empty() ||
         !pendingStoryTriggers_.empty() ||
-        firstItemAcquisitionNoticeActive();
+        itemAcquisitionNoticeActive();
     const bool rescueDropActive = baseMiningRescueDrop_.active;
     const bool storageActionDialogActive = baseStorageActive_ &&
         (baseStorageMode_ == StorageUiMode::ChooseAction || baseStorageMode_ == StorageUiMode::Bulk);
@@ -15290,7 +15363,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
     std::optional<UiWindowScope> panelWindow;
     std::optional<UiCancelControlScope> panelCancelScope;
     if (panelUiActive) {
-        std::string panelHelpText(BaseFacilityWindowHelpText);
+        std::string panelHelpText = uiConfirmDialogHelpText();
         if (roguelikeOverlay && baseSellActive_) {
             if (baseMerchantMode_ == MerchantUiMode::Buy) {
                 panelTitle = "旅商人 購入";
@@ -15308,7 +15381,9 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 ? "アイテム図鑑"
                 : (bookshelfPage_ == BookshelfPage::Enemies ? "モンスター図鑑" : "本棚");
             if (bookshelfPage_ != BookshelfPage::Menu) {
-                panelHelpText = BookshelfCodexHelpText;
+                panelHelpText = buildInputHelpText({
+                    {InputHelpGroup::Back, {InputAction::Cancel, InputAction::Pause}, "戻る"},
+                });
             }
         } else if (baseRingWorkshopActive_) {
             panelTitle = baseRingWorkshopMode_ == RingWorkshopMode::Respec
@@ -15342,59 +15417,76 @@ void Game::renderBaseScreen(Renderer& renderer) const
             panelTitle = "ダンジョン入口";
         }
         if (baseSellActive_ && baseMerchantMode_ == MerchantUiMode::Sell) {
-            panelHelpText = withUiCycleHelp(
-                batchItemWindowHelpText(
-                    baseMerchantBulkSell_.active,
-                    "売却",
-                    "まとめて売る",
-                    true),
+            panelHelpText = batchItemWindowHelpText(
+                baseMerchantBulkSell_.active,
+                "売却",
+                "まとめて売る",
+                true,
                 baseItemSourceCountForUnlockedRings(unlockedRingCount()),
                 "対象切替");
         } else if (baseStorageActive_ && baseStorageMode_ == StorageUiMode::Deposit) {
-            panelHelpText = withUiCycleHelp(
-                batchItemWindowHelpText(
-                    baseStorageBatchSelection_.active,
-                    "しまう",
-                    "まとめてしまう",
-                    true),
+            panelHelpText = batchItemWindowHelpText(
+                baseStorageBatchSelection_.active,
+                "しまう",
+                "まとめてしまう",
+                true,
                 storageDepositSourceCountForUnlockedRings(unlockedRingCount()),
                 "対象切替");
         } else if (baseStorageActive_ && baseStorageMode_ == StorageUiMode::Withdraw) {
             const int warehousePageCount = std::max(
                 1,
                 (warehouseCapacity() + StorageWithdrawSlotCount - 1) / StorageWithdrawSlotCount);
-            panelHelpText = withUiCycleHelp(
-                batchItemWindowHelpText(
-                    baseStorageBatchSelection_.active,
-                    "取り出す",
-                    "まとめて取り出す",
-                    true),
+            panelHelpText = batchItemWindowHelpText(
+                baseStorageBatchSelection_.active,
+                "取り出す",
+                "まとめて取り出す",
+                true,
                 warehousePageCount,
                 "ページ切替");
         } else if (baseProcessingUiMode_ == ProcessingUiMode::Enhance) {
+            std::vector<InputHelpEntry> entries{
+                {InputHelpGroup::Primary, {InputAction::Confirm, InputAction::UseSelectedItem}, "決定"},
+                {InputHelpGroup::Back, {InputAction::Cancel, InputAction::Pause}, "戻る"},
+            };
+            if (baseItemSourceCountForUnlockedRings(unlockedRingCount()) > 1) {
+                entries.push_back({
+                    InputHelpGroup::Cycle,
+                    {InputAction::CyclePrevious, InputAction::CycleNext},
+                    "対象切替",
+                });
+            }
+            entries.push_back({InputHelpGroup::Other, {InputAction::ArrangeItems}, "並び替え"});
+            entries.push_back({InputHelpGroup::Other, {InputAction::GrabOrPlaceItem}, "つかむ/置く"});
+            entries.push_back({InputHelpGroup::Other, {InputAction::ToggleProtection}, "保護"});
+            panelHelpText = buildInputHelpText(entries);
+        } else if (baseRingWorkshopActive_ && baseRingWorkshopMode_ == RingWorkshopMode::Upgrade) {
             panelHelpText = withUiCycleHelp(
-                "F/Enter 決定  " +
-                    inlineInputActionTag(InputAction::ArrangeItems) +
-                    " 並び替え  " +
-                    inlineInputActionTag(InputAction::GrabOrPlaceItem) +
-                    " つかむ/置く  P 保護  Esc 戻る",
-                baseItemSourceCountForUnlockedRings(unlockedRingCount()),
-                "対象切替");
-        } else if (baseRingWorkshopActive_ && baseRingWorkshopMode_ != RingWorkshopMode::ChooseAction) {
+                "決定",
+                "戻る",
+                unlockedRingCount(),
+                "リング切替");
+        } else if (baseRingWorkshopActive_ && baseRingWorkshopMode_ == RingWorkshopMode::Respec) {
             panelHelpText = withUiCycleHelp(
-                "↑/↓ 項目選択  F/Enter 決定  Esc 戻る",
+                "決定",
+                "戻る",
                 unlockedRingCount(),
                 "リング切替");
         } else if (baseMiningStartChoiceActive_) {
             panelHelpText = withUiCycleHelp(
-                std::string(BaseFacilityWindowHelpText),
+                "決定",
+                "戻る",
                 static_cast<int>(selectableStageDefinitionsForCurrentUnlockState().size()),
                 "行き先切替");
         }
         if (baseRingItemInteraction_.keyboardMoveActive) {
-            panelHelpText = "WASD/矢印 位置変更  F/Enter/" +
-                inlineInputActionTag(InputAction::GrabOrPlaceItem) +
-                " 確定  Esc キャンセル";
+            panelHelpText = buildInputHelpText({
+                {
+                    InputHelpGroup::Primary,
+                    {InputAction::Confirm, InputAction::UseSelectedItem, InputAction::GrabOrPlaceItem},
+                    "確定",
+                },
+                {InputHelpGroup::Back, {InputAction::Cancel, InputAction::Pause}, "キャンセル"},
+            });
         }
         const bool panelCancelButton = true;
         if (panelCancelButton) {
@@ -15886,13 +15978,15 @@ void Game::renderBaseScreen(Renderer& renderer) const
             const bool radiusAdjustable = maxMeters > minMeters + 0.001f;
             const UiSliderSpec radiusSliderSpec = ringWorkshopRadiusSliderSpec(minMeters, maxMeters);
             const UiRect radiusSliderRect = ringWorkshopRadiusSliderRect(scrollLayout);
+            const bool radiusSliderNavigable =
+                radiusAdjustable && uiScrollAreaRectVisible(scrollLayout, radiusSliderRect);
             drawUiSlider(
                 renderer,
                 radiusSliderRect,
                 radiusAdjustable ? currentMeters : radiusSliderSpec.minValue,
                 radiusSliderSpec,
                 ringWorkshopRadiusSliderState(),
-                ringWorkshopRadiusSliderStyle(radiusAdjustable));
+                ringWorkshopRadiusSliderStyle(radiusAdjustable, radiusSliderNavigable));
             char currentRadiusBuffer[32];
             char radiusRangeBuffer[48];
             std::snprintf(currentRadiusBuffer, sizeof(currentRadiusBuffer), "%.2fm", currentMeters);
@@ -16007,8 +16101,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 ringWorkshopUpgradeConfirmRect(),
                 confirmLabel,
                 false,
-                confirmState,
-                uiActionButtonStyle());
+                uiButtonStyleForState(uiActionButtonStyle(), confirmState));
         }
     } else if (baseProcessingUiMode_ == ProcessingUiMode::ChooseAction) {
         drawSmallActionInfoText(renderer, panel, panelTitle, "作業台で何をする？");
@@ -17046,7 +17139,10 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 "base.warp_select",
                 warpPanel,
                 "ワープポイント選択",
-                "↑/↓ 選択  F/Enter 出発  Esc 戻る",
+                buildInputHelpText({
+                    {InputHelpGroup::Primary, {InputAction::Confirm, InputAction::UseSelectedItem}, "出発"},
+                    {InputHelpGroup::Back, {InputAction::Cancel, InputAction::Pause}, "戻る"},
+                }),
                 UiWindowOptions{true, true});
 
             renderer.drawText(warpPanel.pos + Vec2{48.0f, 82.0f}, "どのワープポイントにする？", {198, 198, 206, 255}, 2);

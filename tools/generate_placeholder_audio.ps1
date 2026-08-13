@@ -2,6 +2,7 @@
     [string]$Root = "",
     [switch]$OnlyMissing,
     [switch]$OnlySe,
+    [switch]$OnlyDialogueText,
     [switch]$HighQualitySe
 )
 
@@ -178,6 +179,13 @@ function Placeholder-Sample([string]$Kind, [double]$Time, [double]$Duration, [Sy
                 0.30 * [Math]::Sin($TwoPi * $freq * $Time) +
                 0.14 * [Math]::Sin($TwoPi * 1040.0 * $Time))
         }
+        "se.dialogue.text.player" { return (Decay $Time $Duration 1.8) * (0.32 * [Math]::Sin($TwoPi * 740.0 * $Time) + 0.10 * [Math]::Sin($TwoPi * 1110.0 * $Time)) }
+        "se.dialogue.text.monica" { return (Decay $Time $Duration 1.8) * (0.31 * [Math]::Sin($TwoPi * 880.0 * $Time) + 0.09 * [Math]::Sin($TwoPi * 1760.0 * $Time)) }
+        "se.dialogue.text.chicory" { return (Decay $Time $Duration 1.9) * (0.28 * [Math]::Sin($TwoPi * 1040.0 * $Time) + 0.11 * [Math]::Sin($TwoPi * 1560.0 * $Time)) }
+        "se.dialogue.text.astragna" { return (Decay $Time $Duration 1.5) * (0.30 * [Math]::Sin($TwoPi * 220.0 * $Time) + 0.15 * [Math]::Sin($TwoPi * 440.0 * $Time) + 0.07 * [Math]::Sin($TwoPi * 880.0 * $Time)) }
+        "se.dialogue.text.low" { return 0.34 * (Decay $Time $Duration 1.9) * [Math]::Sin($TwoPi * 330.0 * $Time) }
+        "se.dialogue.text.mid" { return 0.32 * (Decay $Time $Duration 1.9) * [Math]::Sin($TwoPi * 520.0 * $Time) }
+        "se.dialogue.text.high" { return 0.30 * (Decay $Time $Duration 1.9) * [Math]::Sin($TwoPi * 780.0 * $Time) }
         "se.level_up.jingle" {
             $notes = @(523.25, 659.25, 783.99, 1046.50)
             $stepLength = 0.18
@@ -798,6 +806,20 @@ public static class MajoPlaceholderAudioHQ
         {
             case "se.ui.confirm":
                 return Env(t, d, 0.004, 1.75) * (0.34 * Sweep(t, d, 700.0, 1180.0) + 0.20 * S(1568.0, t)) + 0.18 * Burst(t, 0.055, 0.07, 2.2) * S(2093.0, t);
+            case "se.dialogue.text.player":
+                return Env(t, d, 0.002, 1.9) * (0.32 * Sweep(t, d, 700.0, 780.0) + 0.10 * S(1110.0, t));
+            case "se.dialogue.text.monica":
+                return Env(t, d, 0.002, 1.9) * (0.31 * S(880.0, t) + 0.09 * S(1760.0, t));
+            case "se.dialogue.text.chicory":
+                return Env(t, d, 0.002, 2.0) * (0.28 * Sweep(t, d, 980.0, 1120.0) + 0.11 * S(1560.0, t));
+            case "se.dialogue.text.astragna":
+                return Env(t, d, 0.001, 1.55) * (0.30 * S(220.0, t) + 0.15 * S(440.0, t) + 0.07 * S(880.0, t));
+            case "se.dialogue.text.low":
+                return 0.34 * Env(t, d, 0.002, 2.0) * S(330.0, t);
+            case "se.dialogue.text.mid":
+                return 0.32 * Env(t, d, 0.002, 2.0) * S(520.0, t);
+            case "se.dialogue.text.high":
+                return 0.30 * Env(t, d, 0.002, 2.0) * S(780.0, t);
             case "se.ui.cancel":
                 return Env(t, d, 0.004, 1.65) * (0.36 * Sweep(t, d, 580.0, 300.0) + 0.15 * S(220.0, t));
             case "se.ui.menu_open":
@@ -1087,6 +1109,13 @@ $clips = @(
     @{ Path = Join-Path $SeRoot "facility_workbench_repair.wav"; Kind = "se.facility.workbench_repair"; Duration = 0.55; Seed = 2122 },
     @{ Path = Join-Path $SeRoot "merchant_transaction.wav"; Kind = "se.merchant.transaction"; Duration = 0.36; Seed = 2123 },
     @{ Path = Join-Path $SeRoot "zz_tmp_dialogue_advance_placeholder.wav"; Kind = "se.dialogue.advance"; Duration = 0.12; Seed = 2010 },
+    @{ Path = Join-Path $SeRoot "zz_tmp_dialogue_text_player_placeholder.wav"; Kind = "se.dialogue.text.player"; Duration = 0.075; Seed = 2130 },
+    @{ Path = Join-Path $SeRoot "zz_tmp_dialogue_text_monica_placeholder.wav"; Kind = "se.dialogue.text.monica"; Duration = 0.075; Seed = 2131 },
+    @{ Path = Join-Path $SeRoot "zz_tmp_dialogue_text_chicory_placeholder.wav"; Kind = "se.dialogue.text.chicory"; Duration = 0.070; Seed = 2132 },
+    @{ Path = Join-Path $SeRoot "zz_tmp_dialogue_text_astragna_placeholder.wav"; Kind = "se.dialogue.text.astragna"; Duration = 0.085; Seed = 2133 },
+    @{ Path = Join-Path $SeRoot "zz_tmp_dialogue_text_low_placeholder.wav"; Kind = "se.dialogue.text.low"; Duration = 0.075; Seed = 2134 },
+    @{ Path = Join-Path $SeRoot "zz_tmp_dialogue_text_mid_placeholder.wav"; Kind = "se.dialogue.text.mid"; Duration = 0.070; Seed = 2135 },
+    @{ Path = Join-Path $SeRoot "zz_tmp_dialogue_text_high_placeholder.wav"; Kind = "se.dialogue.text.high"; Duration = 0.065; Seed = 2136 },
     @{ Path = Join-Path $SeRoot "level_up_jingle_placeholder.wav"; Kind = "se.level_up.jingle"; Duration = 1.16; Seed = 2072 },
     @{ Path = Join-Path $SeRoot "game_over_jingle_placeholder.wav"; Kind = "se.game_over.jingle"; Duration = 1.34; Seed = 2110 },
     @{ Path = Join-Path $SeRoot "item_new_jingle_placeholder.wav"; Kind = "se.item.new.jingle"; Duration = 0.88; Seed = 2111 },
@@ -1185,6 +1214,9 @@ $clips = @(
 )
 
 foreach ($clip in $clips) {
+    if ($OnlyDialogueText -and -not ([string]$clip.Kind).StartsWith("se.dialogue.text.", [System.StringComparison]::Ordinal)) {
+        continue
+    }
     if ($OnlySe -and -not ([string]$clip.Kind).StartsWith("se.", [System.StringComparison]::Ordinal)) {
         continue
     }

@@ -17,23 +17,6 @@ constexpr int actionIndex(InputAction action)
     return inputActionIndex(action);
 }
 
-int shortcutSlotForAction(InputAction action)
-{
-    const int first = actionIndex(InputAction::DirectShortcut1);
-    const int index = actionIndex(action) - first;
-    return index >= 0 && index < 8 ? index : -1;
-}
-
-int ringPresetRegisterSlotForScancode(SDL_Scancode scancode)
-{
-    switch (scancode) {
-    case SDL_SCANCODE_1: return 0;
-    case SDL_SCANCODE_2: return 1;
-    case SDL_SCANCODE_3: return 2;
-    default: return -1;
-    }
-}
-
 bool textInputAllowsPolledScancode(SDL_Scancode scancode)
 {
     if (scancode >= SDL_SCANCODE_F1 && scancode <= SDL_SCANCODE_F24) {
@@ -120,19 +103,19 @@ Input& Input::operator=(const Input& other)
     ctrlSavePressed_ = other.ctrlSavePressed_;
     ctrlUndoPressed_ = other.ctrlUndoPressed_;
     ctrlRedoPressed_ = other.ctrlRedoPressed_;
-    suppressDirectShortcutThisFrame_ = other.suppressDirectShortcutThisFrame_;
     lastActiveDevice_ = other.lastActiveDevice_;
     lastInputModality_ = other.lastInputModality_;
     pressed_ = other.pressed_;
     released_ = other.released_;
     held_ = other.held_;
     sourceHoldCounts_ = other.sourceHoldCounts_;
+    consumedKeyboardScancodes_ = other.consumedKeyboardScancodes_;
+    consumedGamepadButtons_ = other.consumedGamepadButtons_;
+    consumedGamepadAxes_ = other.consumedGamepadAxes_;
     bindings_ = other.bindings_;
     shortcutCursorDelta_ = other.shortcutCursorDelta_;
     mouseWheelDelta_ = other.mouseWheelDelta_;
-    shortcutSlotPressed_ = other.shortcutSlotPressed_;
-    ringPresetRegisterSlotPressed_ = other.ringPresetRegisterSlotPressed_;
-    activeRingDelta_ = other.activeRingDelta_;
+    cycleDelta_ = other.cycleDelta_;
     moveAxis_ = other.moveAxis_;
     leftStickAxis_ = other.leftStickAxis_;
     ringShiftAxis_ = other.ringShiftAxis_;
@@ -167,16 +150,15 @@ void Input::beginFrame()
     ctrlRedoPressed_ = false;
     ctrlCopyPressed_ = false;
     ctrlPastePressed_ = false;
-    suppressDirectShortcutThisFrame_ = false;
     shortcutCursorDelta_ = 0;
     mouseWheelDelta_ = 0;
-    shortcutSlotPressed_ = -1;
-    ringPresetRegisterSlotPressed_ = -1;
-    activeRingDelta_ = 0;
+    cycleDelta_ = 0;
 }
 
 void Input::handleEvent(const SDL_Event& event)
 {
+    updateConsumedPhysicalInputSuppression(event, false);
+
     if (event.type == SDL_EVENT_QUIT) {
         quitRequested_ = true;
     }
@@ -192,11 +174,8 @@ void Input::handleEvent(const SDL_Event& event)
         }
     }
     if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
-        lastActiveDevice_ = InputDeviceKind::KeyboardMouse;
-        lastInputModality_ = InputModality::Keyboard;
         const SDL_Keymod mods = SDL_GetModState();
         const bool ctrlDown = (mods & SDL_KMOD_CTRL) != 0;
-        const bool shiftDown = (mods & SDL_KMOD_SHIFT) != 0;
         if (ctrlDown) {
             if (event.key.scancode == SDL_SCANCODE_S) {
                 ctrlSavePressed_ = true;
@@ -219,18 +198,6 @@ void Input::handleEvent(const SDL_Event& event)
                 return;
             }
         }
-        if (shiftDown) {
-            const int registerSlot = ringPresetRegisterSlotForScancode(event.key.scancode);
-            if (registerSlot >= 0) {
-                ringPresetRegisterSlotPressed_ = registerSlot;
-                suppressDirectShortcutThisFrame_ = true;
-                return;
-            }
-        }
-    }
-    if (event.type == SDL_EVENT_KEY_UP) {
-        lastActiveDevice_ = InputDeviceKind::KeyboardMouse;
-        lastInputModality_ = InputModality::Keyboard;
     }
     if (event.type == SDL_EVENT_MOUSE_MOTION &&
         (std::fabs(event.motion.xrel) >= 1.0f || std::fabs(event.motion.yrel) >= 1.0f)) {
@@ -295,6 +262,74 @@ void Input::handleEvent(const SDL_Event& event)
             lastActiveDevice_ = InputDeviceKind::Gamepad;
             lastInputModality_ = InputModality::Gamepad;
         }
+    }
+}
+
+void Input::handleConsumedEvent(const SDL_Event& event)
+{
+    updateConsumedPhysicalInputSuppression(event, true);
+}
+
+void Input::updateConsumedPhysicalInputSuppression(const SDL_Event& event, bool consumed)
+{
+    if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) {
+        const int scancode = static_cast<int>(event.key.scancode);
+        if (scancode > SDL_SCANCODE_UNKNOWN && scancode < SDL_SCANCODE_COUNT) {
+            if (event.type == SDL_EVENT_KEY_UP) {
+                consumedKeyboardScancodes_[static_cast<std::size_t>(scancode)] = false;
+            } else if (consumed) {
+                consumedKeyboardScancodes_[static_cast<std::size_t>(scancode)] = true;
+            }
+        }
+        return;
+    }
+
+    if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || event.type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
+        const int button = event.gbutton.button;
+        if (button >= 0 && button < SDL_GAMEPAD_BUTTON_COUNT) {
+            if (event.type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
+                consumedGamepadButtons_[static_cast<std::size_t>(button)] = false;
+            } else if (consumed) {
+                consumedGamepadButtons_[static_cast<std::size_t>(button)] = true;
+            }
+        }
+        if (consumed) {
+            lastActiveDevice_ = InputDeviceKind::Gamepad;
+            lastInputModality_ = InputModality::Gamepad;
+        }
+        return;
+    }
+
+    if (event.type == SDL_EVENT_GAMEPAD_AXIS_MOTION) {
+        const int axis = event.gaxis.axis;
+        if (axis >= 0 && axis < SDL_GAMEPAD_AXIS_COUNT) {
+            const bool neutral = normalizeGamepadAxis(event.gaxis.value) == 0.0f;
+            if (neutral) {
+                consumedGamepadAxes_[static_cast<std::size_t>(axis)] = false;
+            } else if (consumed) {
+                consumedGamepadAxes_[static_cast<std::size_t>(axis)] = true;
+            }
+        }
+        if (consumed && event.gaxis.value != 0) {
+            lastActiveDevice_ = InputDeviceKind::Gamepad;
+            lastInputModality_ = InputModality::Gamepad;
+        }
+        return;
+    }
+
+    if (consumed && (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+                        event.type == SDL_EVENT_MOUSE_BUTTON_UP ||
+                        event.type == SDL_EVENT_MOUSE_MOTION)) {
+        lastActiveDevice_ = InputDeviceKind::KeyboardMouse;
+        lastInputModality_ = InputModality::Mouse;
+        return;
+    }
+
+    if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
+        consumedKeyboardScancodes_.fill(false);
+    } else if (event.type == SDL_EVENT_GAMEPAD_REMOVED) {
+        consumedGamepadButtons_.fill(false);
+        consumedGamepadAxes_.fill(false);
     }
 }
 
@@ -391,10 +426,7 @@ void Input::applyAutomation(const InputAutomationFrame& frame)
         ctrlRedoPressed_ = false;
         shortcutCursorDelta_ = 0;
         mouseWheelDelta_ = 0;
-        shortcutSlotPressed_ = -1;
-        ringPresetRegisterSlotPressed_ = -1;
-        suppressDirectShortcutThisFrame_ = false;
-        activeRingDelta_ = 0;
+        cycleDelta_ = 0;
         ringShiftAxis_ = {};
         gamepadRingShiftAxis_ = {};
     }
@@ -422,9 +454,6 @@ void Input::applyAutomation(const InputAutomationFrame& frame)
     if (frame.useItemPressed) {
         pressAutomated(InputAction::UseSelectedItem);
     }
-    if (frame.capturePressed) {
-        pressAutomated(InputAction::CaptureNet);
-    }
 }
 
 bool Input::pressed(InputAction action) const
@@ -449,14 +478,8 @@ bool Input::ringOffsetPointerHeld() const
 
 bool Input::removeAllRingItemsPressed() const
 {
-    const bool shiftHeld = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;
     return pressed(InputAction::PutSelectedItemOnRing) &&
-        (shiftHeld || held(InputAction::RingCommandModifier));
-}
-
-bool Input::upgradePressed(int option) const
-{
-    return option >= 0 && option < 3 && shortcutSlotPressed_ == option;
+        held(InputAction::SecondaryActionModifier);
 }
 
 bool Input::openGamepad(SDL_JoystickID id)
@@ -492,6 +515,8 @@ void Input::openFirstGamepad()
 void Input::closeGamepad()
 {
     clearSource(InputSource::Gamepad);
+    consumedGamepadButtons_.fill(false);
+    consumedGamepadAxes_.fill(false);
     if (gamepad_ != nullptr) {
         SDL_CloseGamepad(gamepad_);
         gamepad_ = nullptr;
@@ -593,6 +618,7 @@ void Input::updateKeyboardPolledBindings(const bool* keys)
         if (binding.device != InputBindingDevice::Keyboard ||
             binding.code <= SDL_SCANCODE_UNKNOWN ||
             binding.code >= SDL_SCANCODE_COUNT ||
+            consumedKeyboardScancodes_[static_cast<std::size_t>(binding.code)] ||
             !keys[binding.code] ||
             !inputModifiersContain(activeModifiers, binding.modifiers)) {
             return false;
@@ -614,10 +640,6 @@ void Input::updateKeyboardPolledBindings(const bool* keys)
 
     for (int action = 0; action < ActionCount; ++action) {
         for (const InputBinding& binding : bindings_[action]) {
-            if (suppressDirectShortcutThisFrame_ &&
-                shortcutSlotForAction(static_cast<InputAction>(action)) >= 0) {
-                continue;
-            }
             if (!bindingActive(binding) ||
                 inputModifierCount(binding.modifiers) !=
                     bestModifierCounts[static_cast<std::size_t>(binding.code)]) {
@@ -626,6 +648,19 @@ void Input::updateKeyboardPolledBindings(const bool* keys)
             keyboardHeld[action] = true;
         }
     }
+
+    const auto directionalActionPressed = [&](InputAction action) {
+        return keyboardHeld[actionIndex(action)] &&
+            !sourceHeld(InputSource::Keyboard, action);
+    };
+    if (directionalActionPressed(InputAction::MoveLeft) ||
+        directionalActionPressed(InputAction::MoveRight) ||
+        directionalActionPressed(InputAction::MoveUp) ||
+        directionalActionPressed(InputAction::MoveDown)) {
+        lastActiveDevice_ = InputDeviceKind::KeyboardMouse;
+        lastInputModality_ = InputModality::Keyboard;
+    }
+
     for (int action = 0; action < ActionCount; ++action) {
         setSourceHeld(InputSource::Keyboard, static_cast<InputAction>(action), keyboardHeld[action]);
     }
@@ -646,6 +681,11 @@ Vec2 Input::directionalAxisForSource(
 
 void Input::handleGamepadButton(SDL_GamepadButton button, bool down)
 {
+    const int buttonIndex = static_cast<int>(button);
+    if (buttonIndex >= 0 && buttonIndex < SDL_GAMEPAD_BUTTON_COUNT &&
+        consumedGamepadButtons_[static_cast<std::size_t>(buttonIndex)]) {
+        return;
+    }
     for (int action = 0; action < ActionCount; ++action) {
         for (const InputBinding& binding : bindings_[action]) {
             if (binding.device == InputBindingDevice::GamepadButton &&
@@ -680,8 +720,17 @@ void Input::updateGamepadState()
     bool anyMappedAxisActive = false;
     for (int axis = 0; axis < SDL_GAMEPAD_AXIS_COUNT; ++axis) {
         const float value = normalizeGamepadAxis(SDL_GetGamepadAxis(gamepad_, static_cast<SDL_GamepadAxis>(axis)));
+        if (value == 0.0f) {
+            consumedGamepadAxes_[static_cast<std::size_t>(axis)] = false;
+        }
         if (value != 0.0f) {
             anyMappedAxisActive = true;
+        }
+        const bool axisConsumed = consumedGamepadAxes_[static_cast<std::size_t>(axis)];
+        if (!axisConsumed && axis == SDL_GAMEPAD_AXIS_RIGHTX) {
+            gamepadRingShiftAxis_.x += value;
+        } else if (!axisConsumed && axis == SDL_GAMEPAD_AXIS_RIGHTY) {
+            gamepadRingShiftAxis_.y += value;
         }
         updateGamepadAxisBindings(axis, value, gamepadHeld);
     }
@@ -713,6 +762,9 @@ void Input::updateGamepadButtonBindings(std::array<bool, ActionCount>& gamepadHe
             if (binding.code < 0 || binding.code >= SDL_GAMEPAD_BUTTON_COUNT) {
                 continue;
             }
+            if (consumedGamepadButtons_[static_cast<std::size_t>(binding.code)]) {
+                continue;
+            }
             gamepadHeld[action] = gamepadHeld[action] ||
                 SDL_GetGamepadButton(gamepad_, static_cast<SDL_GamepadButton>(binding.code));
         }
@@ -721,6 +773,10 @@ void Input::updateGamepadButtonBindings(std::array<bool, ActionCount>& gamepadHe
 
 void Input::updateGamepadAxisBindings(int axis, float value, std::array<bool, ActionCount>& gamepadHeld)
 {
+    if (axis >= 0 && axis < SDL_GAMEPAD_AXIS_COUNT &&
+        consumedGamepadAxes_[static_cast<std::size_t>(axis)]) {
+        return;
+    }
     for (int action = 0; action < ActionCount; ++action) {
         for (const InputBinding& binding : bindings_[action]) {
             if (binding.device != InputBindingDevice::GamepadAxis || binding.code != axis) {
@@ -776,16 +832,12 @@ void Input::press(InputAction action)
         --shortcutCursorDelta_;
     } else if (action == InputAction::ShortcutCursorRight) {
         ++shortcutCursorDelta_;
-    } else if (action == InputAction::PreviousActiveRing) {
-        --activeRingDelta_;
-    } else if (action == InputAction::NextActiveRing) {
-        ++activeRingDelta_;
+    } else if (action == InputAction::CyclePrevious) {
+        --cycleDelta_;
+    } else if (action == InputAction::CycleNext) {
+        ++cycleDelta_;
     }
 
-    const int shortcutSlot = shortcutSlotForAction(action);
-    if (shortcutSlot >= 0) {
-        shortcutSlotPressed_ = shortcutSlot;
-    }
 }
 
 void Input::release(InputAction action)

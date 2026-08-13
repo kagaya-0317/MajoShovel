@@ -1,6 +1,7 @@
 ﻿#include "game/UpgradeSystem.hpp"
 
 #include "data/GameBalance.hpp"
+#include "engine/InputHelpGlyph.hpp"
 #include "game/RingDisplayName.hpp"
 
 #include <algorithm>
@@ -8,6 +9,7 @@
 #include <cstdio>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace majo {
 
@@ -91,9 +93,9 @@ const char* upgradeName(int option)
 const char* upgradeDescription(int option)
 {
     switch (option) {
-    case 0: return "リングの半径が広がるよ";
-    case 1: return "リングのアイテムの回転速度が上がるよ";
-    case 2: return "リングのアイテムの重量上限が上がるよ";
+    case 0: return "リングの半径が\n広がるよ";
+    case 1: return "リングのアイテムの\n回転速度が上がるよ";
+    case 2: return "リングのアイテムの\n重量上限が上がるよ";
     default: return "";
     }
 }
@@ -190,6 +192,31 @@ void drawCenteredText(Renderer& renderer, UiRect rect, float y, std::string_view
     renderer.drawText({rect.pos.x + (rect.size.x - size.x) * 0.5f, y}, text, color, scale);
 }
 
+void drawCenteredMultilineText(
+    Renderer& renderer,
+    UiRect rect,
+    float y,
+    std::string_view text,
+    Color color,
+    int scale,
+    float lineGap)
+{
+    const float lineHeight = renderer.measureText("あ", scale).y;
+    std::size_t lineStart = 0;
+    while (lineStart <= text.size()) {
+        const std::size_t lineEnd = text.find('\n', lineStart);
+        const std::string_view line = text.substr(
+            lineStart,
+            lineEnd == std::string_view::npos ? std::string_view::npos : lineEnd - lineStart);
+        drawCenteredText(renderer, rect, y, line, color, scale);
+        if (lineEnd == std::string_view::npos) {
+            break;
+        }
+        y += lineHeight + lineGap;
+        lineStart = lineEnd + 1;
+    }
+}
+
 void drawLevelUpSubtitle(Renderer& renderer, UiRect panel)
 {
     const UiRect header = uiHeaderRect(panel);
@@ -213,13 +240,21 @@ void drawUpgradePrompt(Renderer& renderer, UiRect panel, int unlockedRingCount)
 
 std::string levelUpHelpText(int unlockedRingCount, bool ringSelected)
 {
-    if (clampedUnlockedRingCount(unlockedRingCount) <= 1) {
-        return "←/→ カード選択  F/Enter OK";
+    std::vector<InputHelpEntry> entries{
+        {
+            InputHelpGroup::Primary,
+            {InputAction::Confirm, InputAction::UseSelectedItem},
+            ringSelected ? "OK" : "決定",
+        },
+    };
+    if (clampedUnlockedRingCount(unlockedRingCount) > 1) {
+        entries.push_back({
+            InputHelpGroup::Cycle,
+            {InputAction::CyclePrevious, InputAction::CycleNext},
+            "リング切替",
+        });
     }
-    if (!ringSelected) {
-        return "Z/X リング選択  F/Enter 決定";
-    }
-    return "Z/X リング選択  ←/→ カード選択  F/Enter OK";
+    return buildInputHelpText(entries);
 }
 
 void drawUpgradeValueLine(
@@ -296,14 +331,6 @@ std::optional<RingLevelUpgradeSelection> UpgradeSystem::update(
         }
 
         UiTabsInput tabsInput = makeUiCycleTabsInput(input, ringCount);
-        const int directRingFocus = input.shortcutSlotPressed();
-        if (!ringSelected && directRingFocus >= 0 && directRingFocus < ringCount) {
-            selectedRingIndex_ = directRingFocus;
-            ringTabs_.focusedIndex = directRingFocus;
-            ui.emitSound(UiSoundEvent::TabSwitch);
-            ui.block(panelRect());
-            return std::nullopt;
-        }
         tabsInput.commit = tabsInput.commit ||
             (!ringSelected &&
                 !ui.navigationActive() &&
@@ -352,14 +379,6 @@ std::optional<RingLevelUpgradeSelection> UpgradeSystem::update(
     if (move != 0) {
         selectedOption_ = (selectedOption_ + move + 3) % 3;
         ui.emitSound(UiSoundEvent::TabSwitch);
-    }
-
-    if (input.upgradePressed(0)) {
-        selectedOption_ = 0;
-    } else if (input.upgradePressed(1)) {
-        selectedOption_ = 1;
-    } else if (input.upgradePressed(2)) {
-        selectedOption_ = 2;
     }
 
     if (ui.pressed(okButtonRect(ringCount)) || input.useItemPressed() || input.confirmPressed()) {
@@ -444,8 +463,7 @@ void UpgradeSystem::render(
         const UiRect card = optionRect(i, ringCount);
         UiRect content = card;
         content.pos.y += LevelUpCardContentOffsetY;
-        const bool preferred = i == selectedOption_;
-        const bool selected = uiControlVisualState(card).selected;
+        const bool selected = i == selectedOption_;
         UiButtonStyle cardStyle;
         cardStyle.imageTint = {232, 232, 238, 245};
         cardStyle.imageTintHot = {255, 255, 235, 255};
@@ -453,13 +471,21 @@ void UpgradeSystem::render(
         cardStyle.fillHot = {54, 46, 76, 245};
         cardStyle.outline = {104, 94, 128, 255};
         cardStyle.outlineHot = ui::WindowBorder;
-        drawUiFlexibleButtonFrame(renderer, card, preferred, cardStyle);
+        UiControlMotionScope cardMotion(renderer, card, UiControlMotion::HoverAndPress);
+        drawUiFlexibleButtonFrameWithVisualSelection(renderer, card, selected, selected, cardStyle);
         drawCenteredText(renderer, content, content.pos.y + 42.0f, upgradeName(i), ui::Text, 3);
-        drawCenteredText(renderer, content, content.pos.y + 90.0f, upgradeDescription(i), ui::Text, 2);
+        drawCenteredMultilineText(
+            renderer,
+            content,
+            content.pos.y + 82.0f,
+            upgradeDescription(i),
+            ui::Text,
+            2,
+            2.0f);
         drawUpgradeValueLine(
             renderer,
             content,
-            content.pos.y + 134.0f,
+            content.pos.y + 146.0f,
             upgradeCurrentValueText(i, spellRing, ringIndex, balance),
             upgradeNextValueText(i, spellRing, ringIndex, points, balance),
             selected ? ui::Text : ui::TextMuted,
@@ -468,7 +494,7 @@ void UpgradeSystem::render(
         drawCenteredText(
             renderer,
             content,
-            content.pos.y + 182.0f,
+            content.pos.y + 190.0f,
             "強化回数：" + std::to_string(currentStage),
             selected ? ui::Text : ui::TextMuted,
             2);

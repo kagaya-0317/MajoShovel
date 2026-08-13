@@ -29,7 +29,6 @@ struct InputAutomationFrame {
     bool ringOffsetHeld = false;
     bool confirmPressed = false;
     bool useItemPressed = false;
-    bool capturePressed = false;
 };
 
 class Input {
@@ -42,6 +41,7 @@ public:
     void shutdown();
     void beginFrame();
     void handleEvent(const SDL_Event& event);
+    void handleConsumedEvent(const SDL_Event& event);
     void update(const Renderer* renderer);
     void applyAutomation(const InputAutomationFrame& frame);
     void setBindingMap(const InputBindingMap& bindings);
@@ -61,12 +61,12 @@ public:
     bool inventoryPressed() const { return pressed(InputAction::OpenInventory); }
     bool pausePressed() const { return pressed(InputAction::Pause); }
     bool useItemPressed() const { return pressed(InputAction::UseSelectedItem); }
+    bool discardItemPressed() const { return pressed(InputAction::DiscardSelectedItem); }
     bool confirmPressed() const { return pressed(InputAction::Confirm); }
     bool addRingPressed() const { return pressed(InputAction::PutSelectedItemOnRing); }
     bool grabOrPlacePressed() const { return pressed(InputAction::GrabOrPlaceItem); }
     bool arrangeItemsPressed() const { return pressed(InputAction::ArrangeItems); }
     bool removeAllRingItemsPressed() const;
-    bool capturePressed() const { return pressed(InputAction::CaptureNet); }
     bool backPressed() const { return pressed(InputAction::Cancel) || pressed(InputAction::Pause); }
     bool backReleased() const { return released(InputAction::Cancel) || released(InputAction::Pause); }
     bool backHeld() const { return held(InputAction::Cancel) || held(InputAction::Pause); }
@@ -75,7 +75,6 @@ public:
         return held(InputAction::OffsetRingCenter) || lengthSquared(ringShiftAxis_) > 0.0001f;
     }
     bool ringOffsetPointerHeld() const;
-    bool upgradePressed(int option) const;
     bool mouseLeftPressed() const { return mouseLeftPressed_; }
     bool mouseLeftReleased() const { return mouseLeftReleased_; }
     bool mouseLeftHeld() const { return mouseLeftHeld_; }
@@ -84,12 +83,9 @@ public:
     bool redoShortcutPressed() const { return ctrlRedoPressed_; }
     bool copyShortcutPressed() const { return ctrlCopyPressed_; }
     bool pasteShortcutPressed() const { return ctrlPastePressed_; }
-    int ringPresetRegisterSlotPressed() const { return ringPresetRegisterSlotPressed_; }
     int shortcutCursorDelta() const { return shortcutCursorDelta_; }
     int mouseWheelDelta() const { return mouseWheelDelta_; }
-    int shortcutSlotPressed() const { return shortcutSlotPressed_; }
-    int activeRingDelta() const { return activeRingDelta_; }
-    bool toggleShortcutRowPressed() const { return pressed(InputAction::ToggleShortcutRow); }
+    int cycleDelta() const { return cycleDelta_; }
     Vec2 moveAxis() const { return moveAxis_; }
     Vec2 ringShiftAxis() const { return ringShiftAxis_; }
     Vec2 mouseScreen() const { return mouseScreen_; }
@@ -127,6 +123,7 @@ private:
     void updateGamepadButtonBindings(std::array<bool, ActionCount>& gamepadHeld);
     void updateGamepadAxisBindings(int axis, float value, std::array<bool, ActionCount>& gamepadHeld);
     void updateKeyboardPolledBindings(const bool* keys);
+    void updateConsumedPhysicalInputSuppression(const SDL_Event& event, bool consumed);
     void accumulateGamepadAnalogAxis(InputAction action, float amount);
     void press(InputAction action);
     void release(InputAction action);
@@ -140,7 +137,6 @@ private:
     bool ctrlRedoPressed_ = false;
     bool ctrlCopyPressed_ = false;
     bool ctrlPastePressed_ = false;
-    bool suppressDirectShortcutThisFrame_ = false;
     InputDeviceKind lastActiveDevice_ = InputDeviceKind::KeyboardMouse;
     InputModality lastInputModality_ = InputModality::Keyboard;
     SDL_Gamepad* gamepad_ = nullptr;
@@ -149,12 +145,13 @@ private:
     std::array<bool, ActionCount> released_{};
     std::array<bool, ActionCount> held_{};
     std::array<std::array<int, ActionCount>, InputSourceCount> sourceHoldCounts_{};
+    std::array<bool, SDL_SCANCODE_COUNT> consumedKeyboardScancodes_{};
+    std::array<bool, SDL_GAMEPAD_BUTTON_COUNT> consumedGamepadButtons_{};
+    std::array<bool, SDL_GAMEPAD_AXIS_COUNT> consumedGamepadAxes_{};
     InputBindingMap bindings_ = defaultInputBindings();
     int shortcutCursorDelta_ = 0;
     int mouseWheelDelta_ = 0;
-    int shortcutSlotPressed_ = -1;
-    int ringPresetRegisterSlotPressed_ = -1;
-    int activeRingDelta_ = 0;
+    int cycleDelta_ = 0;
     Vec2 moveAxis_{};
     Vec2 leftStickAxis_{};
     Vec2 ringShiftAxis_{};

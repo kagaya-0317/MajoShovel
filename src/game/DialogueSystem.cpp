@@ -49,9 +49,19 @@ constexpr float DialogueMessageNameShiftX = 0.0f;
 constexpr float DialogueMessageNameCenterY = 31.0f;
 constexpr float DialogueInactivePortraitBrightness = 0.68f;
 constexpr int DialogueTextScale = 3;
+constexpr int DialogueTextSoundCharacterInterval = 2;
 constexpr std::string_view DialogueWindowId = "dialogue.message";
-constexpr std::string_view DialogueHelpText = "F/Enter/Esc 文字送り";
-constexpr std::string_view MonicaCallHelpText = "F/Enter/Esc 文字送り";
+
+std::string dialogueHelpText()
+{
+    return buildInputHelpText({
+        {
+            InputHelpGroup::Primary,
+            {InputAction::Confirm, InputAction::UseSelectedItem, InputAction::Cancel, InputAction::Pause},
+            "文字送り",
+        },
+    });
+}
 
 enum class DialoguePortraitSide {
     Left,
@@ -259,6 +269,41 @@ int visibleGlyphCount(std::string_view text)
     return count;
 }
 
+bool dialogueTextUnitHasSound(const DialogueTextUnit& unit)
+{
+    if (unit.kind != DialogueGlyph::Kind::Text || isLineBreak(unit.text)) {
+        return false;
+    }
+    constexpr std::string_view SilentCharacters =
+        " \t\r\n、。！？!?…‥・「」『』（）()［］[]【】〈〉《》：:；;，,.〜～";
+    return SilentCharacters.find(unit.text) == std::string_view::npos;
+}
+
+bool dialogueTextSoundRevealed(std::string_view text, float previousElapsed, float currentElapsed)
+{
+    int revealIndex = 0;
+    int soundingCharacterIndex = 0;
+    for (const DialogueTextUnit& unit : splitDialogueTextUnits(text)) {
+        const bool visible = unit.kind == DialogueGlyph::Kind::WorldIcon ||
+            unit.kind == DialogueGlyph::Kind::InputIcon ||
+            !isLineBreak(unit.text);
+        if (!visible) {
+            continue;
+        }
+
+        if (dialogueTextUnitHasSound(unit)) {
+            const float revealTime = static_cast<float>(revealIndex) * DialogueCharacterDelay;
+            if (soundingCharacterIndex % DialogueTextSoundCharacterInterval == 0 &&
+                previousElapsed <= revealTime && currentElapsed > revealTime) {
+                return true;
+            }
+            ++soundingCharacterIndex;
+        }
+        ++revealIndex;
+    }
+    return false;
+}
+
 Vec2 dialogueMessageWindowSize(const Renderer& renderer, UiMessageWindowKind kind)
 {
     Vec2 size = renderer.uiMessageWindowSize(kind);
@@ -338,7 +383,7 @@ Vec2 portraitSlideOffset(DialoguePortraitSide side, float fade)
 
 UiRect textRectFor(const Renderer& renderer, UiRect panel, UiMessageWindowKind kind)
 {
-    const float footerHeight = uiFooterHeight(DialogueHelpText);
+    const float footerHeight = uiFooterHeight(dialogueHelpText());
     const bool messageWindow = renderer.hasUiMessageWindowTexture(kind);
     const float messageScale = messageWindow ? dialogueMessageWindowScale(renderer, panel, kind) : 1.0f;
     const float paddingX = messageWindow ? DialogueMessageTextPaddingX * messageScale : DialogueTextPaddingX;
@@ -755,6 +800,7 @@ void DialoguePlayer::start(DialogueSequence sequence)
     contentFade_ = 0.0f;
     resetAdvanceHoldRepeat();
     advanceSoundRequests_ = 0;
+    textSoundSpeakerId_.reset();
     rightSpeakerId_.clear();
     pendingRightSpeakerId_.clear();
     portraitExpressionVariants_.clear();
@@ -777,6 +823,7 @@ void DialoguePlayer::clear()
     contentFade_ = 0.0f;
     resetAdvanceHoldRepeat();
     advanceSoundRequests_ = 0;
+    textSoundSpeakerId_.reset();
     rightSpeakerId_.clear();
     pendingRightSpeakerId_.clear();
     portraitExpressionVariants_.clear();
@@ -868,6 +915,7 @@ void DialoguePlayer::update(const Input& input, float dt)
 
     contentFade_ = std::min(1.0f, contentFade_ + fadeStep);
     updateRightPortrait(safeDt);
+    const float previousLineElapsed = lineElapsed_;
     lineElapsed_ += safeDt;
 
     if (step != nullptr && step->kind == DialogueStepKind::Command) {
@@ -880,6 +928,12 @@ void DialoguePlayer::update(const Input& input, float dt)
             advanceLine();
         }
         return;
+    }
+
+    const DialogueLine* line = currentLine();
+    if (line != nullptr &&
+        dialogueTextSoundRevealed(line->text, previousLineElapsed, lineElapsed_)) {
+        textSoundSpeakerId_ = line->speakerId;
     }
 
     if (advanceRequested(input, safeDt)) {
@@ -990,7 +1044,7 @@ void DialoguePlayer::render(Renderer& renderer, int screenWidth, int screenHeigh
         DialogueWindowId,
         panel,
         "",
-        DialogueHelpText,
+        dialogueHelpText(),
         UiWindowOptions{true, false, dialogueWindowFrameForLine(*line)});
     drawSpeakerName(renderer, panel, *line, contentFade_);
 
@@ -1092,7 +1146,8 @@ void DialoguePlayer::renderMonicaCall(Renderer& renderer, int screenWidth, int s
         return;
     }
 
-    const float footerHeight = uiFooterHeight(MonicaCallHelpText);
+    const std::string helpText = dialogueHelpText();
+    const float footerHeight = uiFooterHeight(helpText);
     const UiRect textRect{
         {bubble.pos.x + 176.0f, bubble.pos.y + 84.0f},
         {
@@ -1122,11 +1177,15 @@ void DialoguePlayer::renderMonicaCall(Renderer& renderer, int screenWidth, int s
         renderer.drawText(glyph.pos, glyph.text, {24, 30, 46, scaled}, DialogueTextScale);
     }
 
-    renderer.drawText(
+    InputHelpStyle helpStyle;
+    helpStyle.text = a({86, 104, 128, 255});
+    helpStyle.scale = 2;
+    helpStyle.iconHeight = 23.0f;
+    drawInputHelpText(
+        renderer,
         {bubble.pos.x + 176.0f, bubble.pos.y + bubble.size.y - footerHeight + 8.0f},
-        MonicaCallHelpText,
-        a({86, 104, 128, 255}),
-        2);
+        helpText,
+        helpStyle);
 }
 
 bool DialoguePlayer::lineComplete() const
@@ -1170,6 +1229,13 @@ int DialoguePlayer::consumeAdvanceSoundRequests()
     const int requests = advanceSoundRequests_;
     advanceSoundRequests_ = 0;
     return requests;
+}
+
+std::optional<std::string> DialoguePlayer::consumeTextSoundSpeakerId()
+{
+    std::optional<std::string> speakerId = std::move(textSoundSpeakerId_);
+    textSoundSpeakerId_.reset();
+    return speakerId;
 }
 
 const DialogueStep* DialoguePlayer::currentStep() const

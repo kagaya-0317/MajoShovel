@@ -1,6 +1,7 @@
 ﻿#include "engine/Settings.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdlib>
 #include <exception>
@@ -18,7 +19,7 @@ namespace majo {
 
 namespace {
 
-constexpr int CurrentSettingsVersion = 3;
+constexpr int CurrentSettingsVersion = 7;
 constexpr int MinWindowWidth = 640;
 constexpr int MinWindowHeight = 360;
 constexpr int MaxWindowWidth = 7680;
@@ -526,6 +527,67 @@ void loadInputBindings(const JsonValue& inputValue, InputBindingMap& bindings)
     }
 }
 
+InputBinding migrationKeyboardBinding(
+    std::string_view key,
+    InputModifiers modifiers = InputModifiers::None)
+{
+    return InputBinding{
+        .device = InputBindingDevice::Keyboard,
+        .code = parseKeyboardScancode(key).value_or(0),
+        .modifiers = modifiers,
+    };
+}
+
+InputBinding migrationMouseBinding(std::string_view button)
+{
+    return InputBinding{
+        .device = InputBindingDevice::MouseButton,
+        .code = parseMouseButton(button).value_or(0),
+    };
+}
+
+InputBinding migrationGamepadButtonBinding(std::string_view button)
+{
+    return InputBinding{
+        .device = InputBindingDevice::GamepadButton,
+        .code = parseGamepadButton(button).value_or(-1),
+    };
+}
+
+InputBinding migrationGamepadAxisBinding(std::string_view axis, int direction, float threshold)
+{
+    return InputBinding{
+        .device = InputBindingDevice::GamepadAxis,
+        .code = parseGamepadAxis(axis).value_or(-1),
+        .direction = direction,
+        .threshold = threshold,
+    };
+}
+
+bool migrationBindingSetsEqual(
+    const std::vector<InputBinding>& lhs,
+    const std::vector<InputBinding>& rhs)
+{
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+    std::vector<bool> matched(rhs.size(), false);
+    for (const InputBinding& left : lhs) {
+        bool found = false;
+        for (std::size_t i = 0; i < rhs.size(); ++i) {
+            if (!matched[i] && inputBindingEquals(left, rhs[i])) {
+                matched[i] = true;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            return false;
+        }
+    }
+    return true;
+}
+
 void migrateLoadedSettings(GameSettings& settings)
 {
     if (settings.version < 2) {
@@ -551,84 +613,147 @@ void migrateLoadedSettings(GameSettings& settings)
     }
 
     if (settings.version < 3) {
-        const auto keyboardBinding = [](std::string_view key) {
-            return InputBinding{
-                .device = InputBindingDevice::Keyboard,
-                .code = parseKeyboardScancode(key).value_or(0),
-            };
-        };
-        const auto gamepadButtonBinding = [](std::string_view button) {
-            return InputBinding{
-                .device = InputBindingDevice::GamepadButton,
-                .code = parseGamepadButton(button).value_or(-1),
-            };
-        };
-        const auto bindingsEqual = [](const std::vector<InputBinding>& lhs, const std::vector<InputBinding>& rhs) {
-            if (lhs.size() != rhs.size()) {
-                return false;
-            }
-            std::vector<bool> matched(rhs.size(), false);
-            for (const InputBinding& left : lhs) {
-                bool found = false;
-                for (std::size_t i = 0; i < rhs.size(); ++i) {
-                    if (!matched[i] && inputBindingEquals(left, rhs[i])) {
-                        matched[i] = true;
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    return false;
-                }
-            }
-            return true;
-        };
-        const auto appendUnique = [](std::vector<InputBinding>& destination, const std::vector<InputBinding>& source) {
-            for (const InputBinding& binding : source) {
-                const bool alreadyPresent = std::any_of(
-                    destination.begin(),
-                    destination.end(),
-                    [&](const InputBinding& existing) {
-                        return inputBindingEquals(existing, binding);
-                    });
-                if (!alreadyPresent) {
-                    destination.push_back(binding);
-                }
-            }
-        };
-
         const InputBindingMap currentDefaults = defaultInputBindings();
         const std::vector<InputBinding> legacyShortcutLeft{
-            keyboardBinding("Q"),
-            gamepadButtonBinding("dpad_left"),
+            migrationKeyboardBinding("Q"),
+            migrationGamepadButtonBinding("dpad_left"),
         };
         const std::vector<InputBinding> legacyShortcutRight{
-            keyboardBinding("E"),
-            gamepadButtonBinding("dpad_right"),
+            migrationKeyboardBinding("E"),
+            migrationGamepadButtonBinding("dpad_right"),
         };
-        const std::vector<InputBinding> legacyShortcutRow{
-            keyboardBinding("Tab"),
-            gamepadButtonBinding("dpad_up"),
-        };
-
         auto& shortcutLeft =
             settings.input.bindings[inputActionIndex(InputAction::ShortcutCursorLeft)];
-        if (bindingsEqual(shortcutLeft, legacyShortcutLeft)) {
+        if (migrationBindingSetsEqual(shortcutLeft, legacyShortcutLeft)) {
             shortcutLeft = currentDefaults[inputActionIndex(InputAction::ShortcutCursorLeft)];
         }
         auto& shortcutRight =
             settings.input.bindings[inputActionIndex(InputAction::ShortcutCursorRight)];
-        if (bindingsEqual(shortcutRight, legacyShortcutRight)) {
+        if (migrationBindingSetsEqual(shortcutRight, legacyShortcutRight)) {
             shortcutRight = currentDefaults[inputActionIndex(InputAction::ShortcutCursorRight)];
         }
 
-        const auto& legacyRowBindings =
-            settings.input.bindings[inputActionIndex(InputAction::ToggleShortcutRow)];
-        if (!bindingsEqual(legacyRowBindings, legacyShortcutRow)) {
-            auto& nextRow =
-                settings.input.bindings[inputActionIndex(InputAction::NextShortcutRow)];
-            appendUnique(nextRow, legacyRowBindings);
+    }
+
+    if (settings.version < 4) {
+        const InputBindingMap currentDefaults = defaultInputBindings();
+        const std::vector<InputBinding> legacyUse{
+            migrationKeyboardBinding("F"),
+            migrationGamepadButtonBinding("south"),
+        };
+        const std::vector<InputBinding> legacyArrange{
+            migrationKeyboardBinding("T"),
+            migrationGamepadButtonBinding("west"),
+        };
+        const std::vector<InputBinding> legacyGrab{
+            migrationKeyboardBinding("G"),
+            migrationGamepadButtonBinding("left_stick"),
+            migrationGamepadButtonBinding("right_stick"),
+        };
+
+        auto migrateDefault = [&](InputAction action, const std::vector<InputBinding>& legacy) {
+            auto& bindings = settings.input.bindings[inputActionIndex(action)];
+            if (migrationBindingSetsEqual(bindings, legacy)) {
+                bindings = currentDefaults[inputActionIndex(action)];
+            }
+        };
+        migrateDefault(InputAction::UseSelectedItem, legacyUse);
+        migrateDefault(InputAction::ArrangeItems, legacyArrange);
+        migrateDefault(InputAction::GrabOrPlaceItem, legacyGrab);
+    }
+
+    if (settings.version < 5) {
+        auto& modifierBindings =
+            settings.input.bindings[inputActionIndex(InputAction::SecondaryActionModifier)];
+        const bool hasKeyboardBinding = std::any_of(
+            modifierBindings.begin(),
+            modifierBindings.end(),
+            [](const InputBinding& binding) {
+                return binding.device == InputBindingDevice::Keyboard;
+            });
+        if (!hasKeyboardBinding) {
+            const auto& defaults =
+                defaultInputBindings()[inputActionIndex(InputAction::SecondaryActionModifier)];
+            for (const InputBinding& binding : defaults) {
+                if (binding.device == InputBindingDevice::Keyboard) {
+                    modifierBindings.push_back(binding);
+                }
+            }
         }
+    }
+
+    if (settings.version < 6) {
+        const InputBindingMap currentDefaults = defaultInputBindings();
+        const auto migrateDefault = [&](InputAction action, const std::vector<InputBinding>& legacy) {
+            auto& bindings = settings.input.bindings[inputActionIndex(action)];
+            if (migrationBindingSetsEqual(bindings, legacy)) {
+                bindings = currentDefaults[inputActionIndex(action)];
+            }
+        };
+
+        migrateDefault(InputAction::Confirm, {
+            migrationKeyboardBinding("Return"),
+            migrationKeyboardBinding("Keypad Enter"),
+            migrationGamepadButtonBinding("south"),
+        });
+        migrateDefault(InputAction::Cancel, {
+            migrationKeyboardBinding("Backspace"),
+            migrationMouseBinding("right"),
+            migrationGamepadButtonBinding("east"),
+        });
+        migrateDefault(InputAction::Pause, {
+            migrationKeyboardBinding("Escape"),
+            migrationGamepadButtonBinding("start"),
+        });
+
+        const std::array<std::pair<InputAction, InputBinding>, 4> legacyRingShiftBindings{{
+            {InputAction::ShiftRingLeft, migrationGamepadAxisBinding("rightx", -1, 0.55f)},
+            {InputAction::ShiftRingRight, migrationGamepadAxisBinding("rightx", 1, 0.55f)},
+            {InputAction::ShiftRingUp, migrationGamepadAxisBinding("righty", -1, 0.55f)},
+            {InputAction::ShiftRingDown, migrationGamepadAxisBinding("righty", 1, 0.55f)},
+        }};
+        for (const auto& [action, legacyBinding] : legacyRingShiftBindings) {
+            auto& bindings = settings.input.bindings[inputActionIndex(action)];
+            bindings.erase(
+                std::remove_if(bindings.begin(), bindings.end(), [&](const InputBinding& binding) {
+                    return inputBindingEquals(binding, legacyBinding);
+                }),
+                bindings.end());
+        }
+    }
+
+    if (settings.version < 7) {
+        const InputBindingMap currentDefaults = defaultInputBindings();
+        const auto migrateDefault = [&](InputAction action, const std::vector<InputBinding>& legacy) {
+            auto& bindings = settings.input.bindings[inputActionIndex(action)];
+            if (migrationBindingSetsEqual(bindings, legacy)) {
+                bindings = currentDefaults[inputActionIndex(action)];
+            }
+        };
+
+        migrateDefault(InputAction::OpenOptions, {
+            migrationKeyboardBinding("F9"),
+            migrationGamepadButtonBinding("left_shoulder"),
+        });
+        migrateDefault(InputAction::OpenCredits, {
+            migrationKeyboardBinding("F10"),
+            migrationGamepadButtonBinding("right_shoulder"),
+        });
+        migrateDefault(InputAction::UseSelectedItem, {
+            migrationKeyboardBinding("F"),
+            migrationGamepadButtonBinding("west"),
+        });
+        migrateDefault(InputAction::PutSelectedItemOnRing, {
+            migrationKeyboardBinding("R"),
+            migrationGamepadButtonBinding("dpad_down"),
+        });
+        migrateDefault(InputAction::PreviousShortcutRow, {
+            migrationKeyboardBinding("Up", InputModifiers::Shift),
+        });
+        migrateDefault(InputAction::OpenInventory, {
+            migrationKeyboardBinding("I"),
+            migrationGamepadButtonBinding("north"),
+        });
     }
 }
 

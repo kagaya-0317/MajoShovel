@@ -4,8 +4,10 @@
 #include "engine/Renderer.hpp"
 
 #include <cstddef>
+#include <initializer_list>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace majo {
 
@@ -24,11 +26,29 @@ enum class InputHelpDeviceMode {
     Gamepad,
 };
 
+enum class InputHelpGroup {
+    Primary,
+    Back,
+    Cycle,
+    Other,
+};
+
+struct InputHelpEntry {
+    InputHelpGroup group = InputHelpGroup::Other;
+    std::vector<InputAction> actions;
+    std::string label;
+    std::string bindingTag;
+};
+
 void setInputHelpContext(const Input* input);
 [[nodiscard]] const Input* inputHelpContext();
 void setInputHelpDeviceMode(InputHelpDeviceMode mode);
 [[nodiscard]] InputHelpDeviceMode inputHelpDeviceMode();
 [[nodiscard]] std::string inlineInputActionTag(InputAction action);
+[[nodiscard]] std::string inlineInputActionsTag(std::initializer_list<InputAction> actions);
+[[nodiscard]] std::string inlineRingRemoveAllInputTag();
+[[nodiscard]] std::string buildInputHelpText(std::initializer_list<InputHelpEntry> entries);
+[[nodiscard]] std::string buildInputHelpText(const std::vector<InputHelpEntry>& entries);
 [[nodiscard]] bool inputHelpExplicitTagAt(
     std::string_view text,
     std::size_t offset,

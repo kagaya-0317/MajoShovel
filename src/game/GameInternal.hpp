@@ -1362,25 +1362,6 @@ UiRect levelUpResultDialogRect()
     return baseResultDialogRect();
 }
 
-UiRect firstItemAcquisitionNoticeRect(int screenWidth, int screenHeight)
-{
-    const Vec2 size{608.0f, 360.0f};
-    return {{
-        std::max(16.0f, (static_cast<float>(screenWidth) - size.x) * 0.5f),
-        std::max(16.0f, (static_cast<float>(screenHeight) - size.y) * 0.5f),
-    }, size};
-}
-
-UiRect firstItemAcquisitionOkButtonRect(UiRect panel)
-{
-    constexpr Vec2 Size{180.0f, ui::ButtonHeight};
-    constexpr float BottomGap = 52.0f;
-    return {{
-        panel.pos.x + (panel.size.x - Size.x) * 0.5f,
-        panel.pos.y + panel.size.y - BottomGap - Size.y,
-    }, Size};
-}
-
 UiRect baseMenuItemRect(int index)
 {
     return {{450.0f, 296.0f + static_cast<float>(index) * 36.0f}, {380.0f, 30.0f}};

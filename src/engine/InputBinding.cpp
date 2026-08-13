@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cmath>
 #include <exception>
+#include <limits>
 #include <optional>
 #include <string>
 
@@ -32,34 +33,26 @@ constexpr ActionNameEntry ActionNames[] = {
     {InputAction::ShiftRingRight, "ShiftRingRight"},
     {InputAction::ShiftRingUp, "ShiftRingUp"},
     {InputAction::ShiftRingDown, "ShiftRingDown"},
-    {InputAction::RingCommandModifier, "RingCommandModifier"},
+    {InputAction::SecondaryActionModifier, "SecondaryActionModifier"},
     {InputAction::ShortcutCursorLeft, "ShortcutCursorLeft"},
     {InputAction::ShortcutCursorRight, "ShortcutCursorRight"},
-    {InputAction::DirectShortcut1, "DirectShortcut1"},
-    {InputAction::DirectShortcut2, "DirectShortcut2"},
-    {InputAction::DirectShortcut3, "DirectShortcut3"},
-    {InputAction::DirectShortcut4, "DirectShortcut4"},
-    {InputAction::DirectShortcut5, "DirectShortcut5"},
-    {InputAction::DirectShortcut6, "DirectShortcut6"},
-    {InputAction::DirectShortcut7, "DirectShortcut7"},
-    {InputAction::DirectShortcut8, "DirectShortcut8"},
     {InputAction::PreviousShortcutRow, "PreviousShortcutRow"},
     {InputAction::NextShortcutRow, "NextShortcutRow"},
-    {InputAction::ToggleShortcutRow, "ToggleShortcutRow"},
     {InputAction::UseSelectedItem, "UseSelectedItem"},
+    {InputAction::DiscardSelectedItem, "DiscardSelectedItem"},
     {InputAction::Confirm, "Confirm"},
     {InputAction::PutSelectedItemOnRing, "PutSelectedItemOnRing"},
     {InputAction::GrabOrPlaceItem, "GrabOrPlaceItem"},
     {InputAction::ArrangeItems, "ArrangeItems"},
-    {InputAction::PreviousActiveRing, "PreviousActiveRing"},
-    {InputAction::NextActiveRing, "NextActiveRing"},
-    {InputAction::CaptureNet, "CaptureNet"},
+    {InputAction::CyclePrevious, "CyclePrevious"},
+    {InputAction::CycleNext, "CycleNext"},
     {InputAction::ToggleProtection, "ToggleProtection"},
     {InputAction::Cancel, "Cancel"},
     {InputAction::Pause, "Pause"},
     {InputAction::OpenInventory, "OpenInventory"},
     {InputAction::OpenOptions, "OpenOptions"},
     {InputAction::OpenCredits, "OpenCredits"},
+    {InputAction::ToggleFullscreen, "ToggleFullscreen"},
     {InputAction::ToggleDebug, "ToggleDebug"},
     {InputAction::ToggleDebugPause, "ToggleDebugPause"},
     {InputAction::TestRestart, "TestRestart"},
@@ -171,11 +164,8 @@ bool bindingValid(const InputBinding& binding)
     case InputBindingDevice::Keyboard:
         return binding.code > SDL_SCANCODE_UNKNOWN && binding.code < SDL_SCANCODE_COUNT;
     case InputBindingDevice::MouseButton:
-        return binding.code == SDL_BUTTON_LEFT ||
-            binding.code == SDL_BUTTON_MIDDLE ||
-            binding.code == SDL_BUTTON_RIGHT ||
-            binding.code == SDL_BUTTON_X1 ||
-            binding.code == SDL_BUTTON_X2;
+        return binding.code > 0 &&
+            binding.code <= static_cast<int>(std::numeric_limits<Uint8>::max());
     case InputBindingDevice::GamepadButton:
         return binding.code >= 0 && binding.code < SDL_GAMEPAD_BUTTON_COUNT;
     case InputBindingDevice::GamepadAxis:
@@ -191,11 +181,7 @@ bool requiresBinding(InputAction action)
     case InputAction::MoveRight:
     case InputAction::MoveUp:
     case InputAction::MoveDown:
-    case InputAction::ShiftRingLeft:
-    case InputAction::ShiftRingRight:
-    case InputAction::ShiftRingUp:
-    case InputAction::ShiftRingDown:
-    case InputAction::RingCommandModifier:
+    case InputAction::SecondaryActionModifier:
     case InputAction::Confirm:
     case InputAction::Cancel:
     case InputAction::Pause:
@@ -205,6 +191,130 @@ bool requiresBinding(InputAction action)
         return false;
     }
 }
+
+using InputActionContextMask = std::uint32_t;
+
+enum class InputActionContext : InputActionContextMask {
+    World = 1u << 0,
+    GeneralUi = 1u << 1,
+    ItemManagement = 1u << 2,
+    ItemAcquisition = 1u << 3,
+    BaseItemUi = 1u << 4,
+    TitleMain = 1u << 5,
+};
+
+constexpr InputActionContextMask contextMask(InputActionContext context)
+{
+    return static_cast<InputActionContextMask>(context);
+}
+
+constexpr InputActionContextMask inputActionContexts(InputAction action)
+{
+    constexpr InputActionContextMask World = contextMask(InputActionContext::World);
+    constexpr InputActionContextMask GeneralUi = contextMask(InputActionContext::GeneralUi);
+    constexpr InputActionContextMask ItemManagement = contextMask(InputActionContext::ItemManagement);
+    constexpr InputActionContextMask ItemAcquisition = contextMask(InputActionContext::ItemAcquisition);
+    constexpr InputActionContextMask BaseItemUi = contextMask(InputActionContext::BaseItemUi);
+    constexpr InputActionContextMask TitleMain = contextMask(InputActionContext::TitleMain);
+
+    switch (action) {
+    case InputAction::ThrowActiveRing:
+    case InputAction::OffsetRingCenter:
+    case InputAction::ShiftRingLeft:
+    case InputAction::ShiftRingRight:
+    case InputAction::ShiftRingUp:
+    case InputAction::ShiftRingDown:
+        return World;
+    case InputAction::SecondaryActionModifier:
+        return World | ItemManagement | BaseItemUi;
+    case InputAction::ShortcutCursorLeft:
+    case InputAction::ShortcutCursorRight:
+    case InputAction::PreviousShortcutRow:
+    case InputAction::NextShortcutRow:
+        return World | ItemManagement | BaseItemUi;
+    case InputAction::UseSelectedItem:
+    case InputAction::Confirm:
+        return World | GeneralUi | ItemManagement | ItemAcquisition | BaseItemUi | TitleMain;
+    case InputAction::DiscardSelectedItem:
+        return ItemAcquisition;
+    case InputAction::PutSelectedItemOnRing:
+        return World | ItemManagement | ItemAcquisition | BaseItemUi;
+    case InputAction::GrabOrPlaceItem:
+    case InputAction::ArrangeItems:
+        return ItemManagement | BaseItemUi;
+    case InputAction::CyclePrevious:
+    case InputAction::CycleNext:
+        return World | GeneralUi | ItemManagement | BaseItemUi;
+    case InputAction::ToggleProtection:
+        return World | ItemManagement | ItemAcquisition | BaseItemUi;
+    case InputAction::Cancel:
+        return GeneralUi | ItemManagement | ItemAcquisition | BaseItemUi;
+    case InputAction::Pause:
+        return World | GeneralUi | ItemManagement | ItemAcquisition | BaseItemUi;
+    case InputAction::OpenInventory:
+        return World | BaseItemUi;
+    case InputAction::OpenOptions:
+    case InputAction::OpenCredits:
+        return TitleMain;
+    default:
+        return 0;
+    }
+}
+
+constexpr bool isDirectionalAction(InputAction action)
+{
+    return action == InputAction::MoveLeft ||
+        action == InputAction::MoveRight ||
+        action == InputAction::MoveUp ||
+        action == InputAction::MoveDown;
+}
+
+constexpr bool isIntentionalActionAlias(InputAction lhs, InputAction rhs)
+{
+    return ((lhs == InputAction::Confirm && rhs == InputAction::UseSelectedItem) ||
+               (lhs == InputAction::UseSelectedItem && rhs == InputAction::Confirm)) ||
+        ((lhs == InputAction::Cancel && rhs == InputAction::Pause) ||
+            (lhs == InputAction::Pause && rhs == InputAction::Cancel));
+}
+
+constexpr bool isUserConfigurableAction(InputAction action)
+{
+    return inputActionIndex(action) >= inputActionIndex(InputAction::MoveLeft) &&
+        inputActionIndex(action) <= inputActionIndex(InputAction::ToggleFullscreen) &&
+        action != InputAction::OffsetRingCenter;
+}
+
+constexpr bool isDeveloperOnlyAction(InputAction action)
+{
+    return inputActionIndex(action) >= inputActionIndex(InputAction::ToggleDebug) &&
+        inputActionIndex(action) < inputActionIndex(InputAction::Count);
+}
+
+constexpr bool actionsConflict(InputAction lhs, InputAction rhs)
+{
+    if (lhs == rhs || !isUserConfigurableAction(lhs) || !isUserConfigurableAction(rhs)) {
+        return false;
+    }
+    if (isIntentionalActionAlias(lhs, rhs)) {
+        return false;
+    }
+    if (isDirectionalAction(lhs) || isDirectionalAction(rhs) ||
+        lhs == InputAction::ToggleFullscreen || rhs == InputAction::ToggleFullscreen) {
+        return true;
+    }
+    return (inputActionContexts(lhs) & inputActionContexts(rhs)) != 0;
+}
+
+static_assert(!actionsConflict(InputAction::Confirm, InputAction::UseSelectedItem));
+static_assert(!actionsConflict(InputAction::Cancel, InputAction::Pause));
+static_assert(!actionsConflict(InputAction::OffsetRingCenter, InputAction::Cancel));
+static_assert(!actionsConflict(InputAction::DiscardSelectedItem, InputAction::ArrangeItems));
+static_assert(!actionsConflict(InputAction::CyclePrevious, InputAction::OpenOptions));
+static_assert(!actionsConflict(InputAction::CycleNext, InputAction::OpenCredits));
+static_assert(actionsConflict(InputAction::Pause, InputAction::OpenInventory));
+static_assert(actionsConflict(InputAction::OpenOptions, InputAction::OpenCredits));
+static_assert(actionsConflict(InputAction::MoveLeft, InputAction::ThrowActiveRing));
+static_assert(actionsConflict(InputAction::ToggleFullscreen, InputAction::Cancel));
 
 } // namespace
 
@@ -221,6 +331,16 @@ std::string_view inputActionName(InputAction action)
 std::optional<InputAction> parseInputAction(std::string_view name)
 {
     const std::string normalized = lowerAscii(name);
+    // Preserve custom bindings written before these actions were generalized.
+    if (normalized == "ringcommandmodifier") {
+        return InputAction::SecondaryActionModifier;
+    }
+    if (normalized == "previousactivering") {
+        return InputAction::CyclePrevious;
+    }
+    if (normalized == "nextactivering") {
+        return InputAction::CycleNext;
+    }
     for (const ActionNameEntry& entry : ActionNames) {
         if (lowerAscii(entry.name) == normalized) {
             return entry.action;
@@ -340,14 +460,6 @@ InputBindingMap defaultInputBindings()
         InputAction::ShortcutCursorRight,
         SDL_SCANCODE_RIGHT,
         InputModifiers::Shift);
-    addKeyboard(bindings, InputAction::DirectShortcut1, SDL_SCANCODE_1);
-    addKeyboard(bindings, InputAction::DirectShortcut2, SDL_SCANCODE_2);
-    addKeyboard(bindings, InputAction::DirectShortcut3, SDL_SCANCODE_3);
-    addKeyboard(bindings, InputAction::DirectShortcut4, SDL_SCANCODE_4);
-    addKeyboard(bindings, InputAction::DirectShortcut5, SDL_SCANCODE_5);
-    addKeyboard(bindings, InputAction::DirectShortcut6, SDL_SCANCODE_6);
-    addKeyboard(bindings, InputAction::DirectShortcut7, SDL_SCANCODE_7);
-    addKeyboard(bindings, InputAction::DirectShortcut8, SDL_SCANCODE_8);
     addKeyboard(
         bindings,
         InputAction::PreviousShortcutRow,
@@ -358,22 +470,25 @@ InputBindingMap defaultInputBindings()
         InputAction::NextShortcutRow,
         SDL_SCANCODE_DOWN,
         InputModifiers::Shift);
-    addKeyboard(bindings, InputAction::ToggleShortcutRow, SDL_SCANCODE_TAB);
+    addKeyboard(bindings, InputAction::SecondaryActionModifier, SDL_SCANCODE_LSHIFT);
+    addKeyboard(bindings, InputAction::SecondaryActionModifier, SDL_SCANCODE_RSHIFT);
     addKeyboard(bindings, InputAction::UseSelectedItem, SDL_SCANCODE_F);
+    addKeyboard(bindings, InputAction::DiscardSelectedItem, SDL_SCANCODE_DELETE);
     addKeyboard(bindings, InputAction::Confirm, SDL_SCANCODE_RETURN);
-    addKeyboard(bindings, InputAction::Confirm, SDL_SCANCODE_KP_ENTER);
+    addKeyboard(bindings, InputAction::Confirm, SDL_SCANCODE_SPACE);
     addKeyboard(bindings, InputAction::PutSelectedItemOnRing, SDL_SCANCODE_R);
     addKeyboard(bindings, InputAction::GrabOrPlaceItem, SDL_SCANCODE_G);
     addKeyboard(bindings, InputAction::ArrangeItems, SDL_SCANCODE_T);
-    addKeyboard(bindings, InputAction::PreviousActiveRing, SDL_SCANCODE_Z);
-    addKeyboard(bindings, InputAction::NextActiveRing, SDL_SCANCODE_X);
+    addKeyboard(bindings, InputAction::CyclePrevious, SDL_SCANCODE_Z);
+    addKeyboard(bindings, InputAction::CycleNext, SDL_SCANCODE_X);
     addKeyboard(bindings, InputAction::ThrowActiveRing, SDL_SCANCODE_C);
     addKeyboard(bindings, InputAction::ToggleProtection, SDL_SCANCODE_P);
+    addKeyboard(bindings, InputAction::Cancel, SDL_SCANCODE_ESCAPE);
     addKeyboard(bindings, InputAction::Cancel, SDL_SCANCODE_BACKSPACE);
-    addKeyboard(bindings, InputAction::Pause, SDL_SCANCODE_ESCAPE);
     addKeyboard(bindings, InputAction::OpenInventory, SDL_SCANCODE_I);
-    addKeyboard(bindings, InputAction::OpenOptions, SDL_SCANCODE_F9);
-    addKeyboard(bindings, InputAction::OpenCredits, SDL_SCANCODE_F10);
+    addKeyboard(bindings, InputAction::OpenOptions, SDL_SCANCODE_O);
+    addKeyboard(bindings, InputAction::OpenCredits, SDL_SCANCODE_C);
+    addKeyboard(bindings, InputAction::ToggleFullscreen, SDL_SCANCODE_F4);
     addKeyboard(bindings, InputAction::ToggleDebug, SDL_SCANCODE_F1);
     addKeyboard(bindings, InputAction::TestRestart, SDL_SCANCODE_F5);
     addKeyboard(bindings, InputAction::ToggleDebugPause, SDL_SCANCODE_F6);
@@ -385,33 +500,31 @@ InputBindingMap defaultInputBindings()
     addMouse(bindings, InputAction::Cancel, SDL_BUTTON_RIGHT);
 
     addGamepadButton(bindings, InputAction::Confirm, SDL_GAMEPAD_BUTTON_SOUTH);
-    addGamepadButton(bindings, InputAction::UseSelectedItem, SDL_GAMEPAD_BUTTON_SOUTH);
+    addGamepadButton(bindings, InputAction::UseSelectedItem, SDL_GAMEPAD_BUTTON_NORTH);
+    addGamepadButton(bindings, InputAction::DiscardSelectedItem, SDL_GAMEPAD_BUTTON_RIGHT_STICK);
     addGamepadButton(bindings, InputAction::Cancel, SDL_GAMEPAD_BUTTON_EAST);
-    addGamepadButton(bindings, InputAction::OpenInventory, SDL_GAMEPAD_BUTTON_NORTH);
-    addGamepadButton(bindings, InputAction::ArrangeItems, SDL_GAMEPAD_BUTTON_WEST);
     addGamepadButton(bindings, InputAction::ToggleProtection, SDL_GAMEPAD_BUTTON_BACK);
-    addGamepadButton(bindings, InputAction::Pause, SDL_GAMEPAD_BUTTON_START);
     addGamepadButton(bindings, InputAction::GrabOrPlaceItem, SDL_GAMEPAD_BUTTON_LEFT_STICK);
-    addGamepadButton(bindings, InputAction::GrabOrPlaceItem, SDL_GAMEPAD_BUTTON_RIGHT_STICK);
-    addGamepadButton(bindings, InputAction::PreviousActiveRing, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
-    addGamepadButton(bindings, InputAction::NextActiveRing, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
+    addGamepadButton(bindings, InputAction::ArrangeItems, SDL_GAMEPAD_BUTTON_RIGHT_STICK);
+    addGamepadButton(bindings, InputAction::CyclePrevious, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
+    addGamepadButton(bindings, InputAction::CycleNext, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
     addGamepadButton(bindings, InputAction::OpenOptions, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
     addGamepadButton(bindings, InputAction::OpenCredits, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
     addGamepadButton(bindings, InputAction::ShortcutCursorLeft, SDL_GAMEPAD_BUTTON_DPAD_LEFT);
     addGamepadButton(bindings, InputAction::ShortcutCursorRight, SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
+    addGamepadButton(bindings, InputAction::PreviousShortcutRow, SDL_GAMEPAD_BUTTON_DPAD_DOWN);
     addGamepadButton(bindings, InputAction::NextShortcutRow, SDL_GAMEPAD_BUTTON_DPAD_UP);
-    addGamepadButton(bindings, InputAction::ToggleShortcutRow, SDL_GAMEPAD_BUTTON_DPAD_UP);
-    addGamepadButton(bindings, InputAction::PutSelectedItemOnRing, SDL_GAMEPAD_BUTTON_DPAD_DOWN);
+    addGamepadButton(bindings, InputAction::PutSelectedItemOnRing, SDL_GAMEPAD_BUTTON_WEST);
+
+    // メニューは「戻る」と同じ入力で開閉できるよう、既定割当を共有する。
+    bindings[inputActionIndex(InputAction::Pause)] =
+        bindings[inputActionIndex(InputAction::Cancel)];
 
     addGamepadAxis(bindings, InputAction::MoveLeft, SDL_GAMEPAD_AXIS_LEFTX, -1, StickDigitalThreshold);
     addGamepadAxis(bindings, InputAction::MoveRight, SDL_GAMEPAD_AXIS_LEFTX, 1, StickDigitalThreshold);
     addGamepadAxis(bindings, InputAction::MoveUp, SDL_GAMEPAD_AXIS_LEFTY, -1, StickDigitalThreshold);
     addGamepadAxis(bindings, InputAction::MoveDown, SDL_GAMEPAD_AXIS_LEFTY, 1, StickDigitalThreshold);
-    addGamepadAxis(bindings, InputAction::ShiftRingLeft, SDL_GAMEPAD_AXIS_RIGHTX, -1, StickDigitalThreshold);
-    addGamepadAxis(bindings, InputAction::ShiftRingRight, SDL_GAMEPAD_AXIS_RIGHTX, 1, StickDigitalThreshold);
-    addGamepadAxis(bindings, InputAction::ShiftRingUp, SDL_GAMEPAD_AXIS_RIGHTY, -1, StickDigitalThreshold);
-    addGamepadAxis(bindings, InputAction::ShiftRingDown, SDL_GAMEPAD_AXIS_RIGHTY, 1, StickDigitalThreshold);
-    addGamepadAxis(bindings, InputAction::RingCommandModifier, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 1, TriggerDigitalThreshold);
+    addGamepadAxis(bindings, InputAction::SecondaryActionModifier, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 1, TriggerDigitalThreshold);
     addGamepadAxis(bindings, InputAction::ThrowActiveRing, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 1, TriggerDigitalThreshold);
 
     return bindings;
@@ -450,6 +563,9 @@ InputBindingMap sanitizeInputBindings(InputBindingMap bindings)
             actionBindings = defaults[actionIndex];
         }
     }
+    // マウスドラッグによるリングずらしは固定操作として扱い、保存値では変更させない。
+    bindings[inputActionIndex(InputAction::OffsetRingCenter)] =
+        defaults[inputActionIndex(InputAction::OffsetRingCenter)];
     return bindings;
 }
 
@@ -462,9 +578,32 @@ bool inputBindingEquals(const InputBinding& lhs, const InputBinding& rhs)
         lhs.modifiers == rhs.modifiers;
 }
 
+bool inputBindingSamePhysicalInput(const InputBinding& lhs, const InputBinding& rhs)
+{
+    return lhs.device == rhs.device &&
+        lhs.code == rhs.code &&
+        lhs.direction == rhs.direction &&
+        lhs.modifiers == rhs.modifiers;
+}
+
 bool inputActionRequiresBinding(InputAction action)
 {
     return requiresBinding(action);
+}
+
+bool inputActionCanBeRemapped(InputAction action)
+{
+    return isUserConfigurableAction(action);
+}
+
+bool inputActionIsDeveloperOnly(InputAction action)
+{
+    return isDeveloperOnlyAction(action);
+}
+
+bool inputActionsConflict(InputAction lhs, InputAction rhs)
+{
+    return actionsConflict(lhs, rhs);
 }
 
 std::string inputBindingDisplayName(const InputBinding& binding)
