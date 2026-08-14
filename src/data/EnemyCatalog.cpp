@@ -991,6 +991,7 @@ struct EnemyColumns {
     int contactDamageType = -1;
     int moveSpeed = -1;
     int radius = -1;
+    int sizeMultiplier = -1;
     int xp = -1;
     int money = -1;
     int enemyAi = -1;
@@ -1031,6 +1032,7 @@ bool findEnemyColumns(const GoogleSheetRow& headers, EnemyColumns& outColumns, s
     columns.contactDamageType = findColumn(headers, {"接触ダメージ種別", "contact_damage_type"});
     columns.moveSpeed = findColumn(headers, {"移動速度", "move_speed"});
     columns.radius = findColumn(headers, {"半径", "radius"});
+    columns.sizeMultiplier = findColumn(headers, {"全体サイズ倍率", "size_multiplier", "sizeMultiplier"});
     columns.xp = findColumn(headers, {"経験値", "xp"});
     columns.money = findColumn(headers, {"お金", "money"});
     columns.enemyAi = findColumn(headers, {"敵AI", "enemy_ai"});
@@ -1283,6 +1285,25 @@ bool parseEnemies(
         validateDamageType(enemy.contactDamageType, "Enemies", rowIndex, enemy.id, "接触ダメージ種別", catalog);
         enemy.moveSpeed = parseDoubleColumnOrDefault(cellAt(row, columns.moveSpeed), 0.0, "Enemies", rowIndex, enemy.id, "移動速度", catalog);
         enemy.radius = parseDoubleColumnOrDefault(cellAt(row, columns.radius), 0.0, "Enemies", rowIndex, enemy.id, "半径", catalog);
+        enemy.sizeMultiplier = parseDoubleColumnOrDefault(
+            cellAt(row, columns.sizeMultiplier),
+            EnemySizeMultiplierDefault,
+            "Enemies",
+            rowIndex,
+            enemy.id,
+            "全体サイズ倍率",
+            catalog);
+        if (enemy.sizeMultiplier < EnemySizeMultiplierMin || enemy.sizeMultiplier > EnemySizeMultiplierMax) {
+            addIssue(
+                catalog,
+                DbValidationSeverity::Warning,
+                DbValidationCategory::NumericValue,
+                "Enemies row " + std::to_string(rowIndex + 1) + " id=\"" + enemy.id +
+                    "\" 全体サイズ倍率: must be between " + std::to_string(EnemySizeMultiplierMin) +
+                    " and " + std::to_string(EnemySizeMultiplierMax) + "; using " +
+                    std::to_string(EnemySizeMultiplierDefault));
+            enemy.sizeMultiplier = EnemySizeMultiplierDefault;
+        }
         enemy.xp = parseIntColumnOrDefault(cellAt(row, columns.xp), 0, "Enemies", rowIndex, enemy.id, "経験値", catalog);
         enemy.money = parseIntColumnOrDefault(cellAt(row, columns.money), 0, "Enemies", rowIndex, enemy.id, "お金", catalog);
         enemy.enemyAi = cellAt(row, columns.enemyAi);

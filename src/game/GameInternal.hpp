@@ -294,7 +294,6 @@ constexpr float BaseEditFacilityMinSize = 24.0f;
 constexpr int BaseEditUndoLimit = 100;
 constexpr float BaseEditHandleSize = 12.0f;
 constexpr float BaseEditHandleHitPadding = 8.0f;
-constexpr float RingObjectImageMaxSize = 48.0f;
 constexpr Vec2 RingItemUiRectSize{54.0f, 54.0f};
 constexpr Vec2 RingItemIndicatorInset{5.0f, 5.0f};
 constexpr float RingItemPowerBadgeFillAlphaScale = 160.0f / 255.0f;
@@ -2877,14 +2876,6 @@ float ringItemShadowVisualSize(const SpellRingItem& item, float totalSeconds)
     return actorShadowVisualSizeForAltitude(ringItemBaseShadowVisualSize(item), ringItemAltitude(item, totalSeconds));
 }
 
-Vec2 ringItemOutwardDirection(const SpellRingItem& item, Vec2 outward)
-{
-    if (lengthSquared(outward) > 0.0001f) {
-        return normalize(outward);
-    }
-    return fromAngle(item.localAngle);
-}
-
 ObjectImageDrawOptions ringItemActionFlashOptions(const SpellRingItem& item, ObjectImageDrawOptions options = {})
 {
     if (item.actionFlashTimer > 0.0f) {
@@ -2898,24 +2889,6 @@ ObjectImageDrawOptions ringItemActionFlashOptions(const SpellRingItem& item, Obj
         };
     }
     return options;
-}
-
-ActorVisualPose capturedProjectileActionPose(const SpellRingItem& item)
-{
-    if (item.capturedProjectileActionAnimationId.empty() ||
-        item.capturedProjectileActionDurationSeconds <= 0.0f) {
-        return actorVisualPoseIdentity();
-    }
-    return sampleActorVisualMotion(
-        item.capturedProjectileActionAnimationId,
-        item.capturedProjectileActionElapsedSeconds);
-}
-
-Vec2 ringItemActionDrawPosition(const SpellRingItem& item, Vec2 center, Vec2 outward)
-{
-    const ActorVisualPose pose = capturedProjectileActionPose(item);
-    const Vec2 forward = ringItemOutwardDirection(item, outward);
-    return center + pose.offset + forward * pose.forwardOffset + Vec2{0.0f, -pose.visualAltitude};
 }
 
 ObjectImageDrawOptions ringItemActionPoseOptions(const SpellRingItem& item, ObjectImageDrawOptions options = {})

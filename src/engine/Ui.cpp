@@ -34,6 +34,21 @@ const std::unordered_map<std::string, float>* menuIconScaleOverrides = nullptr;
 
 std::unordered_map<std::string, UiWindowState> windowStates;
 
+struct UiInputHelpScrollState {
+    std::string text;
+    float contentWidth = 0.0f;
+    float viewportWidth = 0.0f;
+    float elapsed = 0.0f;
+    std::size_t bindingsFingerprint = 0;
+    InputHelpDeviceMode deviceMode = InputHelpDeviceMode::Auto;
+    InputDeviceKind device = InputDeviceKind::KeyboardMouse;
+    bool seen = false;
+    bool advancedThisFrame = false;
+};
+
+std::unordered_map<std::string, UiInputHelpScrollState> inputHelpScrollStates;
+float uiFrameDeltaSeconds = 0.0f;
+
 constexpr std::string_view UiSelectionCursorPath = "assets/system/UI_cursor2.png";
 constexpr std::string_view UiArrowButtonPath = "assets/system/UI_arrow.png";
 constexpr std::string_view UiArrowButtonWidePath = "assets/system/UI_arrowWide.png";
@@ -58,6 +73,9 @@ constexpr float UiHorizontalTabPressedBrightness = 0.82f;
 constexpr float UiTextIconGap = 8.0f;
 constexpr float UiButtonIconSize = 34.0f;
 constexpr float UiTabIconSize = 30.0f;
+constexpr float UiInputHelpInitialHoldSeconds = 3.0f;
+constexpr float UiInputHelpEndHoldSeconds = 3.0f;
+constexpr float UiInputHelpScrollPixelsPerSecond = 40.0f;
 float windowAnimationStep = 1.0f / ui::WindowAnimationFrames;
 
 struct UiSelectionCursorState {
@@ -449,8 +467,118 @@ UiMessageWindowKind uiMessageWindowKindForFrame(UiWindowFrame frame)
         : UiMessageWindowKind::Speaker;
 }
 
+InputDeviceKind currentInputHelpDevice()
+{
+    switch (inputHelpDeviceMode()) {
+    case InputHelpDeviceMode::KeyboardMouse:
+        return InputDeviceKind::KeyboardMouse;
+    case InputHelpDeviceMode::Gamepad:
+        return InputDeviceKind::Gamepad;
+    case InputHelpDeviceMode::Auto:
+        break;
+    }
+    const Input* input = inputHelpContext();
+    return input != nullptr ? input->lastActiveDevice() : InputDeviceKind::KeyboardMouse;
+}
+
+std::size_t currentInputHelpBindingsFingerprint()
+{
+    const Input* input = inputHelpContext();
+    if (input == nullptr) {
+        return 0;
+    }
+
+    std::size_t result = 0;
+    const auto mix = [&](std::size_t value) {
+        result ^= value + static_cast<std::size_t>(0x9e3779b9u) + (result << 6u) + (result >> 2u);
+    };
+    const InputBindingMap& bindings = input->bindingMap();
+    for (std::size_t actionIndex = 0; actionIndex < bindings.size(); ++actionIndex) {
+        mix(actionIndex);
+        mix(bindings[actionIndex].size());
+        for (const InputBinding& binding : bindings[actionIndex]) {
+            mix(static_cast<std::size_t>(binding.device));
+            mix(static_cast<std::size_t>(binding.code));
+            mix(static_cast<std::size_t>(binding.direction));
+            mix(static_cast<std::size_t>(binding.modifiers));
+        }
+    }
+    return result;
+}
+
+void drawScrollingInputHelp(
+    Renderer& renderer,
+    std::string_view stateId,
+    UiRect clipRect,
+    float drawY,
+    std::string_view text,
+    Vec2 contentSize,
+    const InputHelpStyle& style,
+    bool centerWhenFits)
+{
+    if (text.empty() || clipRect.size.x <= 0.0f || clipRect.size.y <= 0.0f) {
+        return;
+    }
+
+    const std::string resolvedStateId = stateId.empty()
+        ? windowKey("input-help", clipRect)
+        : std::string(stateId);
+    UiInputHelpScrollState& state = inputHelpScrollStates[resolvedStateId];
+    const InputHelpDeviceMode deviceMode = inputHelpDeviceMode();
+    const InputDeviceKind device = currentInputHelpDevice();
+    const std::size_t bindingsFingerprint = currentInputHelpBindingsFingerprint();
+    const bool reset = state.text != text ||
+        std::abs(state.contentWidth - contentSize.x) > 0.5f ||
+        std::abs(state.viewportWidth - clipRect.size.x) > 0.5f ||
+        state.bindingsFingerprint != bindingsFingerprint ||
+        state.deviceMode != deviceMode ||
+        state.device != device;
+    if (reset) {
+        state.text = std::string(text);
+        state.contentWidth = contentSize.x;
+        state.viewportWidth = clipRect.size.x;
+        state.elapsed = 0.0f;
+        state.bindingsFingerprint = bindingsFingerprint;
+        state.deviceMode = deviceMode;
+        state.device = device;
+    }
+
+    state.seen = true;
+    if (!state.advancedThisFrame) {
+        if (!reset) {
+            state.elapsed += uiFrameDeltaSeconds;
+        }
+        state.advancedThisFrame = true;
+    }
+
+    float scrollOffset = 0.0f;
+    const float overflow = std::max(0.0f, contentSize.x - clipRect.size.x);
+    if (overflow > 0.0f) {
+        const float scrollDuration = overflow / UiInputHelpScrollPixelsPerSecond;
+        const float cycleDuration = UiInputHelpInitialHoldSeconds + scrollDuration + UiInputHelpEndHoldSeconds;
+        const float phase = cycleDuration > 0.0f
+            ? std::fmod(state.elapsed, cycleDuration)
+            : 0.0f;
+        if (phase > UiInputHelpInitialHoldSeconds) {
+            scrollOffset = std::min(
+                overflow,
+                (phase - UiInputHelpInitialHoldSeconds) * UiInputHelpScrollPixelsPerSecond);
+        }
+    } else {
+        state.elapsed = 0.0f;
+    }
+
+    const float fittedX = centerWhenFits && overflow <= 0.0f
+        ? clipRect.pos.x + (clipRect.size.x - contentSize.x) * 0.5f
+        : clipRect.pos.x;
+    renderer.pushClipRect(clipRect.pos, clipRect.size);
+    drawInputHelpText(renderer, {fittedX - scrollOffset, drawY}, text, style);
+    renderer.popClipRect();
+}
+
 void drawUiWindowChrome(
     Renderer& renderer,
+    std::string_view stateId,
     UiRect panel,
     std::string_view title,
     std::string_view helpText,
@@ -459,7 +587,7 @@ void drawUiWindowChrome(
 {
     drawUiPanel(renderer, panel, frame);
     drawUiHeader(renderer, panel, title, frame);
-    drawUiFooter(renderer, panel, helpText, frame);
+    drawUiFooter(renderer, panel, helpText, frame, stateId);
     if (cancelButton) {
         drawUiCancelButton(renderer, panel);
     }
@@ -1397,6 +1525,7 @@ bool UiContext::hasSoundEvents() const
 
 void beginUiFrame(float dt, bool navigationCursorEnabled)
 {
+    uiFrameDeltaSeconds = std::max(0.0f, dt);
     selectionCursor.enabled = navigationCursorEnabled;
     selectionCursor.targetThisFrame = false;
     selectionCursor.suppressedThisFrame = false;
@@ -1406,6 +1535,10 @@ void beginUiFrame(float dt, bool navigationCursorEnabled)
     windowAnimationStep = clamp(dt / duration, 0.0f, 1.0f);
     for (auto& entry : windowStates) {
         entry.second.seen = false;
+    }
+    for (auto& entry : inputHelpScrollStates) {
+        entry.second.seen = false;
+        entry.second.advancedThisFrame = false;
     }
     currentNavigationTargets.clear();
     navigationLayer = 0;
@@ -1428,7 +1561,14 @@ void finishUiFrame(Renderer& renderer)
         const float scale = lerp(1.0f, 1.1f, t);
         const float alpha = 1.0f - t;
         applyWindowTransform(renderer, state.panel, scale, alpha);
-        drawUiWindowChrome(renderer, state.panel, state.title, state.helpText, state.cancelButton, state.frame);
+        drawUiWindowChrome(
+            renderer,
+            entry.first,
+            state.panel,
+            state.title,
+            state.helpText,
+            state.cancelButton,
+            state.frame);
         renderer.popScreenTransform();
         if (state.closeProgress >= 1.0f) {
             finished.push_back(entry.first);
@@ -1437,6 +1577,11 @@ void finishUiFrame(Renderer& renderer)
     for (const std::string& key : finished) {
         windowStates.erase(key);
     }
+    std::erase_if(
+        inputHelpScrollStates,
+        [](const auto& entry) {
+            return !entry.second.seen;
+        });
 
     int topLayer = 0;
     for (const UiNavigationTarget& target : currentNavigationTargets) {
@@ -1496,12 +1641,20 @@ UiWindowScope::UiWindowScope(
     UiWindowOptions options)
     : renderer_(&renderer)
 {
+    const std::string stateKey = windowKey(id, panel);
     if (!options.animated) {
-        drawUiWindowChrome(renderer, panel, title, helpText, options.cancelButton, options.frame);
+        drawUiWindowChrome(
+            renderer,
+            stateKey,
+            panel,
+            title,
+            helpText,
+            options.cancelButton,
+            options.frame);
         return;
     }
 
-    UiWindowState& state = windowStates[windowKey(id, panel)];
+    UiWindowState& state = windowStates[stateKey];
     if (state.closing) {
         state.openProgress = 0.0f;
         state.closeProgress = 0.0f;
@@ -1518,7 +1671,14 @@ UiWindowScope::UiWindowScope(
     const float t = easeOut(state.openProgress);
     applyWindowTransform(renderer, panel, lerp(0.9f, 1.0f, t), t);
     transformed_ = true;
-    drawUiWindowChrome(renderer, panel, title, helpText, options.cancelButton, options.frame);
+    drawUiWindowChrome(
+        renderer,
+        stateKey,
+        panel,
+        title,
+        helpText,
+        options.cancelButton,
+        options.frame);
 }
 
 UiWindowScope::~UiWindowScope()
@@ -1959,7 +2119,12 @@ void drawUiHeader(Renderer& renderer, UiRect panel, std::string_view title, UiWi
     renderer.drawText(titlePos + Vec2{1.0f, 0.0f}, title, UiHeaderTitleColor, UiHeaderTitleScale);
 }
 
-void drawUiFooter(Renderer& renderer, UiRect panel, std::string_view helpText, UiWindowFrame frame)
+void drawUiFooter(
+    Renderer& renderer,
+    UiRect panel,
+    std::string_view helpText,
+    UiWindowFrame frame,
+    std::string_view scrollStateId)
 {
     if (helpText.empty()) {
         return;
@@ -1979,13 +2144,32 @@ void drawUiFooter(Renderer& renderer, UiRect panel, std::string_view helpText, U
     helpStyle.text = ui::TextMuted;
     helpStyle.scale = 2;
     helpStyle.iconHeight = 23.0f;
-    const float maxWidth = footer.size.x - textPadding.x * 2.0f - ui::FooterHelpTextOffset.x;
-    const std::string fitted = fittedInputHelpText(renderer, std::string(helpText), maxWidth, helpStyle);
-    drawInputHelpText(renderer, footer.pos + textPadding + ui::FooterHelpTextOffset, fitted, helpStyle);
+    const Vec2 contentSize = measureInputHelpText(renderer, helpText, helpStyle);
+    const Vec2 textPos = footer.pos + textPadding + ui::FooterHelpTextOffset;
+    const UiRect clipRect{
+        {textPos.x, panel.pos.y},
+        {
+            std::max(0.0f, footer.pos.x + footer.size.x - textPadding.x - textPos.x),
+            panel.size.y,
+        },
+    };
+    const std::string resolvedStateId = scrollStateId.empty()
+        ? windowKey("footer", panel)
+        : std::string(scrollStateId) + ":footer";
+    drawScrollingInputHelp(
+        renderer,
+        resolvedStateId,
+        clipRect,
+        textPos.y,
+        helpText,
+        contentSize,
+        helpStyle,
+        false);
 }
 
 void drawUiBottomInputHelp(
     Renderer& renderer,
+    std::string_view scrollStateId,
     UiRect safeArea,
     std::string helpText,
     float horizontalInset,
@@ -2003,19 +2187,40 @@ void drawUiBottomInputHelp(
     helpStyle.iconHeight = 24.0f;
     helpStyle.outlineEnabled = true;
 
-    const float maxWidth = std::max(120.0f, safeArea.size.x - horizontalInset * 2.0f);
-    helpText = fittedInputHelpText(renderer, std::move(helpText), maxWidth, helpStyle);
-    const Vec2 textSize = measureInputHelpText(renderer, helpText, helpStyle);
-    const Vec2 pos{
-        safeArea.pos.x + (safeArea.size.x - textSize.x) * 0.5f,
-        safeArea.pos.y + std::max(0.0f, safeArea.size.y - textSize.y - bottomInset),
+    const Vec2 contentSize = measureInputHelpText(renderer, helpText, helpStyle);
+    const UiRect clipRect{
+        {safeArea.pos.x + horizontalInset, safeArea.pos.y},
+        {
+            std::max(0.0f, safeArea.size.x - horizontalInset * 2.0f),
+            safeArea.size.y,
+        },
     };
-    drawInputHelpText(renderer, pos, helpText, helpStyle);
+    const float drawY = safeArea.pos.y +
+        std::max(0.0f, safeArea.size.y - contentSize.y - bottomInset);
+    const std::string resolvedStateId = scrollStateId.empty()
+        ? windowKey("bottom-input-help", safeArea)
+        : std::string(scrollStateId) + ":bottom";
+    drawScrollingInputHelp(
+        renderer,
+        resolvedStateId,
+        clipRect,
+        drawY,
+        helpText,
+        contentSize,
+        helpStyle,
+        true);
 }
 
 void drawUiWindow(Renderer& renderer, UiRect panel, std::string_view title, std::string_view helpText)
 {
-    drawUiWindowChrome(renderer, panel, title, helpText, false, UiWindowFrame::Default);
+    drawUiWindowChrome(
+        renderer,
+        windowKey("window", panel),
+        panel,
+        title,
+        helpText,
+        false,
+        UiWindowFrame::Default);
 }
 
 void drawUiModalBackdrop(Renderer& renderer, UiRect bounds, Color color)

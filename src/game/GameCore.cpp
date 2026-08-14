@@ -49,7 +49,7 @@ constexpr std::string_view AudioSeMagicImpact = "se.magic.impact";
 constexpr std::string_view AudioSeCaptureFail = "se.capture.fail";
 constexpr std::string_view AudioSeExplosionTick = "se.explosion.tick";
 constexpr std::string_view AudioSeDiscovery = "se.discovery";
-constexpr std::string_view AudioSeMoneySpawn = "se.money.spawn";
+constexpr std::string_view AudioSeMoneyDrop = "se.money.drop";
 constexpr std::string_view AudioSeMoneyArrive = "se.money.arrive";
 constexpr std::string_view AudioSeEffectDiscovery = "se.discovery.effect";
 constexpr std::string_view AudioSeMonsterDiscovery = "se.discovery.monster";
@@ -1230,9 +1230,7 @@ bool Game::advanceInitialize()
         loadHitboxData();
         loadEnemyPlacementData();
         loadEnemyShadowData();
-        enemies_.setHitboxCatalog(&hitboxes_);
-        enemies_.setPlacementCatalog(&enemyPlacements_);
-        enemies_.setShadowCatalog(&enemyShadows_);
+        bindWorldEnemyCatalogs();
         initializeJob_.step = InitializeStep::LoadOpening;
         break;
     case InitializeStep::LoadOpening:
@@ -1403,13 +1401,25 @@ void Game::resetWorldEffectState()
     ambientParticleTimer_ = 0.0f;
 }
 
-void Game::resetWorldEnemyState()
+void Game::bindWorldEnemyCatalogs()
 {
-    resetInPlace(enemies_);
     enemies_.setHitboxCatalog(&hitboxes_);
     enemies_.setPlacementCatalog(&enemyPlacements_);
     enemies_.setShadowCatalog(&enemyShadows_);
+}
+
+void Game::resetWorldEnemyState()
+{
+    resetInPlace(enemies_);
+    bindWorldEnemyCatalogs();
     pendingBuriedEnemySpawns_.clear();
+}
+
+void Game::restoreWorldEnemyState(const EnemySystem& state)
+{
+    enemies_ = state;
+    bindWorldEnemyCatalogs();
+    enemies_.clearTemporaryState();
 }
 
 void Game::resetWorldProjectileState()
@@ -5023,6 +5033,7 @@ void Game::update(const Input& input, const Time& time, Renderer& renderer)
                 spellRing_,
                 player_,
                 time.totalSeconds(),
+                time.deltaSeconds(),
                 objectCatalog_,
                 &hitboxes_,
                 effectDispatcher_,
@@ -5733,8 +5744,8 @@ void Game::update(const Input& input, const Time& time, Renderer& renderer)
             magicFx_.update(time.deltaSeconds());
             effects_.update(time.deltaSeconds());
         }
-        for (const MoneyGainSpawnEvent& event : moneyGainFx_.consumeSpawnEvents()) {
-            playAudioSeAt(AudioSeMoneySpawn, event.position, 1.0f, event.pitchScale);
+        for (const MoneyGainLandingEvent& event : moneyGainFx_.consumeLandingEvents()) {
+            playAudioSeAt(AudioSeMoneyDrop, event.position, 1.0f, event.pitchScale);
         }
         for (const MoneyGainArrivalEvent& event : moneyGainFx_.consumeArrivalEvents()) {
             playAudioSeAt(AudioSeMoneyArrive, event.position, 0.56f, event.pitchScale);

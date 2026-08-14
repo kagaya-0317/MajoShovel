@@ -3,6 +3,7 @@
     [ValidateSet("Start", "Heartbeat", "Stop", "Status")]
     [string]$Action,
     [string[]]$Path = @(),
+    [string[]]$ChangeSummary = @(),
     [string]$SessionId = "",
     [int]$LeaseSeconds = 900,
     [int]$WaitForBuildSeconds = 3600
@@ -31,6 +32,22 @@ function Get-NormalizedSessionPaths([string[]]$InputPaths) {
         [void]$normalized.Add((Get-MajoShovelRepositoryRelativePath $Root $item))
     }
     return @($normalized | Sort-Object)
+}
+
+function Get-NormalizedChangeSummaries([string[]]$InputSummaries) {
+    $normalized = [System.Collections.Generic.List[string]]::new()
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($item in $InputSummaries) {
+        if ([string]::IsNullOrWhiteSpace($item)) {
+            continue
+        }
+        $summary = [regex]::Replace($item.Trim(), "[\t\r\n]+", " ")
+        $summary = [regex]::Replace($summary, " {2,}", " ")
+        if (-not [string]::IsNullOrWhiteSpace($summary) -and $seen.Add($summary)) {
+            $normalized.Add($summary)
+        }
+    }
+    return @($normalized)
 }
 
 function Read-Session([string]$Id) {
@@ -86,7 +103,7 @@ function Write-SessionLease([string]$Id, [string[]]$Paths, [DateTime]$StartedAtU
     return $lease
 }
 
-function Publish-SessionReceipt([string]$Id, [string[]]$Paths, [DateTime]$StartedAtUtc) {
+function Publish-SessionReceipt([string]$Id, [string[]]$Paths, [DateTime]$StartedAtUtc, [string[]]$ChangeSummaries) {
     $pathEvidence = [System.Collections.Generic.List[object]]::new()
     foreach ($pathItem in $Paths) {
         $normalized = $pathItem.Replace('\', '/').TrimStart('/')
@@ -111,6 +128,7 @@ function Publish-SessionReceipt([string]$Id, [string[]]$Paths, [DateTime]$Starte
         repositoryRoot = $Root
         startedAtUtc = $StartedAtUtc.ToString("o")
         stoppedAtUtc = [DateTime]::UtcNow.ToString("o")
+        changeSummaries = @($ChangeSummaries)
         paths = @($pathEvidence)
     }
     $receiptRoot = Join-Path (Get-MajoShovelCodexEditSessionRoot $Root) "completed"
@@ -158,9 +176,16 @@ switch ($Action) {
             [pscustomobject]@{ stopped = $false; sessionId = $resolvedSessionId; reason = "not-active" } | ConvertTo-Json
             break
         }
-        $receiptPath = Publish-SessionReceipt $resolvedSessionId @($existing.paths) (([DateTime]$existing.startedAtUtc).ToUniversalTime())
+        $normalizedSummaries = @(Get-NormalizedChangeSummaries $ChangeSummary)
+        $receiptPath = Publish-SessionReceipt $resolvedSessionId @($existing.paths) (([DateTime]$existing.startedAtUtc).ToUniversalTime()) $normalizedSummaries
         Remove-Item -LiteralPath (Get-MajoShovelCodexEditSessionPath $Root $resolvedSessionId) -Force
-        [pscustomobject]@{ stopped = $true; sessionId = $resolvedSessionId; receiptPath = $receiptPath; paths = @($existing.paths) } | ConvertTo-Json -Depth 5
+        [pscustomobject]@{
+            stopped = $true
+            sessionId = $resolvedSessionId
+            receiptPath = $receiptPath
+            changeSummaries = @($normalizedSummaries)
+            paths = @($existing.paths)
+        } | ConvertTo-Json -Depth 5
     }
     "Status" {
         $sessions = @(Get-MajoShovelCodexEditSessions $Root $true)

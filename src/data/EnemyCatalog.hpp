@@ -11,6 +11,10 @@
 
 namespace majo {
 
+inline constexpr double EnemySizeMultiplierDefault = 1.0;
+inline constexpr double EnemySizeMultiplierMin = 0.1;
+inline constexpr double EnemySizeMultiplierMax = 4.0;
+
 struct EnemyBehaviorSpec {
     std::string trigger;
     std::string behavior;
@@ -31,6 +35,7 @@ struct EnemyDefinition {
     std::string contactDamageType = "none";
     double moveSpeed = 0.0;
     double radius = 0.0;
+    double sizeMultiplier = EnemySizeMultiplierDefault;
     int xp = 0;
     int money = 0;
     std::string enemyAi;

@@ -661,6 +661,26 @@ void Input::updateKeyboardPolledBindings(const bool* keys)
         lastInputModality_ = InputModality::Keyboard;
     }
 
+    const bool shortcutModifierHeld =
+        keyboardHeld[actionIndex(InputAction::SecondaryActionModifier)] ||
+        sourceHeld(InputSource::Mouse, InputAction::SecondaryActionModifier);
+    if (shortcutModifierHeld) {
+        keyboardHeld[actionIndex(InputAction::ShortcutCursorLeft)] =
+            keyboardHeld[actionIndex(InputAction::MoveLeft)];
+        keyboardHeld[actionIndex(InputAction::ShortcutCursorRight)] =
+            keyboardHeld[actionIndex(InputAction::MoveRight)];
+        keyboardHeld[actionIndex(InputAction::PreviousShortcutRow)] =
+            keyboardHeld[actionIndex(InputAction::MoveUp)];
+        keyboardHeld[actionIndex(InputAction::NextShortcutRow)] =
+            keyboardHeld[actionIndex(InputAction::MoveDown)];
+
+        // サブ操作中の方向入力はショートカット操作だけへ流す。
+        keyboardHeld[actionIndex(InputAction::MoveLeft)] = false;
+        keyboardHeld[actionIndex(InputAction::MoveRight)] = false;
+        keyboardHeld[actionIndex(InputAction::MoveUp)] = false;
+        keyboardHeld[actionIndex(InputAction::MoveDown)] = false;
+    }
+
     for (int action = 0; action < ActionCount; ++action) {
         setSourceHeld(InputSource::Keyboard, static_cast<InputAction>(action), keyboardHeld[action]);
     }
@@ -739,6 +759,21 @@ void Input::updateGamepadState()
     }
     if (lengthSquared(gamepadRingShiftAxis_) > 1.0f) {
         gamepadRingShiftAxis_ = normalize(gamepadRingShiftAxis_);
+    }
+
+    const auto dpadHeld = [&](SDL_GamepadButton button) {
+        const std::size_t index = static_cast<std::size_t>(button);
+        return !consumedGamepadButtons_[index] && SDL_GetGamepadButton(gamepad_, button);
+    };
+    if (gamepadHeld[actionIndex(InputAction::SecondaryActionModifier)]) {
+        gamepadHeld[actionIndex(InputAction::ShortcutCursorLeft)] =
+            dpadHeld(SDL_GAMEPAD_BUTTON_DPAD_LEFT);
+        gamepadHeld[actionIndex(InputAction::ShortcutCursorRight)] =
+            dpadHeld(SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
+        gamepadHeld[actionIndex(InputAction::PreviousShortcutRow)] =
+            dpadHeld(SDL_GAMEPAD_BUTTON_DPAD_UP);
+        gamepadHeld[actionIndex(InputAction::NextShortcutRow)] =
+            dpadHeld(SDL_GAMEPAD_BUTTON_DPAD_DOWN);
     }
     for (int action = 0; action < ActionCount; ++action) {
         setSourceHeld(InputSource::Gamepad, static_cast<InputAction>(action), gamepadHeld[action]);

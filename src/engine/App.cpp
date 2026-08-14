@@ -56,8 +56,6 @@ constexpr int GameCursorHotspotX = 3;
 constexpr int GameCursorHotspotY = 3;
 constexpr std::string_view AudioSeDevBuildReady = "se.dev.build_ready";
 constexpr std::string_view AudioSeDevBuildFailed = "se.dev.build_failed";
-constexpr std::string_view DevBuildReadyWindowTitleSuffix = " [*ビルド更新あり*]";
-constexpr std::string_view DevBuildFailedWindowTitleSuffix = " [*ビルド失敗*]";
 constexpr float DevBuildReadyNoticeSeconds = 2.0f;
 constexpr float DevBuildFailedNoticeSeconds = 3.0f;
 
@@ -441,6 +439,8 @@ std::string_view stripUtf8Bom(std::string_view value)
 struct DevBuildStatusRecord {
     std::string kind;
     std::string token;
+    std::string buildId;
+    std::vector<std::string> changeSummaries;
 };
 
 std::optional<DevBuildStatusRecord> loadDevBuildStatus()
@@ -450,21 +450,53 @@ std::optional<DevBuildStatusRecord> loadDevBuildStatus()
         return std::nullopt;
     }
 
-    std::string line;
-    std::getline(file, line);
-    line = trimAscii(std::string(stripUtf8Bom(line)));
-    const std::size_t separator = line.find('\t');
+    std::string firstLine;
+    std::getline(file, firstLine);
+    firstLine = trimAscii(std::string(stripUtf8Bom(firstLine)));
+    const std::size_t separator = firstLine.find('\t');
     if (separator == std::string::npos) {
         return std::nullopt;
     }
 
     DevBuildStatusRecord record;
-    record.kind = lowerAscii(trimAscii(line.substr(0, separator)));
-    record.token = trimAscii(line.substr(separator + 1));
-    if ((record.kind != "ready" && record.kind != "failed") || record.token.empty()) {
+    record.kind = lowerAscii(trimAscii(firstLine.substr(0, separator)));
+    record.token = trimAscii(firstLine.substr(separator + 1));
+    if ((record.kind != "building" && record.kind != "ready" && record.kind != "failed") ||
+        record.token.empty()) {
         return std::nullopt;
     }
+
+    std::string line;
+    while (std::getline(file, line)) {
+        line = trimAscii(line);
+        const std::size_t fieldSeparator = line.find('\t');
+        if (fieldSeparator == std::string::npos) {
+            continue;
+        }
+        const std::string field = lowerAscii(trimAscii(line.substr(0, fieldSeparator)));
+        const std::string value = trimAscii(line.substr(fieldSeparator + 1));
+        if (field == "build_id") {
+            record.buildId = value;
+        } else if (field == "summary" && !value.empty()) {
+            record.changeSummaries.push_back(value);
+        }
+    }
     return record;
+}
+
+std::string joinDevBuildChangeSummaries(const std::vector<std::string>& summaries)
+{
+    std::string text;
+    for (const std::string& summary : summaries) {
+        if (summary.empty()) {
+            continue;
+        }
+        if (!text.empty()) {
+            text += " / ";
+        }
+        text += summary;
+    }
+    return text;
 }
 
 std::optional<DevLaunchMode> parseDevLaunchMode(std::string_view value)
@@ -806,9 +838,9 @@ bool App::initialize(
     baseWindowTitle_ = title != nullptr ? title : "";
     autoReloadBlocked_ = false;
     runtimeHotReloadEnabled_ = false;
-    devBuildState_ = DevBuildState::None;
-    devBuildNoticeFailed_ = false;
+    devBuildState_ = DevBuildNoticeState::None;
     devBuildStatusToken_.clear();
+    devBuildChangeSummaries_.clear();
     devBuildNoticeTimer_ = 0.0f;
     nextDevBuildStatusPollTicks_ = 0;
     testFreezePaused_ = false;
@@ -1183,10 +1215,27 @@ void App::updateWindowTitle()
     }
 
     std::string title = baseWindowTitle_;
-    if (devBuildState_ == DevBuildState::Ready) {
-        title += DevBuildReadyWindowTitleSuffix;
-    } else if (devBuildState_ == DevBuildState::Failed) {
-        title += DevBuildFailedWindowTitleSuffix;
+    if (devBuildState_ != DevBuildNoticeState::None) {
+        title += " [*";
+        switch (devBuildState_) {
+        case DevBuildNoticeState::Building:
+            title += "ビルド更新中";
+            break;
+        case DevBuildNoticeState::Ready:
+            title += "ビルド更新あり";
+            break;
+        case DevBuildNoticeState::Failed:
+            title += "ビルド失敗";
+            break;
+        case DevBuildNoticeState::None:
+            break;
+        }
+        const std::string summaries = joinDevBuildChangeSummaries(devBuildChangeSummaries_);
+        if (!summaries.empty()) {
+            title += "：";
+            title += summaries;
+        }
+        title += "*]";
     }
     if (!SDL_SetWindowTitle(window_, title.c_str())) {
         logWarning(std::string("SDL_SetWindowTitle failed: ") + SDL_GetError());
@@ -1207,43 +1256,48 @@ void App::checkDevBuildStatus()
 
     const std::optional<DevBuildStatusRecord> status = loadDevBuildStatus();
     if (!status) {
-        if (devBuildState_ != DevBuildState::None) {
-            devBuildState_ = DevBuildState::None;
-            devBuildNoticeFailed_ = false;
+        if (devBuildState_ != DevBuildNoticeState::None) {
+            devBuildState_ = DevBuildNoticeState::None;
             devBuildStatusToken_.clear();
+            devBuildChangeSummaries_.clear();
             devBuildNoticeTimer_ = 0.0f;
             updateWindowTitle();
         }
         return;
     }
 
-    const DevBuildState nextState = status->kind == "ready"
-        ? DevBuildState::Ready
-        : DevBuildState::Failed;
+    const DevBuildNoticeState nextState = status->kind == "building"
+        ? DevBuildNoticeState::Building
+        : (status->kind == "ready" ? DevBuildNoticeState::Ready : DevBuildNoticeState::Failed);
     if (devBuildState_ == nextState && devBuildStatusToken_ == status->token) {
         return;
     }
 
     devBuildState_ = nextState;
-    devBuildNoticeFailed_ = nextState == DevBuildState::Failed;
     devBuildStatusToken_ = status->token;
-    devBuildNoticeTimer_ = devBuildNoticeFailed_
+    devBuildChangeSummaries_ = status->changeSummaries;
+    devBuildNoticeTimer_ = nextState == DevBuildNoticeState::Failed
         ? DevBuildFailedNoticeSeconds
-        : DevBuildReadyNoticeSeconds;
+        : (nextState == DevBuildNoticeState::Ready ? DevBuildReadyNoticeSeconds : 0.0f);
     updateWindowTitle();
-    if (devBuildNoticeFailed_) {
+    if (nextState == DevBuildNoticeState::Failed) {
         audio_.playSe(AudioSeDevBuildFailed);
         logWarning("Dev build failed. Check the build console.");
-    } else {
+    } else if (nextState == DevBuildNoticeState::Ready) {
         audio_.playSe(AudioSeDevBuildReady);
         logInfo("Dev build ready. Press F5 to apply it.");
+    } else {
+        logInfo("Dev build started: " + joinDevBuildChangeSummaries(devBuildChangeSummaries_));
     }
 }
 
 void App::updateDevBuildNotice(float dt)
 {
     devBuildNoticeTimer_ = std::max(0.0f, devBuildNoticeTimer_ - std::max(0.0f, dt));
-    game_.setDevBuildNotice(devBuildNoticeTimer_ > 0.0f, devBuildNoticeFailed_);
+    const bool visible = devBuildNoticeTimer_ > 0.0f;
+    game_.setDevBuildNotice(
+        visible ? devBuildState_ : DevBuildNoticeState::None,
+        devBuildChangeSummaries_);
 }
 
 void App::requestRestart()
@@ -1353,6 +1407,10 @@ bool App::executeSettingsDebugCommand(const std::string& normalizedCommand)
                     logWarning("Unknown input action: " + words[3]);
                     return true;
                 }
+                if (!inputActionHasPersistentBindings(*action)) {
+                    logInfo(std::string(inputActionName(*action)) + ": derived from the secondary action and direction input");
+                    return true;
+                }
                 logInfo(
                     std::string(inputActionName(*action)) +
                     ": " +
@@ -1361,6 +1419,9 @@ bool App::executeSettingsDebugCommand(const std::string& normalizedCommand)
             }
             for (int action = 0; action < InputActionCount; ++action) {
                 const auto inputAction = static_cast<InputAction>(action);
+                if (!inputActionHasPersistentBindings(inputAction)) {
+                    continue;
+                }
                 logInfo(
                     std::string(inputActionName(inputAction)) +
                     ": " +
@@ -1381,6 +1442,10 @@ bool App::executeSettingsDebugCommand(const std::string& normalizedCommand)
             const std::optional<InputAction> action = parseInputAction(words[3]);
             if (!action) {
                 logWarning("Unknown input action: " + words[3]);
+                return true;
+            }
+            if (!inputActionHasPersistentBindings(*action)) {
+                logWarning("This action is derived from the secondary action and direction input.");
                 return true;
             }
 

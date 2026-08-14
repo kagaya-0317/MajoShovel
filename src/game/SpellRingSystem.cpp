@@ -1527,6 +1527,9 @@ void SpellRingSystem::refreshItemWorldPositions(float dt, const RuntimeBalance& 
                 ? normalizeLocalParam(ringShape, item.localAngle, context.tuning)
                 : normalizeAngle(baseAngles_[static_cast<std::size_t>(ringIndex)] + item.localAngle);
             const Vec2 previousWorldPosition = item.worldPosition;
+            const Vec2 previousWorldVelocity = item.worldVelocity;
+            const Vec2 previousOrbitOutward = item.orbitOutward;
+            const bool previousMotionHistoryValid = item.motionHistoryValid;
             Vec2 damageVelocity{};
             if (runtime.state == SpellRingState::Normal) {
                 const Vec2 localPosition = getRingItemLocalPosition(param, context);
@@ -1642,6 +1645,10 @@ void SpellRingSystem::refreshItemWorldPositions(float dt, const RuntimeBalance& 
             }
             item.orbitMotionSpeed = length(item.worldVelocity) / ringRadiusForSpeed;
             item.damageMotionSpeed = length(damageVelocity) / ringRadiusForSpeed;
+            item.previousWorldPosition = previousMotionHistoryValid ? previousWorldPosition : item.worldPosition;
+            item.previousWorldVelocity = previousMotionHistoryValid ? previousWorldVelocity : item.worldVelocity;
+            item.previousOrbitOutward = previousMotionHistoryValid ? previousOrbitOutward : item.orbitOutward;
+            item.motionHistoryValid = true;
         }
     }
 }
@@ -2043,6 +2050,11 @@ void SpellRingSystem::resetRuntimeStateAtPlayer(const Player& player, const Runt
     enemyOrbitSpeedDebuffTimer_ = 0.0f;
     motionEvents_.clear();
     clearActionFlashTimers();
+    for (auto& ringItems : itemsByRing_) {
+        for (SpellRingItem& item : ringItems) {
+            item.motionHistoryValid = false;
+        }
+    }
     refreshItemWorldPositions(0.0f, balance, false);
 }
 
@@ -3418,6 +3430,16 @@ float SpellRingSystem::effectiveAngularSpeedForRing(int ringIndex) const
         static_cast<double>(weightSpeedMultiplierForRing(ringIndex)) *
         orbitModifiers_.speedMultiplier *
         static_cast<double>(enemyOrbitSpeedDebuffMultiplier_));
+}
+
+float SpellRingSystem::worldItemVisualScale(const SpellRingItem& item) const
+{
+    const int ringIndex = std::clamp(item.ringIndex, 0, SpellRingCount - 1);
+    if (ringShapeForIndex(ringIndex) != RingShape::Comet) {
+        return 1.0f;
+    }
+    const int itemCount = static_cast<int>(itemsForRing(ringIndex).size());
+    return std::clamp(1.0f - std::max(0, itemCount - 10) * 0.014f, 0.76f, 1.0f);
 }
 
 const RingEquipmentModifiers& SpellRingSystem::equipmentModifiersForRing(int ringIndex) const

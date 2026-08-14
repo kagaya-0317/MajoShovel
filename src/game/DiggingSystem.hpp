@@ -47,6 +47,7 @@ public:
         SpellRingSystem& spellRing,
         Player& player,
         float totalTime,
+        float dt,
         const ObjectCatalog& objectCatalog,
         const HitboxCatalog* hitboxCatalog,
         const EffectDispatcher& effectDispatcher,

@@ -797,9 +797,15 @@ void drawUiTextWithIcon(
 void drawUiPanel(Renderer& renderer, UiRect panel, UiWindowFrame frame = UiWindowFrame::Default);
 void drawUiSubPanel(Renderer& renderer, UiRect panel);
 void drawUiHeader(Renderer& renderer, UiRect panel, std::string_view title, UiWindowFrame frame = UiWindowFrame::Default);
-void drawUiFooter(Renderer& renderer, UiRect panel, std::string_view helpText, UiWindowFrame frame = UiWindowFrame::Default);
+void drawUiFooter(
+    Renderer& renderer,
+    UiRect panel,
+    std::string_view helpText,
+    UiWindowFrame frame = UiWindowFrame::Default,
+    std::string_view scrollStateId = {});
 void drawUiBottomInputHelp(
     Renderer& renderer,
+    std::string_view scrollStateId,
     UiRect safeArea,
     std::string helpText,
     float horizontalInset = 16.0f,

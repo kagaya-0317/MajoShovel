@@ -2128,7 +2128,7 @@ bool Game::loadSaveData(const std::filesystem::path& path)
         dungeonLayout_ = generateDungeonLayout(context);
         tileMap_ = TileMap{};
         runStats_ = RunStats{};
-        enemies_ = EnemySystem{};
+        resetWorldEnemyState();
         worldDrops_ = WorldDropSystem{};
         worldDrops_.setDropLimit(balance_.worldDropLimitPerStage);
         rewardNodes_.clear();

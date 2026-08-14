@@ -6,7 +6,9 @@
 #include "game/ItemModel.hpp"
 #include "game/Chunk.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -477,6 +479,7 @@ struct Enemy {
     Vec2 position{};
     Vec2 velocity{};
     float radius = 10.0f;
+    float definitionSizeMultiplier = static_cast<float>(EnemySizeMultiplierDefault);
     int hp = 5;
     int maxHp = 5;
     int xp = 5;
@@ -607,6 +610,21 @@ struct Enemy {
     float coldExposure = 0.0f;
     bool coldExposureTouched = false;
     EntityStatus status;
+
+    [[nodiscard]] float effectiveSizeMultiplier() const
+    {
+        const float definitionMultiplier = std::isfinite(definitionSizeMultiplier)
+            ? std::clamp(
+                  definitionSizeMultiplier,
+                  static_cast<float>(EnemySizeMultiplierMin),
+                  static_cast<float>(EnemySizeMultiplierMax))
+            : static_cast<float>(EnemySizeMultiplierDefault);
+        const float rawStatusMultiplier = static_cast<float>(status.sizeMultiplierFromStates());
+        const float statusMultiplier = std::isfinite(rawStatusMultiplier)
+            ? std::max(0.0f, rawStatusMultiplier)
+            : 1.0f;
+        return definitionMultiplier * statusMultiplier;
+    }
 };
 
 }

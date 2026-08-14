@@ -269,6 +269,14 @@ constexpr bool isDirectionalAction(InputAction action)
         action == InputAction::MoveDown;
 }
 
+constexpr bool isDerivedShortcutNavigationAction(InputAction action)
+{
+    return action == InputAction::ShortcutCursorLeft ||
+        action == InputAction::ShortcutCursorRight ||
+        action == InputAction::PreviousShortcutRow ||
+        action == InputAction::NextShortcutRow;
+}
+
 constexpr bool isIntentionalActionAlias(InputAction lhs, InputAction rhs)
 {
     return ((lhs == InputAction::Confirm && rhs == InputAction::UseSelectedItem) ||
@@ -281,7 +289,8 @@ constexpr bool isUserConfigurableAction(InputAction action)
 {
     return inputActionIndex(action) >= inputActionIndex(InputAction::MoveLeft) &&
         inputActionIndex(action) <= inputActionIndex(InputAction::ToggleFullscreen) &&
-        action != InputAction::OffsetRingCenter;
+        action != InputAction::OffsetRingCenter &&
+        !isDerivedShortcutNavigationAction(action);
 }
 
 constexpr bool isDeveloperOnlyAction(InputAction action)
@@ -450,26 +459,6 @@ InputBindingMap defaultInputBindings()
     addKeyboard(bindings, InputAction::MoveUp, SDL_SCANCODE_UP);
     addKeyboard(bindings, InputAction::MoveDown, SDL_SCANCODE_S);
     addKeyboard(bindings, InputAction::MoveDown, SDL_SCANCODE_DOWN);
-    addKeyboard(
-        bindings,
-        InputAction::ShortcutCursorLeft,
-        SDL_SCANCODE_LEFT,
-        InputModifiers::Shift);
-    addKeyboard(
-        bindings,
-        InputAction::ShortcutCursorRight,
-        SDL_SCANCODE_RIGHT,
-        InputModifiers::Shift);
-    addKeyboard(
-        bindings,
-        InputAction::PreviousShortcutRow,
-        SDL_SCANCODE_UP,
-        InputModifiers::Shift);
-    addKeyboard(
-        bindings,
-        InputAction::NextShortcutRow,
-        SDL_SCANCODE_DOWN,
-        InputModifiers::Shift);
     addKeyboard(bindings, InputAction::SecondaryActionModifier, SDL_SCANCODE_LSHIFT);
     addKeyboard(bindings, InputAction::SecondaryActionModifier, SDL_SCANCODE_RSHIFT);
     addKeyboard(bindings, InputAction::UseSelectedItem, SDL_SCANCODE_F);
@@ -510,10 +499,6 @@ InputBindingMap defaultInputBindings()
     addGamepadButton(bindings, InputAction::CycleNext, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
     addGamepadButton(bindings, InputAction::OpenOptions, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
     addGamepadButton(bindings, InputAction::OpenCredits, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
-    addGamepadButton(bindings, InputAction::ShortcutCursorLeft, SDL_GAMEPAD_BUTTON_DPAD_LEFT);
-    addGamepadButton(bindings, InputAction::ShortcutCursorRight, SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
-    addGamepadButton(bindings, InputAction::PreviousShortcutRow, SDL_GAMEPAD_BUTTON_DPAD_DOWN);
-    addGamepadButton(bindings, InputAction::NextShortcutRow, SDL_GAMEPAD_BUTTON_DPAD_UP);
     addGamepadButton(bindings, InputAction::PutSelectedItemOnRing, SDL_GAMEPAD_BUTTON_WEST);
 
     // メニューは「戻る」と同じ入力で開閉できるよう、既定割当を共有する。
@@ -566,6 +551,14 @@ InputBindingMap sanitizeInputBindings(InputBindingMap bindings)
     // マウスドラッグによるリングずらしは固定操作として扱い、保存値では変更させない。
     bindings[inputActionIndex(InputAction::OffsetRingCenter)] =
         defaults[inputActionIndex(InputAction::OffsetRingCenter)];
+    for (const InputAction action : {
+            InputAction::ShortcutCursorLeft,
+            InputAction::ShortcutCursorRight,
+            InputAction::PreviousShortcutRow,
+            InputAction::NextShortcutRow,
+        }) {
+        bindings[inputActionIndex(action)].clear();
+    }
     return bindings;
 }
 
@@ -594,6 +587,11 @@ bool inputActionRequiresBinding(InputAction action)
 bool inputActionCanBeRemapped(InputAction action)
 {
     return isUserConfigurableAction(action);
+}
+
+bool inputActionHasPersistentBindings(InputAction action)
+{
+    return !isDerivedShortcutNavigationAction(action);
 }
 
 bool inputActionIsDeveloperOnly(InputAction action)

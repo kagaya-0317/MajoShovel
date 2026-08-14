@@ -52,7 +52,6 @@ constexpr float GrabbedSlotContentAlpha = 0.42f;
 constexpr float GrabbedFloatingIconLift = 38.0f;
 constexpr float GrabbedFloatingIconBobAmplitude = 4.0f;
 constexpr float GrabbedFloatingIconBobSpeed = 5.4f;
-constexpr float InventoryScreenGridDownShift = 60.0f;
 constexpr std::array<Vec2, ShortcutHudColumns> ShortcutHudSlotCenters{{
     {160.0f / ShortcutHudFrameDesignW, 74.0f / ShortcutHudFrameDesignH},
     {278.0f / ShortcutHudFrameDesignW, 74.0f / ShortcutHudFrameDesignH},
@@ -88,24 +87,14 @@ UiRect closeButtonRect()
     return {{PanelX + PanelW - 70.0f, PanelY + 18.0f}, {46.0f, 34.0f}};
 }
 
-const InventoryUiScreenLayout& inventoryScreenLayout()
-{
-    static const InventoryUiScreenLayout layout = [] {
-        InventoryUiScreenLayout result = standardInventoryUiScreenLayout();
-        result.gridOrigin.y += InventoryScreenGridDownShift;
-        return result;
-    }();
-    return layout;
-}
-
 UiRect inventoryScreenRect()
 {
-    return inventoryScreenLayout().window;
+    return standardInventoryUiScreenLayout().window;
 }
 
 UiRect inventoryModalBackdropRect()
 {
-    return inventoryScreenLayout().backdrop;
+    return standardInventoryUiScreenLayout().backdrop;
 }
 
 int clampedUnlockedRingCount(int unlockedRingCount)
@@ -133,7 +122,7 @@ UiRect inventoryDiscardConfirmRect()
 
 UiRect inventorySlotRect(int index)
 {
-    return inventoryUiScreenSlotRect(inventoryScreenLayout(), index);
+    return inventoryUiScreenSlotRect(standardInventoryUiScreenLayout(), index);
 }
 
 UiRect makeShortcutHudPanelRect(int screenWidth, int screenHeight)
@@ -3067,7 +3056,7 @@ void InventorySystem::render(
     }
 
     UiCancelControlScope cancelScope(cancelState_);
-    const InventoryUiScreenLayout& screenLayout = inventoryScreenLayout();
+    const InventoryUiScreenLayout& screenLayout = standardInventoryUiScreenLayout();
     UiWindowScope inventoryWindow(
         renderer,
         "inventory.main",

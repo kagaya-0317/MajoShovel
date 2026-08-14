@@ -28,7 +28,9 @@ $receiptPath = ""
 foreach ($file in $receipts) {
     try {
         $candidate = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
-        if ([string]::Equals([string]$candidate.sessionId, $SessionId, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $hasBuildInput = @($candidate.paths | Where-Object { $_.isBuildInputPath }).Count -gt 0
+        if ($hasBuildInput -and
+            [string]::Equals([string]$candidate.sessionId, $SessionId, [System.StringComparison]::OrdinalIgnoreCase)) {
             $receipt = $candidate
             $receiptPath = $file.FullName
             break
@@ -38,7 +40,7 @@ foreach ($file in $receipts) {
     }
 }
 if ($null -eq $receipt) {
-    Stop-NotReusable "no completed edit receipt exists for session '$SessionId'"
+    Stop-NotReusable "no completed edit receipt with build inputs exists for session '$SessionId'"
 }
 if ($receipt.schemaVersion -ne 2) {
     Stop-NotReusable "the latest edit receipt uses an unsupported schema"

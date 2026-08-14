@@ -684,6 +684,7 @@ void drawBaseControlHelp(Renderer& renderer, int screenWidth, int screenHeight, 
     const float safeTop = TopInfoBarY + TopInfoBarHeight + 8.0f;
     drawUiBottomInputHelp(
         renderer,
+        "base.control-help",
         {{0.0f, safeTop}, {screenW, std::max(0.0f, screenH - safeTop)}},
         std::move(help));
 }

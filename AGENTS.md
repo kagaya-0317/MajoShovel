@@ -108,9 +108,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command `
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
   .\tools\codex_edit_session.ps1 -Action Heartbeat
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
-  .\tools\codex_edit_session.ps1 -Action Stop
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command `
+  "& .\tools\codex_edit_session.ps1 -Action Stop -ChangeSummary @('レベルアップ演出の改善')"
 ```
+
+- `Stop` では `-ChangeSummary` に、その編集セッションで実現したユーザーの依頼内容を短い日本語で必ず渡す。`GameRender.cpp更新`、`コード変更`、`修正対応` のようなファイル名・実装作業・抽象的な作業名は使わず、`レベルアップ演出の改善`、`商人画面のキャンセル操作でコマンドだけを閉じるよう修正` のように、ユーザー視点で結果が分かる表現にする。
+- 独立した変更内容が複数ある場合は `powershell.exe -Command "& .\tools\codex_edit_session.ps1 -Action Stop -ChangeSummary @('変更内容1', '変更内容2')"` のように、配列が評価される `-Command` 形式ですべて列挙する。自動リロードのゲーム内通知とタイトルバーは省略せず全件を表示するため、`ほか2件` のようにまとめない。
+- `ChangeSummary` はビルドに含まれた編集完了証跡と関連付けられる。ビルド失敗時は次の成功ビルドまで保持され、同じ文言は重複排除される。
 
 すべてのコード編集セッションが終了すると、自動リロードはキューされた変更をまとめてビルドする。成功した一回のビルドは、その入力に各セッション終了時のファイル内容が含まれ、
 変更した `.cpp` の再コンパイルなど従来の条件も満たす場合、複数チャットそれぞれの個別の成功証拠として保存される。

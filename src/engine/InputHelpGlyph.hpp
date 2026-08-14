@@ -46,7 +46,10 @@ void setInputHelpDeviceMode(InputHelpDeviceMode mode);
 [[nodiscard]] InputHelpDeviceMode inputHelpDeviceMode();
 [[nodiscard]] std::string inlineInputActionTag(InputAction action);
 [[nodiscard]] std::string inlineInputActionsTag(std::initializer_list<InputAction> actions);
+[[nodiscard]] std::string inlineInputKeyChordTag(std::initializer_list<std::string_view> keyLabels);
 [[nodiscard]] std::string inlineRingRemoveAllInputTag();
+[[nodiscard]] std::string inlineShortcutCursorInputTag();
+[[nodiscard]] std::string inlineShortcutRowInputTag();
 [[nodiscard]] std::string buildInputHelpText(std::initializer_list<InputHelpEntry> entries);
 [[nodiscard]] std::string buildInputHelpText(const std::vector<InputHelpEntry>& entries);
 [[nodiscard]] bool inputHelpExplicitTagAt(

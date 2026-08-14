@@ -41,6 +41,7 @@ struct ObjectImageDrawOptions {
     int outlinePx = 6);
 
 void setObjectImageScaleOverrides(const std::unordered_map<std::string, float>* scaleByObjectId);
+[[nodiscard]] float objectImageScaleMultiplier(std::string_view objectId);
 
 [[nodiscard]] std::string objectImagePathFromNumber(int imageNumber);
 [[nodiscard]] std::string objectImagePath(const ObjectDefinition& object);

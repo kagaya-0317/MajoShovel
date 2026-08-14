@@ -56,6 +56,7 @@ constexpr UiDetailLineStyle InventoryDetailLineStyle{
 constexpr std::string_view RarityStarGlyph = "★";
 constexpr int RarityStarScale = 2;
 constexpr float RarityStarGap = 2.0f;
+constexpr float StandardInventoryUiGridTopInset = 144.0f;
 
 struct InlineIconTag {
     InlineIconKind kind = InlineIconKind::Item;
@@ -2115,7 +2116,7 @@ const InventoryUiScreenLayout& standardInventoryUiScreenLayout()
         const float detailX = result.window.pos.x + 820.0f;
         result.gridOrigin = {
             StandardInventoryUiGridOriginX,
-            result.window.pos.y + 84.0f,
+            result.window.pos.y + StandardInventoryUiGridTopInset,
         };
         result.detailPanel = {
             {detailX, result.window.pos.y + 50.0f},

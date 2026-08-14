@@ -1981,12 +1981,8 @@ void drawDungeonRingIntroItem(
     }
     const float lift = (1.0f - reveal) * 22.0f + std::sin(local * Pi) * 10.0f;
     const Vec2 drawPosition = elevatedDrawPosition(introGround, ringItemAltitude(item, totalSeconds) + lift);
-    const RingShape ringShape = spellRing.ringShapeForIndex(ringIndex);
-    const int ringItemCount = static_cast<int>(spellRing.itemsForRing(ringIndex).size());
-    const float cometVisualScale = ringShape == RingShape::Comet
-        ? std::clamp(1.0f - std::max(0, ringItemCount - 10) * 0.014f, 0.76f, 1.0f)
-        : 1.0f;
-    const float popScale = cometVisualScale * (lerp(0.56f, 1.0f, reveal) + std::sin(local * Pi) * 0.16f * (1.0f - local));
+    const float worldVisualScale = spellRing.worldItemVisualScale(item);
+    const float popScale = worldVisualScale * (lerp(0.56f, 1.0f, reveal) + std::sin(local * Pi) * 0.16f * (1.0f - local));
     const unsigned char alpha = alphaByte(255.0f * reveal);
     const Color tint{255, 255, 255, alpha};
 
@@ -2000,13 +1996,13 @@ void drawDungeonRingIntroItem(
         ObjectImageDrawOptions options;
         options.tint = tint;
         options.outlineColor.a = alpha;
-        options.scaleMultiplier = popScale / std::max(0.001f, cometVisualScale);
+        options.scaleMultiplier = popScale / std::max(0.001f, worldVisualScale);
         return drawRingItemObjectImage(
             renderer,
             item,
             object,
             drawPosition,
-            {RingObjectImageMaxSize * cometVisualScale, RingObjectImageMaxSize * cometVisualScale},
+            {RingObjectImageMaxSize * worldVisualScale, RingObjectImageMaxSize * worldVisualScale},
             outward,
             forward,
             totalSeconds,
@@ -2091,16 +2087,6 @@ std::vector<const SpellRingItem*> visibleRuntimeRingItems(
     return result;
 }
 
-float ringItemCometVisualScale(const SpellRingSystem& spellRing, const SpellRingItem& item)
-{
-    const int ringIndex = std::clamp(item.ringIndex, 0, SpellRingCount - 1);
-    const RingShape ringShape = spellRing.ringShapeForIndex(ringIndex);
-    const int ringItemCount = static_cast<int>(spellRing.itemsForRing(ringIndex).size());
-    return ringShape == RingShape::Comet
-        ? std::clamp(1.0f - std::max(0, ringItemCount - 10) * 0.014f, 0.76f, 1.0f)
-        : 1.0f;
-}
-
 void drawSpellRingItemWorldVisual(
     Renderer& renderer,
     const SpellRingSystem& spellRing,
@@ -2110,22 +2096,22 @@ void drawSpellRingItemWorldVisual(
     bool drawShadow,
     bool drawMagicAuraOverlay)
 {
-    const float cometVisualScale = ringItemCometVisualScale(spellRing, item);
+    const float worldVisualScale = spellRing.worldItemVisualScale(item);
     const Vec2 drawPosition = ringItemDrawPosition(item, totalSeconds);
 
     if (drawShadow) {
         renderer.drawActorShadow(
             actorShadowAnchor(item.worldPosition, ItemShadowGroundOffsetY),
-            ringItemShadowVisualSize(item, totalSeconds) * cometVisualScale);
+            ringItemShadowVisualSize(item, totalSeconds) * worldVisualScale);
     }
 
     const ItemData* object = objectForRingItem(objectCatalog, item);
     const Vec2 outward = item.orbitOutward;
     const Vec2 maxImageSize{
-        RingObjectImageMaxSize * cometVisualScale,
-        RingObjectImageMaxSize * cometVisualScale};
+        RingObjectImageMaxSize * worldVisualScale,
+        RingObjectImageMaxSize * worldVisualScale};
     const ExplosionWarningVisual breakExplosionWarning = ringItemBreakExplosionWarningVisual(item);
-    const float breakExplosionVisualRadius = std::max(10.0f, item.hitRadius * cometVisualScale);
+    const float breakExplosionVisualRadius = std::max(10.0f, item.hitRadius * worldVisualScale);
     drawRingItemBreakExplosionWarningAura(renderer, drawPosition, breakExplosionVisualRadius, breakExplosionWarning);
 
     const bool drewImage = drawRingItemObjectImage(
@@ -2139,25 +2125,25 @@ void drawSpellRingItemWorldVisual(
         totalSeconds);
     if (!drewImage) {
         if (item.type == SpellRingItemType::Shovel) {
-            renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {178, 184, 190, 255});
-            renderer.drawLine(drawPosition, drawPosition + outward * (15.0f * cometVisualScale), {90, 96, 102, 255});
+            renderer.fillCircle(drawPosition, item.hitRadius * worldVisualScale, {178, 184, 190, 255});
+            renderer.drawLine(drawPosition, drawPosition + outward * (15.0f * worldVisualScale), {90, 96, 102, 255});
         } else if (item.type == SpellRingItemType::Torch) {
-            renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {242, 122, 25, 255});
-            renderer.fillCircle(drawPosition + Vec2{2.0f, -2.0f} * cometVisualScale, 4.0f * cometVisualScale, {255, 238, 98, 255});
+            renderer.fillCircle(drawPosition, item.hitRadius * worldVisualScale, {242, 122, 25, 255});
+            renderer.fillCircle(drawPosition + Vec2{2.0f, -2.0f} * worldVisualScale, 4.0f * worldVisualScale, {255, 238, 98, 255});
         } else {
-            renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {96, 122, 210, 255});
-            renderer.drawCircle(drawPosition, item.hitRadius * cometVisualScale + 3.0f, {160, 202, 255, 255});
+            renderer.fillCircle(drawPosition, item.hitRadius * worldVisualScale, {96, 122, 210, 255});
+            renderer.drawCircle(drawPosition, item.hitRadius * worldVisualScale + 3.0f, {160, 202, 255, 255});
         }
     }
 
     drawRingItemBreakExplosionWarningOverlay(renderer, drawPosition, breakExplosionVisualRadius, breakExplosionWarning);
-    drawDetectionBadges(renderer, item, drawPosition, cometVisualScale);
+    drawDetectionBadges(renderer, item, drawPosition, worldVisualScale);
 
     if (drawMagicAuraOverlay && item.magicAuraTimer > 0.0f && !item.magicAuraDamageType.empty() && item.magicAuraFxEmitterId == 0) {
         drawMagicAura(
             renderer,
             drawPosition,
-            std::max(8.0f, item.hitRadius * cometVisualScale),
+            std::max(8.0f, item.hitRadius * worldVisualScale),
             item.magicAuraDamageType,
             totalSeconds);
     }
@@ -2352,7 +2338,6 @@ constexpr float OptionsDetailWindowHeightExtension = 30.0f;
 constexpr float OptionsSettingsRowHeight = 38.0f * 1.2f;
 constexpr float OptionsSettingsRowGap = 4.0f;
 constexpr float OperationSettingsTextOffsetY = 2.0f;
-constexpr Color OperationSettingsHoveredRowFill{72, 72, 78, 170};
 constexpr Color OperationSettingsHoveredCellFill{94, 94, 102, 190};
 constexpr Color OperationSettingsSelectedCellFill{56, 76, 154, 190};
 
@@ -2419,7 +2404,7 @@ constexpr OperationSettingsActionRow OperationSettingsActionRows[] = {
     {InputAction::OpenCredits, "クレジット（タイトル画面）", 0},
     {InputAction::ToggleFullscreen, "フルスクリーン切替", 0},
     {InputAction::ThrowActiveRing, "リングを投げる", 1},
-    {InputAction::OffsetRingCenter, "リングずらし（ドラッグ）", 1},
+    {InputAction::OffsetRingCenter, "リングずらし", 1},
     {InputAction::ShiftRingLeft, "リングずらし：左", 1},
     {InputAction::ShiftRingRight, "リングずらし：右", 1},
     {InputAction::ShiftRingUp, "リングずらし：上", 1},
@@ -2433,10 +2418,6 @@ constexpr OperationSettingsActionRow OperationSettingsActionRows[] = {
     {InputAction::CyclePrevious, "前へ切替", 1},
     {InputAction::CycleNext, "次へ切替", 1},
     {InputAction::ToggleProtection, "アイテム保護切替", 1},
-    {InputAction::ShortcutCursorLeft, "左へ移動（アイテムショートカット）", 1},
-    {InputAction::ShortcutCursorRight, "右へ移動（アイテムショートカット）", 1},
-    {InputAction::PreviousShortcutRow, "前の行へ移動（アイテムショートカット）", 1},
-    {InputAction::NextShortcutRow, "次の行へ移動（アイテムショートカット）", 1},
 };
 
 UiRect optionsPanelRect()
@@ -2641,9 +2622,9 @@ UiSelectableTableStyle operationSettingsTableStyle()
 {
     UiSelectableTableStyle style;
     style.headerHeight = 34.0f;
-    style.rowHeight = 42.0f;
-    style.rowGap = 4.0f;
-    style.columnGap = 8.0f;
+    style.rowHeight = 48.0f;
+    style.rowGap = 0.0f;
+    style.columnGap = 0.0f;
     style.cellTextScale = 2;
     return style;
 }
@@ -3099,7 +3080,7 @@ const char* operationSettingsActionHelpText(InputAction action)
     case InputAction::ThrowActiveRing:
         return "リング投げを発動する";
     case InputAction::OffsetRingCenter:
-        return "マウス右ボタンを押したままドラッグして、リング中心をずらす固定操作";
+        return "マウス右ボタンのドラッグまたはゲームパッドの右スティックで、リング中心をずらす固定操作";
     case InputAction::ShiftRingLeft:
         return "リング中心を左へずらす";
     case InputAction::ShiftRingRight:
@@ -3119,21 +3100,13 @@ const char* operationSettingsActionHelpText(InputAction action)
     case InputAction::ArrangeItems:
         return "アイテムやリング上の配置を整列・並び替えする";
     case InputAction::SecondaryActionModifier:
-        return "ほかの操作と組み合わせて、全部外すなどのサブ操作を行う";
+        return "方向入力との組み合わせでアイテムショートカットを操作し、リング操作では全部外すなどのサブ操作を行う";
     case InputAction::CyclePrevious:
         return "リング・分類・対象・行き先・ページなどを前へ切り替える";
     case InputAction::CycleNext:
         return "リング・分類・対象・行き先・ページなどを次へ切り替える";
     case InputAction::ToggleProtection:
         return "アイテムの保護ON/OFFを切り替える";
-    case InputAction::ShortcutCursorLeft:
-        return "アイテムショートカットのカーソル移動";
-    case InputAction::ShortcutCursorRight:
-        return "アイテムショートカットのカーソル移動";
-    case InputAction::PreviousShortcutRow:
-        return "アイテムショートカットの表示行を前へ切り替える";
-    case InputAction::NextShortcutRow:
-        return "アイテムショートカットの表示行を次へ切り替える";
     default:
         return "";
     }
@@ -3193,9 +3166,10 @@ std::array<UiSelectableTableColumn, OperationSettingsColumnCount> operationSetti
     const UiRect table = operationSettingsTableRect();
     constexpr float ScrollbarReserve = 20.0f;
     constexpr float ActionWidth = 188.0f;
-    constexpr float GapTotal = 8.0f * static_cast<float>(OperationSettingsColumnCount - 1);
+    const float gapTotal = operationSettingsTableStyle().columnGap
+        * static_cast<float>(OperationSettingsColumnCount - 1);
     const float contentWidth = std::max(1.0f, table.size.x - ScrollbarReserve);
-    const float bindingWidth = std::max(1.0f, (contentWidth - ActionWidth - GapTotal) * 0.5f);
+    const float bindingWidth = std::max(1.0f, (contentWidth - ActionWidth - gapTotal) * 0.5f);
     return {{
         UiSelectableTableColumn{"操作", ActionWidth, false},
         UiSelectableTableColumn{"キーボード/マウス", bindingWidth, true},
@@ -3318,6 +3292,10 @@ std::string operationSettingsBindingGlyphToken(const InputBinding& binding)
 
 std::string operationSettingsBindingGlyphText(const InputBindingMap& bindings, InputAction action, int column)
 {
+    if (action == InputAction::OffsetRingCenter && column == OperationSettingsColumnGamepad) {
+        return "{stick:R}";
+    }
+
     std::vector<std::string> tokens;
     const std::vector<InputBinding>& actionBindings = bindings[inputActionIndex(action)];
     for (const InputBinding& binding : actionBindings) {
@@ -3446,7 +3424,10 @@ void drawOperationSettingsBindingCell(
     float paddingX)
 {
     if (text == "未設定") {
-        drawOperationSettingsCellText(renderer, cell, text, color, 2, paddingX);
+        const float centeredPaddingX = std::max(
+            paddingX,
+            (cell.size.x - renderer.measureText(text, 2).x) * 0.5f);
+        drawOperationSettingsCellText(renderer, cell, text, color, 2, centeredPaddingX);
         return;
     }
 
@@ -3535,12 +3516,12 @@ OperationSettingsTableUpdateResult updateOperationSettingsTableClickSelection(
         }
         for (int column = OperationSettingsColumnAction; column <= OperationSettingsColumnGamepad; ++column) {
             const UiRect cellRect = uiSelectableTableCellRect(layout, columns, columnCount, row, column, style);
+            if (!columns[column].enabled) {
+                continue;
+            }
             if (ui.hovered(cellRect)) {
                 hoveredRow = row;
                 hoveredColumn = column;
-            }
-            if (!columns[column].enabled) {
-                continue;
             }
             if (ui.navigationFocused(cellRect)) {
                 state.selectedRow = row;
@@ -4867,6 +4848,7 @@ void Game::updateOperationSettings(const Input& input, UiContext& ui)
             OperationSettingsColumnGamepad);
         const InputAction action = rows[static_cast<std::size_t>(row)].action;
         if (!inputActionCanBeRemapped(action)) {
+            ui.rejectAction();
             openUiResultDialog(
                 operationSettingsReadOnlyDialog_,
                 "",
@@ -5952,6 +5934,7 @@ void Game::renderTitleScreen(Renderer& renderer) const
 
     drawUiBottomInputHelp(
         renderer,
+        "title.control-help",
         {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
         buildInputHelpText({
             {InputHelpGroup::Primary, {InputAction::Confirm, InputAction::UseSelectedItem}, "ゲーム開始"},
@@ -6029,7 +6012,7 @@ void Game::renderScreenTransitionOverlay(Renderer& renderer)
 
 void Game::renderDevBuildNotice(Renderer& renderer) const
 {
-    if (!devBuildNoticeVisible_) {
+    if (devBuildNoticeState_ == DevBuildNoticeState::None) {
         return;
     }
 
@@ -6038,26 +6021,51 @@ void Game::renderDevBuildNotice(Renderer& renderer) const
     constexpr float HorizontalPadding = 24.0f;
     constexpr float VerticalPadding = 10.0f;
     constexpr float TopMargin = 18.0f;
+    constexpr float LineGap = 8.0f;
+    constexpr float PreferredTextWidth = 820.0f;
     constexpr int TextScale = 2;
 
     renderer.setScreenSpace();
-    const std::string_view message = devBuildNoticeFailed_ ? FailedMessage : ReadyMessage;
-    const Vec2 textSize = renderer.measureText(message, TextScale);
+    const bool failed = devBuildNoticeState_ == DevBuildNoticeState::Failed;
+    const std::string_view message = failed ? FailedMessage : ReadyMessage;
+    std::string summaryText;
+    for (const std::string& summary : devBuildNoticeChangeSummaries_) {
+        if (summary.empty()) {
+            continue;
+        }
+        if (!summaryText.empty()) {
+            summaryText += '\n';
+        }
+        summaryText += "・";
+        summaryText += summary;
+    }
+    const float textMaxWidth = std::max(
+        1.0f,
+        std::min(
+            PreferredTextWidth,
+            static_cast<float>(camera_.width()) - TopMargin * 2.0f - HorizontalPadding * 2.0f));
+    const Vec2 headingSize = renderer.measureText(message, TextScale);
+    const Vec2 summarySize = summaryText.empty()
+        ? Vec2{}
+        : renderer.measureWrappedText(summaryText, textMaxWidth, TextScale);
+    const float contentWidth = std::max(headingSize.x, summarySize.x);
+    const float contentHeight = headingSize.y +
+        (summaryText.empty() ? 0.0f : LineGap + summarySize.y);
     const Vec2 panelSize{
-        textSize.x + HorizontalPadding * 2.0f,
-        textSize.y + VerticalPadding * 2.0f,
+        contentWidth + HorizontalPadding * 2.0f,
+        contentHeight + VerticalPadding * 2.0f,
     };
     const Vec2 panelPos{
         (static_cast<float>(camera_.width()) - panelSize.x) * 0.5f,
         TopMargin,
     };
-    const Color panelColor = devBuildNoticeFailed_
+    const Color panelColor = failed
         ? Color{42, 12, 16, 236}
         : Color{12, 15, 22, 232};
-    const Color borderColor = devBuildNoticeFailed_
+    const Color borderColor = failed
         ? Color{255, 112, 124, 240}
         : Color{255, 220, 112, 230};
-    const Color textColor = devBuildNoticeFailed_
+    const Color textColor = failed
         ? Color{255, 210, 214, 255}
         : Color{255, 241, 188, 255};
     renderer.fillRect(panelPos, panelSize, panelColor);
@@ -6067,6 +6075,14 @@ void Game::renderDevBuildNotice(Renderer& renderer) const
         message,
         textColor,
         TextScale);
+    if (!summaryText.empty()) {
+        renderer.drawWrappedText(
+            panelPos + Vec2{HorizontalPadding, VerticalPadding + headingSize.y + LineGap},
+            summaryText,
+            textMaxWidth,
+            textColor,
+            TextScale);
+    }
 }
 
 void Game::renderFinalScreenOverlays(Renderer& renderer)
@@ -7421,8 +7437,8 @@ void Game::renderDungeonControlHelp(Renderer& renderer) const
 
     std::string help = buildInputHelpText({
         {InputHelpGroup::Back, {InputAction::Pause}, "メニュー"},
-        {InputHelpGroup::Other, {InputAction::ShortcutCursorLeft, InputAction::ShortcutCursorRight}, "アイテム選択"},
-        {InputHelpGroup::Other, {InputAction::PreviousShortcutRow, InputAction::NextShortcutRow}, "アイテム行切替"},
+        {InputHelpGroup::Other, {}, "アイテム選択", inlineShortcutCursorInputTag()},
+        {InputHelpGroup::Other, {}, "アイテム行切替", inlineShortcutRowInputTag()},
         {InputHelpGroup::Other, {InputAction::UseSelectedItem}, "使用"},
         {InputHelpGroup::Other, {InputAction::PutSelectedItemOnRing}, "リングへ"},
         {InputHelpGroup::Other, {InputAction::OffsetRingCenter}, "中心ずらし"},
@@ -7494,7 +7510,7 @@ void Game::renderDungeonControlHelp(Renderer& renderer) const
         safeArea.size.x = shortcutHud.size.x;
         safeArea.size.y = std::max(0.0f, shortcutHud.pos.y - 10.0f - safeTop);
     }
-    drawUiBottomInputHelp(renderer, safeArea, std::move(help));
+    drawUiBottomInputHelp(renderer, "dungeon.control-help", safeArea, std::move(help));
 }
 
 void Game::renderWarpReturnUi(Renderer& renderer) const
@@ -7590,7 +7606,9 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
         ringHelpText = buildInputHelpText(entries);
         if (presetSlotCount > 0 && !inputHelpUsesGamepad()) {
             const std::string slotRange = presetSlotCount == 1 ? "1" : "1-" + std::to_string(presetSlotCount);
-            ringHelpText += "  " + slotRange + " 呼出  Shift+" + slotRange + " 登録";
+            const std::string recallInput = inlineInputKeyChordTag({slotRange});
+            const std::string registerInput = inlineInputKeyChordTag({"Shift", slotRange});
+            ringHelpText += "  " + recallInput + " 呼出  " + registerInput + " 登録";
         }
     }
     UiWindowScope ringWindow(renderer, "ring.manage", panel, "リング", ringHelpText, UiWindowOptions{true, true});
@@ -7929,8 +7947,6 @@ void Game::renderOperationSettings(Renderer& renderer) const
         const bool hoveredRow = row == operationSettingsHoveredRow_;
         if (selectedRow) {
             renderer.fillRect(rowRect.pos, rowRect.size, tableStyle.rowFillHot);
-        } else if (hoveredRow) {
-            renderer.fillRect(rowRect.pos, rowRect.size, OperationSettingsHoveredRowFill);
         }
         for (int column = 0; column < OperationSettingsColumnCount; ++column) {
             const UiRect cell = uiSelectableTableCellRect(
@@ -7941,7 +7957,9 @@ void Game::renderOperationSettings(Renderer& renderer) const
                 column,
                 tableStyle);
             const bool preferredCell = selectedRow && column == operationSettingsTable_.selectedColumn;
-            const bool hoveredCell = hoveredRow && column == operationSettingsHoveredColumn_;
+            const bool hoveredCell = columns[static_cast<std::size_t>(column)].enabled
+                && hoveredRow
+                && column == operationSettingsHoveredColumn_;
             if (columns[static_cast<std::size_t>(column)].enabled) {
                 registerUiNavigationTarget(
                     cell,
@@ -9743,6 +9761,8 @@ void Game::render(Renderer& renderer, const Time& time)
         }
         renderPendingBuriedEnemySpawnWarnings(renderer);
     }
+
+    renderDungeonHitboxOverlay(renderer, time);
 
     {
         FrameProfileScope dungeonUiProfile("DungeonUI.render");

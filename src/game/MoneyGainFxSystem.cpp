@@ -227,11 +227,6 @@ void MoneyGainFxSystem::spawn(int amount, Vec2 origin)
     }
 
     std::mt19937 rng{spawnSeed(++spawnSerial_, amount, origin)};
-    spawnEvents_.push_back(MoneyGainSpawnEvent{
-        .position = origin,
-        .pitchScale = randomRange(rng, 0.96f, 1.04f),
-    });
-
     const int desiredCount = desiredCoinCount(amount);
     const std::size_t availableSlots = MaxActiveCoins > coins_.size()
         ? MaxActiveCoins - coins_.size()
@@ -244,6 +239,7 @@ void MoneyGainFxSystem::spawn(int amount, Vec2 origin)
     }
 
     const int coinCount = std::min(desiredCount, static_cast<int>(availableSlots));
+    const std::size_t firstNewCoinIndex = coins_.size();
     std::vector<int> timingRanks(static_cast<std::size_t>(coinCount));
     for (int index = 0; index < coinCount; ++index) {
         timingRanks[static_cast<std::size_t>(index)] = index;
@@ -322,6 +318,16 @@ void MoneyGainFxSystem::spawn(int amount, Vec2 origin)
             std::numeric_limits<int>::max(),
             static_cast<std::int64_t>(coins_.back().displayAmount) + remainingAmount));
     }
+
+    const auto landingCoin = std::min_element(
+        coins_.begin() + static_cast<std::ptrdiff_t>(firstNewCoinIndex),
+        coins_.end(),
+        [](const Coin& lhs, const Coin& rhs) {
+            return lhs.startDelaySeconds + lhs.jumpDurationSeconds <
+                rhs.startDelaySeconds + rhs.jumpDurationSeconds;
+        });
+    landingCoin->shouldEmitLandingEvent = true;
+    landingCoin->landingPitchScale = randomRange(rng, 0.96f, 1.04f);
 }
 
 void MoneyGainFxSystem::update(float dt, Vec2 targetPosition)
@@ -332,8 +338,18 @@ void MoneyGainFxSystem::update(float dt, Vec2 targetPosition)
 
     for (Coin& coin : coins_) {
         coin.previousPosition = coin.position;
+        const float previousActiveSeconds = coin.ageSeconds - coin.startDelaySeconds;
         coin.ageSeconds += safeDt;
         const float activeSeconds = coin.ageSeconds - coin.startDelaySeconds;
+        if (coin.shouldEmitLandingEvent &&
+            previousActiveSeconds < coin.jumpDurationSeconds &&
+            activeSeconds >= coin.jumpDurationSeconds) {
+            landingEvents_.push_back(MoneyGainLandingEvent{
+                .position = coin.groundPosition,
+                .pitchScale = coin.landingPitchScale,
+            });
+            coin.shouldEmitLandingEvent = false;
+        }
         if (activeSeconds <= 0.0f) {
             coin.position = coin.origin;
             continue;
@@ -574,7 +590,7 @@ void MoneyGainFxSystem::clear()
     coins_.clear();
     sparkles_.clear();
     arrivalPulses_.clear();
-    spawnEvents_.clear();
+    landingEvents_.clear();
     arrivalEvents_.clear();
     spawnSerial_ = 0;
     hudPulseSeconds_ = 0.0f;
@@ -599,10 +615,10 @@ float MoneyGainFxSystem::hudPulseStrength() const
     return smooth01(hudPulseSeconds_ / HudPulseDurationSeconds);
 }
 
-std::vector<MoneyGainSpawnEvent> MoneyGainFxSystem::consumeSpawnEvents()
+std::vector<MoneyGainLandingEvent> MoneyGainFxSystem::consumeLandingEvents()
 {
-    std::vector<MoneyGainSpawnEvent> events;
-    events.swap(spawnEvents_);
+    std::vector<MoneyGainLandingEvent> events;
+    events.swap(landingEvents_);
     return events;
 }
 

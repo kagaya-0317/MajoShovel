@@ -15,6 +15,7 @@
 #include "game/InventoryUiCommon.hpp"
 #include "game/ItemImageRenderer.hpp"
 #include "game/ObjectVisualPose.hpp"
+#include "game/RingItemHitbox.hpp"
 #include "game/RingItemVisual.hpp"
 #include "game/TerrainDigRules.hpp"
 #include "game/WorldDropSystem.hpp"
@@ -776,7 +777,7 @@ int applyDefenseModifier(const EntityStatus& status, int damage)
 
 float effectiveEnemyRadius(const Enemy& enemy)
 {
-    return std::max(0.0f, enemy.radius * static_cast<float>(enemy.status.sizeMultiplierFromStates()));
+    return std::max(0.0f, enemy.radius * enemy.effectiveSizeMultiplier());
 }
 
 float enemyPlacementRuntimeRadiusScale(const Enemy& enemy)
@@ -796,12 +797,12 @@ float enemyPassageRadius(const Enemy& enemy, const EnemyPlacementCatalog* placem
     if (const std::optional<float> placementRadius = enemyPlacementPassageRadiusFor(placementCatalog, enemy.enemyId)) {
         radius = *placementRadius * enemyPlacementRuntimeRadiusScale(enemy);
     }
-    return std::max(0.0f, radius * static_cast<float>(enemy.status.sizeMultiplierFromStates()));
+    return std::max(0.0f, radius * enemy.effectiveSizeMultiplier());
 }
 
 Vec2 enemyVisualOffset(const Enemy& enemy, const EnemyPlacementCatalog* placementCatalog)
 {
-    return resolvedEnemyVisualOffset(placementCatalog, enemy);
+    return resolvedEnemyVisualOffset(placementCatalog, enemy) * enemy.effectiveSizeMultiplier();
 }
 
 float enemyVisualRadius(const Enemy& enemy)
@@ -2277,13 +2278,12 @@ struct InspectEnemySpec {
     float retryInterval = InspectEnemyDefaultRetryInterval;
 };
 
-struct RingItemHitboxSpec {
-    const HitboxProfile* profile = nullptr;
-    Vec2 center{};
-    float profileRotationRadians = 0.0f;
-    float profileScale = 1.0f;
-    float profileRadiusPadding = 0.0f;
-    float fallbackCircleRadius = 1.0f;
+struct RingItemContactSnapshot {
+    SpellRingItem* item = nullptr;
+    const ObjectDefinition* object = nullptr;
+    RingItemHitbox hitbox;
+    CaptureNetSpec captureNet;
+    InspectEnemySpec inspectEnemy;
 };
 
 bool captureNetTargetMatches(std::string_view target)
@@ -2354,96 +2354,70 @@ InspectEnemySpec collectInspectEnemySpec(const ObjectDefinition* object)
     return result;
 }
 
-float ringItemHitboxScale(const SpellRingItem& item)
-{
-    const float scale = static_cast<float>(item.sizeModifier);
-    return std::isfinite(scale) ? std::clamp(scale, 0.05f, 8.0f) : 1.0f;
-}
-
-float ringItemExtraHitboxPadding(const SpellRingItem& item)
-{
-    if (item.hasCapturedBehavior("jump_outward") && item.capturedJumpTimer > 0.0f) {
-        return static_cast<float>(
-            std::max(2.0, item.capturedBehaviorParamDouble("jump_outward", "landingRadius", 5.0)));
-    }
-    return 0.0f;
-}
-
-RingItemHitboxSpec ringItemHitboxSpec(
-    const SpellRingItem& item,
-    const ObjectDefinition* object,
-    const HitboxCatalog* catalog,
-    float totalTime,
-    float radiusPadding)
-{
-    RingItemHitboxSpec spec;
-    spec.center = ringItemDrawPosition(item, totalTime);
-    spec.fallbackCircleRadius = std::max(0.0f, item.hitRadius + std::max(0.0f, radiusPadding));
-    spec.profileRadiusPadding = std::max(0.0f, radiusPadding);
-    spec.profileScale = ringItemHitboxScale(item);
-    spec.profile = objectHitboxProfileFor(catalog, item.objectId);
-    if (spec.profile != nullptr && object != nullptr) {
-        ObjectImageDrawOptions baseImageOptions;
-        baseImageOptions.rotationDegrees = ringItemRotationWobbleDegrees(item, totalTime);
-        const ObjectImageDrawOptions imageOptions = objectRingImageOptions(
-            *object,
-            item.orbitOutward,
-            item.worldVelocity,
-            totalTime,
-            baseImageOptions);
-        spec.profileRotationRadians = imageOptions.rotationDegrees * (Pi / 180.0f);
-    }
-    return spec;
-}
-
 bool ringItemHitboxOverlapsEnemy(
     const Enemy& enemy,
     const HitboxCatalog* catalog,
     const SpellRingItem& item,
-    const RingItemHitboxSpec& itemHitbox,
+    const RingItemHitbox& itemHitbox,
     Vec2 centerOffset)
 {
     (void)item;
     if (itemHitbox.profile != nullptr) {
-        return enemyHitboxOverlapsProfile(
-            enemy,
-            catalog,
-            *itemHitbox.profile,
-            itemHitbox.center,
-            itemHitbox.profileRotationRadians,
-            itemHitbox.profileScale,
-            itemHitbox.profileRadiusPadding,
-            centerOffset);
+        return ringItemHitboxSweepOverlaps(
+            itemHitbox,
+            [&](Vec2 center, float rotationRadians) {
+                return enemyHitboxOverlapsProfile(
+                    enemy,
+                    catalog,
+                    *itemHitbox.profile,
+                    center,
+                    rotationRadians,
+                    itemHitbox.profileScale,
+                    itemHitbox.profileRadiusPadding,
+                    centerOffset);
+            });
     }
 
-    return enemyHitboxOverlapsCircle(
-        enemy,
-        catalog,
-        itemHitbox.center,
-        itemHitbox.fallbackCircleRadius,
-        centerOffset);
+    return ringItemHitboxSweepOverlaps(
+        itemHitbox,
+        [&](Vec2 center, float) {
+            return enemyHitboxOverlapsCircle(
+                enemy,
+                catalog,
+                center,
+                itemHitbox.fallbackCircleRadius,
+                centerOffset);
+        });
 }
 
 bool ringItemHitboxOverlapsCircle(
     const SpellRingItem& item,
-    const RingItemHitboxSpec& itemHitbox,
+    const RingItemHitbox& itemHitbox,
     Vec2 circleCenter,
     float circleRadius)
 {
     (void)item;
     if (itemHitbox.profile != nullptr) {
-        return hitboxProfileOverlapsCircle(
-            *itemHitbox.profile,
-            itemHitbox.center,
-            itemHitbox.profileRotationRadians,
-            itemHitbox.profileScale,
-            itemHitbox.profileRadiusPadding,
-            circleCenter,
-            circleRadius);
+        return ringItemHitboxSweepOverlaps(
+            itemHitbox,
+            [&](Vec2 center, float rotationRadians) {
+                return hitboxProfileOverlapsCircle(
+                    *itemHitbox.profile,
+                    center,
+                    rotationRadians,
+                    itemHitbox.profileScale,
+                    itemHitbox.profileRadiusPadding,
+                    circleCenter,
+                    circleRadius);
+            });
     }
 
     const float radius = itemHitbox.fallbackCircleRadius + std::max(0.0f, circleRadius);
-    return distanceSquared(itemHitbox.center, circleCenter) <= radius * radius;
+    return ringItemHitboxSweepOverlaps(
+        itemHitbox,
+        [&](Vec2 center, float) {
+            return distanceSquared(center, circleCenter) <= radius * radius;
+        });
 }
 
 bool enemyInspectionAlreadyQueued(const std::vector<EnemyEvent>& events, std::string_view enemyId)
@@ -3108,7 +3082,7 @@ EnemyImageDrawOptions enemyImageOptionsFor(const Enemy& enemy)
     const ActorVisualPose pose = enemyActionVisualPose(enemy);
     const EntityStatusVisualStyle statusVisual = entityStatusVisualStyle(enemy.status);
     imageOptions.tint = {255, 255, 255, 255};
-    imageOptions.scaleMultiplier = statusVisual.scaleMultiplier;
+    imageOptions.scaleMultiplier = enemy.effectiveSizeMultiplier();
     imageOptions.stretchScale = pose.scale;
     imageOptions.flipY = statusVisual.flipVertical;
     imageOptions.rotationDegrees = externalBounceRotationDegrees(enemy) + pose.rotationDegrees;
@@ -3195,7 +3169,9 @@ Vec2 enemyShadowAnchor(
     const EnemyPlacementCatalog* placementCatalog,
     const EnemyShadowSpec& shadow)
 {
-    return enemy.position + enemyVisualOffset(enemy, placementCatalog) + shadow.offset;
+    return enemy.position +
+        enemyVisualOffset(enemy, placementCatalog) +
+        shadow.offset * enemy.effectiveSizeMultiplier();
 }
 
 void drawEnemyHpBar(Renderer& renderer, const Enemy& enemy, Vec2 drawPosition, float uiVisualRadius, bool detailsKnown)
@@ -3343,7 +3319,7 @@ bool bossWeakPointHit(const BossWeakPointSpec& weakPoint, Vec2 hitPosition, floa
         circlesOverlap(weakPoint.center, weakPoint.radius, hitPosition, std::max(0.0f, hitRadius));
 }
 
-bool bossWeakPointHit(const BossWeakPointSpec& weakPoint, const SpellRingItem& item, const RingItemHitboxSpec& itemHitbox)
+bool bossWeakPointHit(const BossWeakPointSpec& weakPoint, const SpellRingItem& item, const RingItemHitbox& itemHitbox)
 {
     return weakPoint.exposed &&
         weakPoint.radius > 0.0f &&
@@ -3398,7 +3374,7 @@ bool applyCustomBossWeakPoint(
     }
 
     const HitCircle circle = profile->circles.front();
-    const float scale = std::max(0.0f, static_cast<float>(enemy.status.sizeMultiplierFromStates()));
+    const float scale = enemy.effectiveSizeMultiplier();
     spec.center = enemy.position + centerOffset + circle.offset * scale;
     spec.radius = std::max(1.0f, circle.radius * scale);
     return true;
@@ -3424,7 +3400,7 @@ BossDamageAdjustment adjustBossIncomingDamage(
     const Enemy& enemy,
     int damage,
     const SpellRingItem& item,
-    const RingItemHitboxSpec& itemHitbox,
+    const RingItemHitbox& itemHitbox,
     const HitboxCatalog* hitboxCatalog,
     const EnemyPlacementCatalog* placementCatalog)
 {
@@ -3440,7 +3416,7 @@ RingContactDamageResult computeRingContactDamageAgainstEnemy(
     const Enemy& enemy,
     const SpellRingItem& item,
     const ObjectDefinition* hitObject,
-    const RingItemHitboxSpec& itemHitbox,
+    const RingItemHitbox& itemHitbox,
     const Player& player,
     const SpellRingSystem& spellRing,
     const ObjectCatalog& objectCatalog,
@@ -4044,6 +4020,7 @@ float enemyDefinitionSpawnRadius(
         if (const std::optional<float> placementRadius = enemyPlacementPassageRadiusFor(placementCatalog, definition->id)) {
             radius = *placementRadius;
         }
+        radius *= static_cast<float>(definition->sizeMultiplier);
     }
     return radius * std::max(0.1f, radiusMultiplier);
 }
@@ -4714,7 +4691,7 @@ bool tryHitJunkCrabDebris(
     Enemy& enemy,
     SpellRingItem& item,
     const ObjectDefinition* object,
-    const RingItemHitboxSpec& itemHitbox,
+    const RingItemHitbox& itemHitbox,
     const Player& player,
     SpellRingSystem& spellRing,
     const ObjectCatalog& objectCatalog,
@@ -6202,7 +6179,7 @@ bool tryHitAstragnaBossComponent(
     Enemy& enemy,
     SpellRingItem& item,
     const ObjectDefinition* object,
-    const RingItemHitboxSpec& itemHitbox,
+    const RingItemHitbox& itemHitbox,
     const Player& player,
     SpellRingSystem& spellRing,
     std::vector<EnemyEvent>& events,
@@ -7274,6 +7251,7 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
     enemy.action = {};
     enemy.enemyTags.clear();
     enemy.radius = balance.enemyRadius;
+    enemy.definitionSizeMultiplier = static_cast<float>(EnemySizeMultiplierDefault);
     enemy.maxHp = balance.enemyHp + std::max(0, ambientActiveCount() / 12);
     enemy.hp = enemy.maxHp;
     enemy.xp = balance.enemyXp;
@@ -7757,6 +7735,7 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
     if (definition->radius > 0.0 && std::isfinite(definition->radius)) {
         enemy.radius = static_cast<float>(definition->radius);
     }
+    enemy.definitionSizeMultiplier = static_cast<float>(definition->sizeMultiplier);
     if (definition->hp > 0) {
         enemy.maxHp = definition->hp;
         enemy.hp = enemy.maxHp;
@@ -9738,32 +9717,48 @@ void EnemySystem::update(
     const auto processEnemyDeath = [&](Enemy& enemy, std::optional<Vec2> hitOrigin = std::nullopt, bool suppressRewards = false) {
         beginEnemyDeath(enemy, spellRing, hitOrigin, suppressRewards);
     };
+    std::vector<RingItemContactSnapshot> ringItemContacts;
+    for (SpellRingItem* item : spellRing.runtimeItemsMutable()) {
+        if (item == nullptr) {
+            continue;
+        }
+        const ObjectDefinition* object = nullptr;
+        if (!item->objectId.empty()) {
+            const auto objectIt = objectCatalog.objectsById.find(item->objectId);
+            if (objectIt != objectCatalog.objectsById.end()) {
+                object = &objectIt->second;
+            }
+        }
+        ringItemContacts.push_back({
+            .item = item,
+            .object = object,
+            .hitbox = resolveRingItemHitbox(
+                *item,
+                object,
+                hitboxCatalog_,
+                spellRing,
+                totalTime,
+                dt,
+                ringItemCollisionRadiusPadding(*item)),
+            .captureNet = collectCaptureNetSpec(object),
+            .inspectEnemy = collectInspectEnemySpec(object),
+        });
+    }
     const auto sleepingEnemyWakeTriggered = [&](const Enemy& enemy) {
         if (enemyHitboxOverlapsPlayer(enemy, hitboxCatalog_, player, balance, enemyVisualOffset(enemy, placementCatalog_))) {
             return true;
         }
-        for (SpellRingItem* itemPtr : spellRing.runtimeItemsMutable()) {
-            if (itemPtr == nullptr) {
-                continue;
-            }
-            const SpellRingItem& item = *itemPtr;
+        for (const RingItemContactSnapshot& contact : ringItemContacts) {
+            const SpellRingItem& item = *contact.item;
             if (item.broken()) {
                 continue;
             }
-            const ObjectDefinition* hitObject = nullptr;
-            if (!item.objectId.empty()) {
-                const auto objectIt = objectCatalog.objectsById.find(item.objectId);
-                if (objectIt != objectCatalog.objectsById.end()) {
-                    hitObject = &objectIt->second;
-                }
-            }
-            const RingItemHitboxSpec itemHitbox = ringItemHitboxSpec(
-                item,
-                hitObject,
-                hitboxCatalog_,
-                totalTime,
-                ringItemExtraHitboxPadding(item));
-            if (ringItemHitboxOverlapsEnemy(enemy, hitboxCatalog_, item, itemHitbox, enemyVisualOffset(enemy, placementCatalog_))) {
+            if (ringItemHitboxOverlapsEnemy(
+                    enemy,
+                    hitboxCatalog_,
+                    item,
+                    contact.hitbox,
+                    enemyVisualOffset(enemy, placementCatalog_))) {
                 return true;
             }
         }
@@ -10696,30 +10691,15 @@ void EnemySystem::update(
         if (!enemyCanBeHit(enemy)) {
             continue;
         }
-        std::vector<SpellRingItem*> runtimeItems = spellRing.runtimeItemsMutable();
-        for (SpellRingItem* itemPtr : runtimeItems) {
-            if (itemPtr == nullptr) {
-                continue;
-            }
-            SpellRingItem& item = *itemPtr;
+        for (const RingItemContactSnapshot& contact : ringItemContacts) {
+            SpellRingItem& item = *contact.item;
             if (item.broken()) {
                 continue;
             }
-            const ObjectDefinition* hitObject = nullptr;
-            if (!item.objectId.empty()) {
-                const auto objectIt = objectCatalog.objectsById.find(item.objectId);
-                if (objectIt != objectCatalog.objectsById.end()) {
-                    hitObject = &objectIt->second;
-                }
-            }
-            const RingItemHitboxSpec itemHitbox = ringItemHitboxSpec(
-                item,
-                hitObject,
-                hitboxCatalog_,
-                totalTime,
-                ringItemExtraHitboxPadding(item));
-            const CaptureNetSpec captureNetSpec = collectCaptureNetSpec(hitObject);
-            const InspectEnemySpec inspectEnemySpec = collectInspectEnemySpec(hitObject);
+            const ObjectDefinition* hitObject = contact.object;
+            const RingItemHitbox& itemHitbox = contact.hitbox;
+            const CaptureNetSpec& captureNetSpec = contact.captureNet;
+            const InspectEnemySpec& inspectEnemySpec = contact.inspectEnemy;
             const bool specialContactEffect = captureNetSpec.active || inspectEnemySpec.active;
             float enemyHitInterval = item.hitInterval;
             if (captureNetSpec.active) {
@@ -11116,6 +11096,20 @@ void EnemySystem::render(
     });
     for (const DepthRenderEntry& entry : entries) {
         entry.draw();
+    }
+}
+
+void EnemySystem::appendHittableHitboxCircles(std::vector<WorldHitCircle>& circles) const
+{
+    for (const Enemy& enemy : enemies_.items()) {
+        if (!enemyCanBeHit(enemy) || enemy.spawnTimer > 0.0f || isAstragnaBossAction(enemy)) {
+            continue;
+        }
+        appendResolvedEnemyHitboxCircles(
+            enemy,
+            hitboxCatalog_,
+            enemyVisualOffset(enemy, placementCatalog_),
+            circles);
     }
 }
 

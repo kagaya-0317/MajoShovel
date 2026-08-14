@@ -15,6 +15,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace majo {
 
@@ -78,12 +79,6 @@ private:
         Done,
     };
 
-    enum class DevBuildState {
-        None,
-        Ready,
-        Failed,
-    };
-
     SDL_Window* window_ = nullptr;
     SDL_Renderer* sdlRenderer_ = nullptr;
     SDL_Cursor* gameCursor_ = nullptr;
@@ -105,8 +100,7 @@ private:
     bool devAutoReloadMode_ = false;
     bool autoReloadBlocked_ = false;
     bool runtimeHotReloadEnabled_ = false;
-    DevBuildState devBuildState_ = DevBuildState::None;
-    bool devBuildNoticeFailed_ = false;
+    DevBuildNoticeState devBuildState_ = DevBuildNoticeState::None;
     std::uint64_t nextAssetHotReloadPollTicks_ = 0;
     std::uint64_t nextDevBuildStatusPollTicks_ = 0;
     bool gameCursorPressedActive_ = false;
@@ -120,6 +114,7 @@ private:
     std::string startupLaunchModeCommand_;
     std::string baseWindowTitle_;
     std::string devBuildStatusToken_;
+    std::vector<std::string> devBuildChangeSummaries_;
     float settingsSaveDelaySeconds_ = 0.0f;
     float autoSimulationStepDebtSeconds_ = 0.0f;
     float devBuildNoticeTimer_ = 0.0f;

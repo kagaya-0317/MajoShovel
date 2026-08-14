@@ -286,6 +286,7 @@ public:
         const EncyclopediaSystem* encyclopedia = nullptr) const;
     void emitStatusParticles(EffectSystem& effects) const;
     void appendWetGroundEmitters(std::vector<WetGroundEmitter>& emitters) const;
+    void appendHittableHitboxCircles(std::vector<WorldHitCircle>& circles) const;
     int activeCount() const { return enemies_.activeCount(); }
     int ambientActiveCount() const;
     int syncScreenDormantEnemies(const CollisionRect& activeBounds, SpellRingSystem& spellRing);

@@ -68,6 +68,13 @@
 
 namespace majo {
 
+enum class DevBuildNoticeState {
+    None,
+    Building,
+    Ready,
+    Failed,
+};
+
 class UiContext;
 class Renderer;
 class AudioEngine;
@@ -302,10 +309,10 @@ public:
     void handleApplicationQuitRequested();
     void setAutoReloadBlocked(bool blocked);
     void setHotReloadEnabled(bool enabled);
-    void setDevBuildNotice(bool visible, bool failed)
+    void setDevBuildNotice(DevBuildNoticeState state, const std::vector<std::string>& changeSummaries)
     {
-        devBuildNoticeVisible_ = visible;
-        devBuildNoticeFailed_ = failed;
+        devBuildNoticeState_ = state;
+        devBuildNoticeChangeSummaries_ = changeSummaries;
     }
 
     using DungeonEventKind = majo::DungeonEventKind;
@@ -1220,7 +1227,9 @@ private:
     void resetWorldMapAndRingState();
     void resetWorldActionSystems();
     void resetWorldEffectState();
+    void bindWorldEnemyCatalogs();
     void resetWorldEnemyState();
+    void restoreWorldEnemyState(const EnemySystem& state);
     void resetWorldProjectileState();
     void resetWorldDropState();
     void resetWorldProgressionState();
@@ -2128,6 +2137,7 @@ private:
     void renderObjectImageScaleEditScreen(Renderer& renderer) const;
     bool loadHitboxData();
     bool saveHitboxData(std::string& message);
+    bool handleHitboxDisplayCommand(std::string_view normalized);
     bool handleEnemyHitboxEditCommand(std::string_view normalized);
     void rebuildEnemyHitboxEditList();
     void applyEnemyHitboxEditFilter(std::string_view preferredSelection = {});
@@ -2398,6 +2408,7 @@ private:
     void renderStageClearScreen(Renderer& renderer) const;
     void renderAstralResultScreen(Renderer& renderer) const;
     void renderBossDefeatPresentation(Renderer& renderer) const;
+    void renderDungeonHitboxOverlay(Renderer& renderer, const Time& time) const;
     void renderBaseDebugOverlay(Renderer& renderer, const Time& time) const;
     void renderDebugOverlay(Renderer& renderer, const Time& time);
     void renderAutoSimulationIntentOverlay(Renderer& renderer) const;
@@ -3060,10 +3071,11 @@ private:
     bool saveDataLoaded_ = false;
     bool testPlayMode_ = false;
     bool debugPaused_ = false;
+    bool hitboxDisplayEnabled_ = false;
     bool autoReloadBlocked_ = false;
     bool hotReloadEnabled_ = false;
-    bool devBuildNoticeVisible_ = false;
-    bool devBuildNoticeFailed_ = false;
+    DevBuildNoticeState devBuildNoticeState_ = DevBuildNoticeState::None;
+    std::vector<std::string> devBuildNoticeChangeSummaries_;
     bool navigationUiCursorEnabled_ = false;
     float hotReloadPollTimer_ = 0.0f;
     AudioEngine* audio_ = nullptr;

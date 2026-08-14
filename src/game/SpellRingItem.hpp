@@ -96,6 +96,10 @@ struct SpellRingItem {
     Vec2 worldPosition{};
     Vec2 worldVelocity{};
     Vec2 orbitOutward{1.0f, 0.0f};
+    Vec2 previousWorldPosition{};
+    Vec2 previousWorldVelocity{};
+    Vec2 previousOrbitOutward{1.0f, 0.0f};
+    bool motionHistoryValid = false;
     Vec2 orbitTangent{0.0f, 1.0f};
     float orbitMotionSpeed = 0.0f;
     float damageMotionSpeed = 0.0f;

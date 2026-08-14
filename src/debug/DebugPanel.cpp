@@ -172,6 +172,7 @@ DebugConsoleLayout makeDefaultDebugConsoleLayout()
                     {
                         {DebugControlKind::Button, "base_edit_toggle", "拠点編集", "game base-edit toggle"},
                         {DebugControlKind::Button, "hitbox_toggle", "当たり判定編集", "game hitbox toggle"},
+                        {DebugControlKind::Toggle, "hitbox_display", "当たり判定表示", "game hitbox-display", 0, 1},
                         {DebugControlKind::Button, "enemy_placement_toggle", "敵位置編集", "game enemy-placement toggle"},
                         {DebugControlKind::Button, "enemy_shadow_toggle", "影編集", "game enemy-shadow toggle"},
                     },

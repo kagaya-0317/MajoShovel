@@ -5,6 +5,7 @@
 #include "game/EnemyImageRenderer.hpp"
 #include "game/EntityStatusVisuals.hpp"
 #include "game/MenuIconImage.hpp"
+#include "game/RingItemHitbox.hpp"
 #include "game/WorldIconRenderer.hpp"
 
 #include <algorithm>
@@ -78,6 +79,25 @@ constexpr float EnemyHitboxMinRadius = 1.0f;
 constexpr float EnemyHitboxMaxRadius = 256.0f;
 constexpr float EnemyShadowOffsetStep = 1.0f;
 constexpr float EnemyShadowScaleStep = 0.05f;
+
+void drawWorldHitCircles(
+    Renderer& renderer,
+    const std::vector<WorldHitCircle>& circles,
+    Color fill,
+    Color outline,
+    bool drawCenters)
+{
+    for (const WorldHitCircle& circle : circles) {
+        if (circle.radius <= 0.0f) {
+            continue;
+        }
+        renderer.fillCircle(circle.center, circle.radius, fill);
+        renderer.drawCircle(circle.center, circle.radius, outline);
+        if (drawCenters) {
+            renderer.fillCircle(circle.center, 1.5f, outline);
+        }
+    }
+}
 constexpr float EnemyShadowPreviewDirectionSeconds = 0.5f;
 constexpr float EnemyPlacementOffsetStep = 1.0f;
 constexpr float EnemyPlacementRadiusStep = 1.0f;
@@ -2805,7 +2825,10 @@ EditorPreviewTransform makeHitboxEditorPreviewTransform(
     if (enemy != nullptr) {
         includeEditorPreviewBox(bounds, {}, enemyEditorVisualLogicalSizeFor(*enemy, balance));
     } else if (object != nullptr) {
-        includeEditorPreviewBox(bounds, {}, {96.0f, 96.0f});
+        includeEditorPreviewBox(
+            bounds,
+            {},
+            {RingItemHitboxReferenceImageSize, RingItemHitboxReferenceImageSize});
     } else if (player) {
         const float playerDrawSize = PlayerSpriteDrawSize * 1.35f / EnemyEditorPreviewMaxScale;
         includeEditorPreviewBox(bounds, {}, {playerDrawSize, playerDrawSize});
@@ -5994,7 +6017,12 @@ void Game::renderEnemyHitboxEditScreen(Renderer& renderer, double totalSeconds) 
             imageOptions.selectedOutlineEnabled = true;
             imageOptions.selectedOutlineColor = {255, 255, 255, 70};
             imageOptions.selectedOutlinePx = 2;
-            if (!drawItemImage(renderer, *object, previewOrigin, {96.0f, 96.0f}, imageOptions)) {
+            if (!drawItemImage(
+                    renderer,
+                    *object,
+                    previewOrigin,
+                    {RingItemHitboxReferenceImageSize, RingItemHitboxReferenceImageSize},
+                    imageOptions)) {
                 renderer.fillCircle(previewOrigin, objectHitboxDefaultRadiusFor(*object) * previewTransform.scale, {92, 102, 120, 255});
             }
         } else {
@@ -9869,7 +9897,7 @@ void Game::enterEnemyTestMode()
     moneyGainFx_.clear();
     groundLines_ = GroundLineSystem{};
     wetGround_ = WetGroundSystem{};
-    enemies_ = EnemySystem{};
+    resetWorldEnemyState();
     projectiles_ = ProjectileSystem{};
     magic_ = MagicSystem{};
     magicFx_ = MagicFxSystem{};
@@ -9911,7 +9939,7 @@ void Game::exitEnemyTestToBase()
     enemyTestUiVisible_ = true;
     enemyTestDropdown_ = {};
     enemyTestStatus_.clear();
-    enemies_ = EnemySystem{};
+    resetWorldEnemyState();
     projectiles_ = ProjectileSystem{};
     magic_ = MagicSystem{};
     magicFx_ = MagicFxSystem{};
@@ -10121,7 +10149,7 @@ void Game::spawnSelectedEnemyTestEnemy()
 
 void Game::clearEnemyTestArena()
 {
-    enemies_ = EnemySystem{};
+    resetWorldEnemyState();
     projectiles_ = ProjectileSystem{};
     effects_ = EffectSystem{};
     captureAbsorbAnimations_.clear();
@@ -10859,6 +10887,24 @@ bool Game::handleObjectImageScaleCommand(std::string_view normalized)
     }
 
     return false;
+}
+
+bool Game::handleHitboxDisplayCommand(std::string_view normalized)
+{
+    const bool toggle = normalized == "game hitbox-display toggle" ||
+        normalized == "game hitbox display toggle";
+    const bool enable = normalized == "game hitbox-display on" ||
+        normalized == "game hitbox display on";
+    const bool disable = normalized == "game hitbox-display off" ||
+        normalized == "game hitbox display off";
+    if (!toggle && !enable && !disable) {
+        return false;
+    }
+
+    hitboxDisplayEnabled_ = toggle ? !hitboxDisplayEnabled_ : enable;
+    logInfo(std::string("Debug: dungeon hitbox display ") +
+        (hitboxDisplayEnabled_ ? "enabled." : "disabled."));
+    return true;
 }
 
 bool Game::handleEnemyHitboxEditCommand(std::string_view normalized)
@@ -12737,6 +12783,9 @@ bool Game::executeDebugCommand(std::string_view command)
         return true;
     }
     if (handlePortraitExpressionEditCommand(normalized)) {
+        return true;
+    }
+    if (handleHitboxDisplayCommand(normalized)) {
         return true;
     }
     if (handleEnemyHitboxEditCommand(normalized)) {
@@ -14742,6 +14791,69 @@ bool Game::executeDebugCommand(std::string_view command)
     }
 
     return false;
+}
+
+void Game::renderDungeonHitboxOverlay(Renderer& renderer, const Time& time) const
+{
+    if (!hitboxDisplayEnabled_) {
+        return;
+    }
+
+    constexpr Color ItemSweepFill{40, 196, 255, 8};
+    constexpr Color ItemSweepOutline{72, 210, 255, 46};
+    constexpr Color EnemyFill{255, 209, 48, 42};
+    constexpr Color EnemyOutline{255, 225, 92, 238};
+    constexpr Color ItemFill{32, 184, 255, 48};
+    constexpr Color ItemOutline{74, 216, 255, 242};
+
+    std::vector<RingItemHitbox> itemHitboxes;
+    const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
+    itemHitboxes.reserve(runtimeItems.size());
+    for (const SpellRingItem* item : runtimeItems) {
+        if (item == nullptr || item->broken()) {
+            continue;
+        }
+
+        const ObjectDefinition* object = nullptr;
+        if (const auto it = objectCatalog_.objectsById.find(item->objectId);
+            it != objectCatalog_.objectsById.end()) {
+            object = &it->second;
+        }
+        itemHitboxes.push_back(resolveRingItemHitbox(
+            *item,
+            object,
+            &hitboxes_,
+            spellRing_,
+            static_cast<float>(time.totalSeconds()),
+            time.deltaSeconds(),
+            ringItemCollisionRadiusPadding(*item)));
+    }
+
+    std::vector<WorldHitCircle> poseCircles;
+    for (const RingItemHitbox& hitbox : itemHitboxes) {
+        if (ringItemHitboxMaximumPointTravel(hitbox) <= 0.01f) {
+            continue;
+        }
+        visitRingItemHitboxSweep(hitbox, [&](Vec2 center, float rotationRadians) {
+            poseCircles.clear();
+            appendRingItemHitboxCirclesAt(hitbox, center, rotationRadians, poseCircles);
+            drawWorldHitCircles(renderer, poseCircles, ItemSweepFill, ItemSweepOutline, false);
+        });
+    }
+
+    std::vector<WorldHitCircle> enemyCircles;
+    enemies_.appendHittableHitboxCircles(enemyCircles);
+    drawWorldHitCircles(renderer, enemyCircles, EnemyFill, EnemyOutline, true);
+
+    for (const RingItemHitbox& hitbox : itemHitboxes) {
+        poseCircles.clear();
+        appendRingItemHitboxCirclesAt(
+            hitbox,
+            hitbox.center,
+            hitbox.rotationRadians,
+            poseCircles);
+        drawWorldHitCircles(renderer, poseCircles, ItemFill, ItemOutline, true);
+    }
 }
 
 void Game::renderBaseDebugOverlay(Renderer& renderer, const Time& time) const

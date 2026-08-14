@@ -41,6 +41,14 @@ struct HitboxProfile {
     bool operator==(const HitboxProfile&) const = default;
 };
 
+// A hit circle after all authoring-space transforms have been resolved into
+// world space.  Collision diagnostics consume this representation so their
+// drawing cannot drift from the collision math.
+struct WorldHitCircle {
+    Vec2 center{};
+    float radius = 0.0f;
+};
+
 struct EnemyHitboxProfiles {
     std::array<HitboxProfile, HitboxDirectionCount> directions;
 
@@ -123,6 +131,18 @@ bool erasePlayerHitboxProfile(HitboxCatalog& catalog);
     const Enemy& enemy,
     const HitboxCatalog* catalog,
     Vec2 centerOffset);
+void appendResolvedHitboxCircles(
+    const HitboxProfile& profile,
+    Vec2 center,
+    float rotationRadians,
+    float scale,
+    float radiusPadding,
+    std::vector<WorldHitCircle>& outCircles);
+void appendResolvedEnemyHitboxCircles(
+    const Enemy& enemy,
+    const HitboxCatalog* catalog,
+    Vec2 centerOffset,
+    std::vector<WorldHitCircle>& outCircles);
 [[nodiscard]] bool hitboxProfileOverlapsCircle(
     const HitboxProfile& profile,
     Vec2 center,

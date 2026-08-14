@@ -33,6 +33,17 @@ void setObjectImageScaleOverrides(const std::unordered_map<std::string, float>* 
     gObjectImageScaleOverrides = scaleByObjectId;
 }
 
+float objectImageScaleMultiplier(std::string_view objectId)
+{
+    if (gObjectImageScaleOverrides == nullptr || objectId.empty()) {
+        return 1.0f;
+    }
+    const auto it = gObjectImageScaleOverrides->find(std::string(objectId));
+    return it != gObjectImageScaleOverrides->end()
+        ? std::clamp(it->second, ObjectImageScaleMin, ObjectImageScaleMax)
+        : 1.0f;
+}
+
 std::string objectImagePathFromNumber(int imageNumber)
 {
     if (imageNumber <= 0) {
@@ -62,14 +73,9 @@ bool drawObjectImage(
         return false;
     }
 
-    float objectScale = 1.0f;
-    if (options.applyScaleOverride && gObjectImageScaleOverrides != nullptr && !object.id.empty()) {
-        const auto it = gObjectImageScaleOverrides->find(object.id);
-        if (it != gObjectImageScaleOverrides->end()) {
-            objectScale = it->second;
-        }
-    }
-    objectScale = std::clamp(objectScale, ObjectImageScaleMin, ObjectImageScaleMax);
+    const float objectScale = options.applyScaleOverride
+        ? objectImageScaleMultiplier(object.id)
+        : 1.0f;
     const float optionScale = std::clamp(options.scaleMultiplier, ObjectImageScaleMin, ObjectImageScaleMax);
 
     ScaledImageDrawOptions scaledOptions;

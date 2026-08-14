@@ -58,7 +58,7 @@ float sanitizedPadding(float padding)
 
 float enemyHitboxScale(const Enemy& enemy)
 {
-    return std::max(0.0f, static_cast<float>(enemy.status.sizeMultiplierFromStates()));
+    return enemy.effectiveSizeMultiplier();
 }
 
 Vec2 rotateOffset(Vec2 offset, float radians)
@@ -71,6 +71,21 @@ Vec2 rotateOffset(Vec2 offset, float radians)
     return {
         offset.x * c - offset.y * s,
         offset.x * s + offset.y * c,
+    };
+}
+
+WorldHitCircle resolveHitCircle(
+    HitCircle circle,
+    Vec2 center,
+    float rotationRadians,
+    float scale,
+    float radiusPadding)
+{
+    circle = sanitizeCircle(circle);
+    const float safeScale = sanitizedScale(scale);
+    return {
+        center + rotateOffset(circle.offset * safeScale, rotationRadians),
+        circle.radius * safeScale + sanitizedPadding(radiusPadding),
     };
 }
 
@@ -523,6 +538,41 @@ float enemyHitboxBoundsRadius(const Enemy& enemy, const HitboxCatalog* catalog, 
     return std::max(1.0f, length(centerOffset) + fallbackEnemyHitCircle(enemy).radius * scale);
 }
 
+void appendResolvedHitboxCircles(
+    const HitboxProfile& profile,
+    Vec2 center,
+    float rotationRadians,
+    float scale,
+    float radiusPadding,
+    std::vector<WorldHitCircle>& outCircles)
+{
+    outCircles.reserve(outCircles.size() + profile.circles.size());
+    for (HitCircle circle : profile.circles) {
+        outCircles.push_back(resolveHitCircle(
+            circle,
+            center,
+            rotationRadians,
+            scale,
+            radiusPadding));
+    }
+}
+
+void appendResolvedEnemyHitboxCircles(
+    const Enemy& enemy,
+    const HitboxCatalog* catalog,
+    Vec2 centerOffset,
+    std::vector<WorldHitCircle>& outCircles)
+{
+    const float scale = enemyHitboxScale(enemy);
+    const Vec2 center = enemy.position + centerOffset;
+    if (const HitboxProfile* profile = enemyHitboxProfileFor(catalog, enemy)) {
+        appendResolvedHitboxCircles(*profile, center, 0.0f, scale, 0.0f, outCircles);
+        return;
+    }
+
+    outCircles.push_back({center, fallbackEnemyHitCircle(enemy).radius * scale});
+}
+
 bool hitboxProfileOverlapsCircle(
     const HitboxProfile& profile,
     Vec2 center,
@@ -541,10 +591,14 @@ bool hitboxProfileOverlapsCircle(
     }
 
     for (HitCircle hitCircle : profile.circles) {
-        hitCircle = sanitizeCircle(hitCircle);
-        const Vec2 hitCenter = center + rotateOffset(hitCircle.offset * safeScale, rotationRadians);
-        const float radius = hitCircle.radius * safeScale + safePadding + otherRadius;
-        if (distanceSquared(hitCenter, circleCenter) <= radius * radius) {
+        const WorldHitCircle worldCircle = resolveHitCircle(
+            hitCircle,
+            center,
+            rotationRadians,
+            safeScale,
+            safePadding);
+        const float radius = worldCircle.radius + otherRadius;
+        if (distanceSquared(worldCircle.center, circleCenter) <= radius * radius) {
             return true;
         }
     }
@@ -575,14 +629,21 @@ bool hitboxProfilesOverlap(
     }
 
     for (HitCircle lhsCircle : lhs.circles) {
-        lhsCircle = sanitizeCircle(lhsCircle);
-        const Vec2 lhsCircleCenter = lhsCenter + rotateOffset(lhsCircle.offset * lhsSafeScale, lhsRotationRadians);
-        const float lhsRadius = lhsCircle.radius * lhsSafeScale + lhsSafePadding;
+        const WorldHitCircle lhsWorldCircle = resolveHitCircle(
+            lhsCircle,
+            lhsCenter,
+            lhsRotationRadians,
+            lhsSafeScale,
+            lhsSafePadding);
         for (HitCircle rhsCircle : rhs.circles) {
-            rhsCircle = sanitizeCircle(rhsCircle);
-            const Vec2 rhsCircleCenter = rhsCenter + rotateOffset(rhsCircle.offset * rhsSafeScale, rhsRotationRadians);
-            const float radius = lhsRadius + rhsCircle.radius * rhsSafeScale + rhsSafePadding;
-            if (distanceSquared(lhsCircleCenter, rhsCircleCenter) <= radius * radius) {
+            const WorldHitCircle rhsWorldCircle = resolveHitCircle(
+                rhsCircle,
+                rhsCenter,
+                rhsRotationRadians,
+                rhsSafeScale,
+                rhsSafePadding);
+            const float radius = lhsWorldCircle.radius + rhsWorldCircle.radius;
+            if (distanceSquared(lhsWorldCircle.center, rhsWorldCircle.center) <= radius * radius) {
                 return true;
             }
         }

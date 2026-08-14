@@ -21,6 +21,7 @@ enum class InputAction {
     ShiftRingUp,
     ShiftRingDown,
     SecondaryActionModifier,
+    // サブ操作と方向入力から生成する内部イベント。個別の割当は保存しない。
     ShortcutCursorLeft,
     ShortcutCursorRight,
     PreviousShortcutRow,
@@ -117,6 +118,7 @@ bool inputBindingEquals(const InputBinding& lhs, const InputBinding& rhs);
 bool inputBindingSamePhysicalInput(const InputBinding& lhs, const InputBinding& rhs);
 bool inputActionRequiresBinding(InputAction action);
 bool inputActionCanBeRemapped(InputAction action);
+bool inputActionHasPersistentBindings(InputAction action);
 bool inputActionIsDeveloperOnly(InputAction action);
 bool inputActionsConflict(InputAction lhs, InputAction rhs);
 std::string inputBindingDisplayName(const InputBinding& binding);

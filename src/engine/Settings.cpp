@@ -19,7 +19,7 @@ namespace majo {
 
 namespace {
 
-constexpr int CurrentSettingsVersion = 7;
+constexpr int CurrentSettingsVersion = 9;
 constexpr int MinWindowWidth = 640;
 constexpr int MinWindowHeight = 360;
 constexpr int MaxWindowWidth = 7680;
@@ -755,6 +755,34 @@ void migrateLoadedSettings(GameSettings& settings)
             migrationGamepadButtonBinding("north"),
         });
     }
+
+    if (settings.version < 8) {
+        const InputBindingMap currentDefaults = defaultInputBindings();
+        const auto migrateDefault = [&](InputAction action, const std::vector<InputBinding>& legacy) {
+            auto& bindings = settings.input.bindings[inputActionIndex(action)];
+            if (migrationBindingSetsEqual(bindings, legacy)) {
+                bindings = currentDefaults[inputActionIndex(action)];
+            }
+        };
+
+        migrateDefault(InputAction::PreviousShortcutRow, {
+            migrationKeyboardBinding("Up", InputModifiers::Shift),
+            migrationGamepadButtonBinding("dpad_down"),
+        });
+        migrateDefault(InputAction::NextShortcutRow, {
+            migrationKeyboardBinding("Down", InputModifiers::Shift),
+            migrationGamepadButtonBinding("dpad_up"),
+        });
+    }
+
+    if (settings.version < 9) {
+        for (int action = 0; action < InputActionCount; ++action) {
+            const InputAction inputAction = static_cast<InputAction>(action);
+            if (!inputActionHasPersistentBindings(inputAction)) {
+                settings.input.bindings[action].clear();
+            }
+        }
+    }
 }
 
 void writeInputBindingJson(std::ostream& out, const InputBinding& binding, std::string_view indent)
@@ -1081,8 +1109,16 @@ bool SettingsStore::save(const GameSettings& settings, std::string* outError) co
     file << "  },\n";
     file << "  \"input\": {\n";
     file << "    \"bindings\": {\n";
+    bool firstAction = true;
     for (int action = 0; action < InputActionCount; ++action) {
         const auto inputAction = static_cast<InputAction>(action);
+        if (!inputActionHasPersistentBindings(inputAction)) {
+            continue;
+        }
+        if (!firstAction) {
+            file << ",\n";
+        }
+        firstAction = false;
         file << "      \"" << inputActionName(inputAction) << "\": [";
         const std::vector<InputBinding>& bindings = sanitized.input.bindings[action];
         if (!bindings.empty()) {
@@ -1095,8 +1131,8 @@ bool SettingsStore::save(const GameSettings& settings, std::string* outError) co
         } else {
             file << "]";
         }
-        file << (action + 1 < InputActionCount ? ",\n" : "\n");
     }
+    file << "\n";
     file << "    }\n";
     file << "  }\n";
     file << "}\n";

@@ -639,6 +639,7 @@ constexpr int DungeonEventLostBaggageWallRadiusTiles = 2;
 constexpr std::string_view DungeonEventItemRequestHeal = "heal";
 constexpr std::string_view DungeonEventItemRequestBlade = "blade";
 constexpr std::string_view DungeonEventItemRequestTool = "tool";
+constexpr float DungeonEventItemRequestConditionGapAboveGrid = 40.0f;
 constexpr double PlayerRegenRateCap = 0.5;
 
 struct PlacementReservation {
@@ -4867,7 +4868,7 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
     clearTemporaryPlayerState(true);
     captureDungeonState();
     resetInPlace(tileMap_);
-    resetInPlace(enemies_);
+    resetWorldEnemyState();
     resetInPlace(effects_);
     captureAbsorbAnimations_.clear();
     moneyGainFx_.clear();
@@ -5514,7 +5515,7 @@ void Game::completeIntroTutorialAndReturnToBase()
     introTutorialChestLootInstanceId_.clear();
 
     clearTemporaryPlayerState(true);
-    enemies_ = EnemySystem{};
+    resetWorldEnemyState();
     effects_ = EffectSystem{};
     captureAbsorbAnimations_.clear();
     moneyGainFx_.clear();
@@ -5655,8 +5656,7 @@ bool Game::restoreDungeonState(bool useLatestWarpPoint)
     pendingBuriedEnemySpawns_.clear();
     closeDungeonEventItemRequestUi();
     dungeonEvents_.setInstances(state.dungeonEventInstances);
-    enemies_ = state.enemies;
-    enemies_.clearTemporaryState();
+    restoreWorldEnemyState(state.enemies);
     worldDrops_ = state.worldDrops;
     worldDrops_.setDropLimit(balance_.worldDropLimitPerStage);
     materializeExposedPlacementDrops(true);
@@ -7643,7 +7643,10 @@ void Game::renderDungeonEventItemRequestUi(Renderer& renderer, double totalSecon
             UiWindowOptions{true, true});
 
         renderer.drawText(
-            {layout.gridOrigin.x, layout.window.pos.y + 54.0f},
+            {
+                layout.gridOrigin.x,
+                layout.gridOrigin.y - DungeonEventItemRequestConditionGapAboveGrid,
+            },
             std::string("依頼品: ") + dungeonEventItemRequestDisplayName(eventIt->requestKey),
             ui::Text,
             2);
@@ -13788,8 +13791,7 @@ void Game::restoreRetrySnapshot()
     pendingBuriedEnemySpawns_.clear();
     closeDungeonEventItemRequestUi();
     dungeonEvents_.setInstances(retrySnapshot_.dungeonEventInstances);
-    enemies_ = retrySnapshot_.enemies;
-    enemies_.clearTemporaryState();
+    restoreWorldEnemyState(retrySnapshot_.enemies);
     worldDrops_ = retrySnapshot_.worldDrops;
     worldDrops_.setDropLimit(balance_.worldDropLimitPerStage);
     spawnedWarpPointCount_ = retrySnapshot_.spawnedWarpPointCount;
@@ -13931,8 +13933,7 @@ bool Game::restoreDebugRoguelikeRunSnapshot()
     pendingBuriedEnemySpawns_.clear();
     closeDungeonEventItemRequestUi();
     dungeonEvents_.setInstances(dungeon.dungeonEventInstances);
-    enemies_ = dungeon.enemies;
-    enemies_.clearTemporaryState();
+    restoreWorldEnemyState(dungeon.enemies);
     worldDrops_ = dungeon.worldDrops;
     worldDrops_.setDropLimit(balance_.worldDropLimitPerStage);
     spawnedWarpPointCount_ = dungeon.spawnedWarpPointCount;

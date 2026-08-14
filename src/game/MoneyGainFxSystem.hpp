@@ -10,7 +10,7 @@ namespace majo {
 
 class Renderer;
 
-struct MoneyGainSpawnEvent {
+struct MoneyGainLandingEvent {
     Vec2 position{};
     float pitchScale = 1.0f;
 };
@@ -32,7 +32,7 @@ public:
     [[nodiscard]] int pendingDisplayAmount() const;
     [[nodiscard]] float hudPulseStrength() const;
     [[nodiscard]] bool active() const { return !coins_.empty() || !sparkles_.empty() || !arrivalPulses_.empty(); }
-    std::vector<MoneyGainSpawnEvent> consumeSpawnEvents();
+    std::vector<MoneyGainLandingEvent> consumeLandingEvents();
     std::vector<MoneyGainArrivalEvent> consumeArrivalEvents();
 
 private:
@@ -61,10 +61,12 @@ private:
         float absorbDepthAxisDegrees = 90.0f;
         float sparkleTimerSeconds = 0.0f;
         float trailIntensity = 1.0f;
+        float landingPitchScale = 1.0f;
         std::uint32_t sparkleRandomState = 1;
         int displayAmount = 0;
         int sequenceIndex = 0;
         int sequenceCount = 1;
+        bool shouldEmitLandingEvent = false;
     };
 
     struct Sparkle {
@@ -85,7 +87,7 @@ private:
     std::vector<Coin> coins_;
     std::vector<Sparkle> sparkles_;
     std::vector<ArrivalPulse> arrivalPulses_;
-    std::vector<MoneyGainSpawnEvent> spawnEvents_;
+    std::vector<MoneyGainLandingEvent> landingEvents_;
     std::vector<MoneyGainArrivalEvent> arrivalEvents_;
     std::uint32_t spawnSerial_ = 0;
     float hudPulseSeconds_ = 0.0f;

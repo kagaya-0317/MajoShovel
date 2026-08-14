@@ -276,6 +276,7 @@ public:
     float angularSpeedForRing(int ringIndex) const;
     float effectiveAngularSpeed() const;
     float effectiveAngularSpeedForRing(int ringIndex) const;
+    float worldItemVisualScale(const SpellRingItem& item) const;
     float totalEquippedWeight() const;
     float totalEquippedWeightForRing(int ringIndex) const;
     float maxEquippedWeight() const;

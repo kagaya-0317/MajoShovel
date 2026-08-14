@@ -5,6 +5,7 @@
 #include "game/SpellRingItem.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <initializer_list>
 #include <string_view>
@@ -20,6 +21,22 @@ struct CueRule {
     float volume = 1.0f;
     float basePitch = 1.0f;
 };
+
+struct TaggedCueRule {
+    std::string_view sourceTag;
+    CueRule cue;
+};
+
+constexpr std::array<TaggedCueRule, 1> kEnemyHitOverrideRules{{
+    {"enemy_hit_stab", {"se.impact.enemy.spear", 122, 0.90f, 1.0f}},
+}};
+
+constexpr std::array<TaggedCueRule, 4> kEnemyWeaponCueRules{{
+    {"axe", {"se.impact.enemy.axe", 120, 0.96f, 0.96f}},
+    {"bat", {"se.impact.enemy.bat", 118, 0.98f, 1.0f}},
+    {"sword", {"se.impact.enemy.sword", 116, 0.94f, 1.02f}},
+    {"spear", {"se.impact.enemy.spear", 114, 0.90f, 1.0f}},
+}};
 
 void appendUnique(std::vector<std::string>& tags, std::string_view tag)
 {
@@ -80,6 +97,18 @@ bool sourceHas(const RingImpactSoundEvent& event, std::string_view tag)
 bool sourceHasAny(const RingImpactSoundEvent& event, std::initializer_list<std::string_view> tags)
 {
     return hasAnyTag(event.sourceTags, tags);
+}
+
+CueRule firstMatchingSourceCueRule(
+    const RingImpactSoundEvent& event,
+    std::span<const TaggedCueRule> taggedRules)
+{
+    for (const TaggedCueRule& taggedRule : taggedRules) {
+        if (sourceHas(event, taggedRule.sourceTag)) {
+            return taggedRule.cue;
+        }
+    }
+    return {};
 }
 
 bool targetHas(const RingImpactSoundEvent& event, std::string_view tag)
@@ -163,6 +192,18 @@ CueRule terrainRule(const RingImpactSoundEvent& event)
     return {};
 }
 
+CueRule enemyHitRule(const RingImpactSoundEvent& event)
+{
+    if (!isEnemy(event) || targetIsHard(event)) {
+        return {};
+    }
+
+    if (const CueRule rule = firstMatchingSourceCueRule(event, kEnemyHitOverrideRules); !rule.cueId.empty()) {
+        return rule;
+    }
+    return firstMatchingSourceCueRule(event, kEnemyWeaponCueRules);
+}
+
 CueRule enemyMaterialRule(const RingImpactSoundEvent& event)
 {
     if (!isEnemy(event)) {
@@ -227,6 +268,9 @@ CueRule chooseCueRule(const RingImpactSoundEvent& event)
         return rule;
     }
     if (const CueRule rule = sourceTextureRule(event); !rule.cueId.empty()) {
+        return rule;
+    }
+    if (const CueRule rule = enemyHitRule(event); !rule.cueId.empty()) {
         return rule;
     }
     if (const CueRule rule = enemyMaterialRule(event); !rule.cueId.empty()) {

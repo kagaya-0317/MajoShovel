@@ -20,6 +20,8 @@ $RebuildRestartExitCode = 85
 $DevAutoReloadMutex = $null
 $BuildEvidenceRoot = $null
 $BuildSequence = 0
+$LastBuildId = ""
+$LastBuildChangeSummaries = @()
 $PendingBuildPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
 $WatcherStartedAtUtc = (Get-Process -Id $PID).StartTime.ToUniversalTime()
 
@@ -294,8 +296,98 @@ function Take-RestartRequest {
     }
 }
 
-function Publish-BuildStatus([string]$Status) {
-    if ($Status -ne "ready" -and $Status -ne "failed") {
+function Normalize-BuildChangeSummaries([string[]]$ChangeSummaries) {
+    $normalized = [System.Collections.Generic.List[string]]::new()
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($item in $ChangeSummaries) {
+        if ([string]::IsNullOrWhiteSpace($item)) {
+            continue
+        }
+        $summary = [regex]::Replace($item.Trim(), "[\t\r\n]+", " ")
+        $summary = [regex]::Replace($summary, " {2,}", " ")
+        if (-not [string]::IsNullOrWhiteSpace($summary) -and $seen.Add($summary)) {
+            $normalized.Add($summary)
+        }
+    }
+    return @($normalized)
+}
+
+function Get-LatestSuccessfulBuildFinishedAtUtc {
+    $successRoot = Join-Path $BuildEvidenceRoot "successes"
+    if (-not (Test-Path -LiteralPath $successRoot -PathType Container)) {
+        return [DateTime]::MinValue
+    }
+    foreach ($file in @(Get-ChildItem -LiteralPath $successRoot -Filter "*.json" -File -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTimeUtc -Descending)) {
+        try {
+            $result = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
+            if ($result.status -eq "succeeded" -and $result.reusable) {
+                return ([DateTime]$result.finishedAtUtc).ToUniversalTime()
+            }
+        }
+        catch {
+        }
+    }
+    return [DateTime]::MinValue
+}
+
+function Get-PendingBuildChangeSummaries([DateTime]$BuildStartedAtUtc, [string[]]$RequestedPaths) {
+    $summaries = [System.Collections.Generic.List[string]]::new()
+    $lastSuccessUtc = Get-LatestSuccessfulBuildFinishedAtUtc
+    $receiptRoot = Join-Path (Get-MajoShovelCodexEditSessionRoot $Root) "completed"
+    if (Test-Path -LiteralPath $receiptRoot -PathType Container) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $receiptRoot -Filter "*.json" -File -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTimeUtc)) {
+            try {
+                $receipt = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
+                $stoppedAtUtc = ([DateTime]$receipt.stoppedAtUtc).ToUniversalTime()
+                if ($stoppedAtUtc -le $lastSuccessUtc -or $stoppedAtUtc -gt $BuildStartedAtUtc) {
+                    continue
+                }
+                $hasBuildInput = $false
+                foreach ($pathEvidence in @($receipt.paths)) {
+                    if ($pathEvidence.isBuildInputPath) {
+                        $hasBuildInput = $true
+                        break
+                    }
+                }
+                if (-not $hasBuildInput) {
+                    continue
+                }
+                foreach ($summary in @($receipt.changeSummaries)) {
+                    $summaries.Add([string]$summary)
+                }
+            }
+            catch {
+            }
+        }
+    }
+
+    $normalized = @(Normalize-BuildChangeSummaries $summaries)
+    if ($normalized.Count -gt 0 -or $RequestedPaths.Count -eq 0) {
+        return $normalized
+    }
+
+    $fileNames = [System.Collections.Generic.List[string]]::new()
+    $seenFileNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($pathItem in $RequestedPaths) {
+        $fileName = [System.IO.Path]::GetFileName([string]$pathItem)
+        if (-not [string]::IsNullOrWhiteSpace($fileName) -and $seenFileNames.Add($fileName)) {
+            $fileNames.Add($fileName)
+        }
+    }
+    if ($fileNames.Count -gt 0) {
+        return @("コード更新：" + ($fileNames -join " / "))
+    }
+    return @()
+}
+
+function Publish-BuildStatus(
+    [string]$Status,
+    [string]$BuildId = "",
+    [string[]]$ChangeSummaries = @()
+) {
+    if ($Status -ne "building" -and $Status -ne "ready" -and $Status -ne "failed") {
         throw "Unknown build status: $Status"
     }
 
@@ -311,9 +403,20 @@ function Publish-BuildStatus([string]$Status) {
         } else {
             0
         }
-        $token = "$Status`t$PID-$([DateTime]::UtcNow.Ticks)-$exeWriteTicks"
+        $token = "$PID-$([DateTime]::UtcNow.Ticks)-$exeWriteTicks"
+        $lines = [System.Collections.Generic.List[string]]::new()
+        $lines.Add("$Status`t$token")
+        if (-not [string]::IsNullOrWhiteSpace($BuildId)) {
+            $lines.Add("build_id`t$BuildId")
+        }
+        foreach ($summary in @(Normalize-BuildChangeSummaries $ChangeSummaries)) {
+            $lines.Add("summary`t$summary")
+        }
         $utf8Bom = New-Object System.Text.UTF8Encoding($true)
-        [System.IO.File]::WriteAllText($temporaryPath, $token + [Environment]::NewLine, $utf8Bom)
+        [System.IO.File]::WriteAllText(
+            $temporaryPath,
+            ($lines -join [Environment]::NewLine) + [Environment]::NewLine,
+            $utf8Bom)
         Move-Item -LiteralPath $temporaryPath -Destination $path -Force
         return $true
     } catch {
@@ -539,6 +642,10 @@ function Invoke-GameBuild([string[]]$RequestedPaths = @(), $SourceCoordinationLo
     $script:BuildSequence++
     $startedAtUtc = [DateTime]::UtcNow
     $buildId = "{0}-{1}-{2}" -f $startedAtUtc.ToString("yyyyMMdd-HHmmss-fff"), $PID, $script:BuildSequence
+    $changeSummaries = @(Get-PendingBuildChangeSummaries $startedAtUtc $RequestedPaths)
+    $script:LastBuildId = $buildId
+    $script:LastBuildChangeSummaries = @($changeSummaries)
+    [void](Publish-BuildStatus "building" $buildId $changeSummaries)
     $currentLogPath = New-DevBuildLog $buildId $startedAtUtc $RequestedPaths
     $script:IsBuilding = $true
     $buildOperationMutex = $null
@@ -689,6 +796,7 @@ function Invoke-GameBuild([string[]]$RequestedPaths = @(), $SourceCoordinationLo
             inputSnapshot = $inputSnapshotBefore
             finalInputFingerprint = if ($null -ne $inputSnapshotAfter) { $inputSnapshotAfter.fingerprint } else { "" }
             recompiledSources = @($recompiledSources)
+            changeSummaries = @($changeSummaries)
             output = $outputEvidence
             logPath = ""
         }
@@ -829,7 +937,7 @@ try {
                             if ($hadRunningGame) {
                                 if ($PendingBuild) {
                                     Write-Host "[dev] a newer code change is queued; waiting for its build before publishing."
-                                } elseif (Publish-BuildStatus "ready") {
+                                } elseif (Publish-BuildStatus "ready" $LastBuildId $LastBuildChangeSummaries) {
                                     Write-Host "[dev] build ready. Press F5 in the game to apply it."
                                 }
                             } else {
@@ -838,7 +946,7 @@ try {
                                 Start-Game
                             }
                         } elseif ($hadRunningGame -and -not $PendingBuild) {
-                            if (Publish-BuildStatus "failed") {
+                            if (Publish-BuildStatus "failed" $LastBuildId $LastBuildChangeSummaries) {
                                 Write-Host "[dev] build failure published to the running game."
                             }
                         }
@@ -881,7 +989,7 @@ try {
                                     Clear-BuildStatus
                                     Start-Game
                                 } else {
-                                    [void](Publish-BuildStatus "failed")
+                                    [void](Publish-BuildStatus "failed" $LastBuildId $LastBuildChangeSummaries)
                                     [void](Restart-ExistingGameCopy)
                                 }
                             }

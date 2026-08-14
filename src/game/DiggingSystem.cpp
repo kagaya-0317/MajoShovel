@@ -2,8 +2,7 @@
 
 #include "game/Collision.hpp"
 #include "game/Hitbox.hpp"
-#include "game/ObjectVisualPose.hpp"
-#include "game/RingItemVisual.hpp"
+#include "game/RingItemHitbox.hpp"
 #include "game/TerrainDigRules.hpp"
 
 #include <algorithm>
@@ -22,12 +21,6 @@ constexpr int CapturedRewardWindowLimit = 3;
 constexpr int CapturedExplosionChargeLimit = 4;
 constexpr int NoLastDigTile = 2147483647;
 constexpr float TerrainContactInsetPx = 8.0f;
-
-float ringTerrainHitboxScale(const SpellRingItem& item)
-{
-    const float scale = static_cast<float>(item.sizeModifier);
-    return std::isfinite(scale) ? std::clamp(scale, 0.05f, 8.0f) : 1.0f;
-}
 
 Vec2 rotateTerrainHitboxOffset(Vec2 value, float radians)
 {
@@ -189,28 +182,43 @@ std::vector<DungeonTile> collectTerrainHitTiles(
     const SpellRingItem& item,
     const ObjectDefinition* object,
     const HitboxCatalog* hitboxCatalog,
-    float totalTime)
+    const SpellRingSystem& spellRing,
+    float totalTime,
+    float dt)
 {
     std::vector<DungeonTile> tiles;
-    const HitboxProfile* profile = objectHitboxProfileFor(hitboxCatalog, item.objectId);
-    if (profile != nullptr && object != nullptr) {
-        const float scale = ringTerrainHitboxScale(item);
-        ObjectImageDrawOptions baseImageOptions;
-        baseImageOptions.rotationDegrees = ringItemRotationWobbleDegrees(item, totalTime);
-        const ObjectImageDrawOptions imageOptions = objectRingImageOptions(
-            *object,
-            item.orbitOutward,
-            item.worldVelocity,
-            totalTime,
-            baseImageOptions);
-        const float rotationRadians = imageOptions.rotationDegrees * (Pi / 180.0f);
-        const Vec2 center = ringItemDrawPosition(item, totalTime);
-        for (const HitCircle& circle : profile->circles) {
-            const Vec2 circleCenter = center + rotateTerrainHitboxOffset(circle.offset * scale, rotationRadians);
-            collectCircleTerrainHitTiles(map, circleCenter, circle.radius * scale, tiles);
-        }
+    const RingItemHitbox hitbox = resolveRingItemHitbox(
+        item,
+        object,
+        hitboxCatalog,
+        spellRing,
+        totalTime,
+        dt);
+    if (hitbox.profile != nullptr && object != nullptr) {
+        visitRingItemHitboxSweep(
+            hitbox,
+            [&](Vec2 center, float rotationRadians) {
+                for (const HitCircle& circle : hitbox.profile->circles) {
+                    const Vec2 circleCenter = center + rotateTerrainHitboxOffset(
+                        circle.offset * hitbox.profileScale,
+                        rotationRadians);
+                    collectCircleTerrainHitTiles(
+                        map,
+                        circleCenter,
+                        circle.radius * hitbox.profileScale,
+                        tiles);
+                }
+            });
     } else {
-        collectCircleTerrainHitTiles(map, item.worldPosition, item.hitRadius, tiles);
+        visitRingItemHitboxSweep(
+            hitbox,
+            [&](Vec2 center, float) {
+                collectCircleTerrainHitTiles(
+                    map,
+                    center,
+                    hitbox.fallbackCircleRadius,
+                    tiles);
+            });
     }
 
     addDigContactProbeTile(map, item, tiles);
@@ -293,6 +301,7 @@ void DiggingSystem::update(
     SpellRingSystem& spellRing,
     Player& player,
     float totalTime,
+    float dt,
     const ObjectCatalog& objectCatalog,
     const HitboxCatalog* hitboxCatalog,
     const EffectDispatcher& effectDispatcher,
@@ -327,7 +336,14 @@ void DiggingSystem::update(
         }
 
         const std::vector<DungeonTile> currentTargets =
-            collectTerrainHitTiles(map, item, sourceObject, hitboxCatalog, totalTime);
+            collectTerrainHitTiles(
+                map,
+                item,
+                sourceObject,
+                hitboxCatalog,
+                spellRing,
+                totalTime,
+                dt);
         if (currentTargets.empty()) {
             rememberDigTiles(item, currentTargets);
             continue;
