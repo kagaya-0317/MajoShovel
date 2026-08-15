@@ -34,15 +34,6 @@ struct CombatPressure {
     int nearbyEnemies = 0;
 };
 
-struct ConsumableProfile {
-    double heal = 0.0;
-    double attackMultiplier = 1.0;
-    double speedMultiplier = 1.0;
-    double defenseMultiplier = 1.0;
-    double giantValue = 0.0;
-    bool unsafeSelfEffect = false;
-};
-
 struct ConsumableChoice {
     const GameTestObjectEntrySnapshot* item = nullptr;
     ConsumableUseKind kind = ConsumableUseKind::Stack;
@@ -99,9 +90,9 @@ ConsumableUseKind useKindFor(const GameTestObjectEntrySnapshot& item)
     return item.kind == GameTestObjectEntryKind::Instance ? ConsumableUseKind::Instance : ConsumableUseKind::Stack;
 }
 
-ConsumableProfile consumableProfile(const GameTestObjectEntrySnapshot& item)
+AutoSimulationConsumableProfile buildConsumableProfile(const GameTestObjectEntrySnapshot& item)
 {
-    ConsumableProfile profile;
+    AutoSimulationConsumableProfile profile;
     for (const GameTestUseEffectSnapshot& effect : item.useEffects) {
         if (!selfTarget(effect.target)) {
             continue;
@@ -157,7 +148,7 @@ ConsumableProfile consumableProfile(const GameTestObjectEntrySnapshot& item)
     return profile;
 }
 
-bool usableConsumableItem(const GameTestObjectEntrySnapshot& item, const ConsumableProfile& profile)
+bool usableConsumableItem(const GameTestObjectEntrySnapshot& item, const AutoSimulationConsumableProfile& profile)
 {
     if (item.location != GameTestInventoryLocation::Backpack ||
         item.objectId.empty() ||
@@ -244,7 +235,7 @@ float healChoiceScore(
 float buffBenefitScore(
     const GameTestSnapshot& snapshot,
     const CombatPressure& pressure,
-    const ConsumableProfile& profile,
+    const AutoSimulationConsumableProfile& profile,
     float hpRatio)
 {
     if (!pressure.buffWorthyNearby) {
@@ -318,7 +309,7 @@ std::optional<ConsumableChoice> chooseHeal(
 
     ConsumableChoice best;
     for (const GameTestObjectEntrySnapshot& item : snapshot.inventory.backpackItems) {
-        const ConsumableProfile profile = consumableProfile(item);
+        const AutoSimulationConsumableProfile profile = autoSimulationConsumableProfile(item);
         if (!usableConsumableItem(item, profile) || profile.heal <= 0.0) {
             continue;
         }
@@ -347,7 +338,7 @@ std::optional<ConsumableChoice> chooseBuff(
 {
     ConsumableChoice best;
     for (const GameTestObjectEntrySnapshot& item : snapshot.inventory.backpackItems) {
-        const ConsumableProfile profile = consumableProfile(item);
+        const AutoSimulationConsumableProfile profile = autoSimulationConsumableProfile(item);
         if (!usableConsumableItem(item, profile)) {
             continue;
         }
@@ -401,6 +392,12 @@ GameTestAction makeAction(const ConsumableChoice& choice, const GameTestSnapshot
 }
 
 } // namespace
+
+AutoSimulationConsumableProfile autoSimulationConsumableProfile(
+    const GameTestObjectEntrySnapshot& item)
+{
+    return buildConsumableProfile(item);
+}
 
 std::optional<GameTestAction> AutoSimulationConsumablePlanner::chooseAction(const GameTestSnapshot& snapshot) const
 {

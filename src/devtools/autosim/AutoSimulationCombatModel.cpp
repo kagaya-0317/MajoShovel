@@ -60,6 +60,18 @@ float enemyRadiusFor(const GameTestEnemySnapshot& enemy)
     return std::max(fallback, enemy.radius);
 }
 
+float activeCombatHitRadius(const GameTestSnapshot& snapshot)
+{
+    float best = 0.0f;
+    for (const GameTestRingItemSnapshot& item : snapshot.ring.items) {
+        if (item.ringIndex != snapshot.ring.activeRingIndex || item.broken || item.damage <= 0) {
+            continue;
+        }
+        best = std::max(best, item.hitRadius);
+    }
+    return std::max(8.0f, best);
+}
+
 Vec2 expectedRingCenterForPlayer(const GameTestSnapshot& snapshot, Vec2 playerPosition)
 {
     Vec2 offset = snapshot.ring.anchorOffsetFromPlayer;
@@ -77,7 +89,7 @@ float ringDistanceForPlayer(const GameTestSnapshot& snapshot, Vec2 playerPositio
 CombatRange combatRangeFor(const GameTestSnapshot& snapshot, const GameTestEnemySnapshot& enemy)
 {
     const float ringRadius = std::max(36.0f, snapshot.ring.activeRadius);
-    const float hitRadius = std::max(8.0f, snapshot.ring.bestHitRadius);
+    const float hitRadius = activeCombatHitRadius(snapshot);
     const float enemyRadius = enemyRadiusFor(enemy);
     const float ringMin = std::max(0.0f, ringRadius - hitRadius - enemyRadius);
     const float ringMax = std::max(ringMin + 6.0f, ringRadius + hitRadius + enemyRadius);
@@ -337,6 +349,9 @@ void applyRouteMetadata(AutoSimulationPlan& plan, const AutoSimulationRoute& rou
     plan.routeDigTileCount = route.digTileCount;
     plan.routeHardTileCount = route.hardTileCount;
     plan.routeAvoidingHardWall = route.avoidingHardWall;
+    plan.routeTotalCost = route.totalCost;
+    plan.routeDigCost = route.digCost;
+    plan.routeExpectedDigHits = route.expectedDigHits;
     if (route.hasFirstDigTerrainKind) {
         plan.targetTerrainKind = route.firstDigTerrainKind;
         plan.hasTargetTerrainKind = true;
@@ -353,9 +368,20 @@ AutoSimulationPlan makeCombatPlan(
 {
     const float distanceToEnemy = length(enemy.position - snapshot.player.position);
     const float ringDistanceToEnemy = length(snapshot.ringCenter - enemy.position);
+    const bool ringTooClose = ringDistanceToEnemy < range.ringMin;
+    // Pull the ring center away from an enemy inside the orbit so the near arc
+    // can cross it. Throwing would cancel this offset, so these modes are exclusive.
+    const bool closeRangeOffsetActive =
+        snapshot.ring.currentOffsetDistance > 2.0f &&
+        ringDistanceToEnemy < range.ringMax - 3.0f;
+    const bool useCloseRangeOffset =
+        snapshot.ring.hasCombatTool &&
+        snapshot.ringState == GameTestRingState::Normal &&
+        snapshot.ring.maxOffsetDistance > 2.0f &&
+        (ringTooClose || closeRangeOffsetActive);
     float desiredMin = range.desiredMin;
     float desiredMax = range.desiredMax;
-    if (ringDistanceToEnemy < range.ringMin) {
+    if (ringTooClose && !useCloseRangeOffset) {
         desiredMin = std::max(desiredMin, distanceToEnemy + 14.0f);
     } else if (ringDistanceToEnemy > range.ringMax && distanceToEnemy > desiredMin + 8.0f) {
         desiredMax = std::min(desiredMax, std::max(desiredMin + 8.0f, distanceToEnemy - 14.0f));
@@ -377,9 +403,16 @@ AutoSimulationPlan makeCombatPlan(
     plan.desiredRangeMax = desiredMax;
     plan.strafe = strafe;
     plan.preferredRingRole = AutoSimulationRingRole::Combat;
-    plan.throwRing = snapshot.ring.hasCombatTool && distanceToEnemy <= range.throwRange;
-    plan.ringOffset = false;
+    plan.throwRing =
+        snapshot.ring.hasCombatTool &&
+        !useCloseRangeOffset &&
+        distanceToEnemy <= range.throwRange;
+    plan.ringOffset = useCloseRangeOffset;
+    plan.ringOffsetAwayFromAim = useCloseRangeOffset;
     plan.moveAwayFromTarget = false;
+    if (useCloseRangeOffset) {
+        reason += "_close_ring_offset";
+    }
     plan.reason = std::move(reason);
     return plan;
 }

@@ -11,12 +11,20 @@
 #include "game/Player.hpp"
 #include "game/TileMap.hpp"
 
+#include <cstddef>
+
 namespace majo {
 
 class DebugOverlay {
 public:
     void toggle() { visible_ = !visible_; }
     bool visible() const { return visible_; }
+    static void appendAutoSimulationText(
+        char* buffer,
+        std::size_t bufferSize,
+        bool enabled,
+        const autosim::AutoSimulationDebugSnapshot& debug,
+        bool includeDungeonDetails);
     void render(
         Renderer& renderer,
         const Time& time,

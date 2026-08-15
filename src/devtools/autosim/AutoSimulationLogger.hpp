@@ -15,6 +15,9 @@ public:
 
     void recordRun(const AutoSimulationRunRecord& record);
     void writeSummary() const;
+    std::filesystem::path writeCheckpointReport(
+        const GameTestCheckpointMeasurementSnapshot& measurement,
+        AutoSimulationResult result) const;
     const std::vector<AutoSimulationRunRecord>& records() const { return records_; }
     const std::filesystem::path& csvPath() const { return csvPath_; }
 

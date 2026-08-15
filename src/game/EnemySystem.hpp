@@ -84,6 +84,7 @@ struct EnemyEvent {
     bool frontGuarded = false;
     bool weakPointHit = false;
     bool ringItemImpact = false;
+    bool playerDealtDamage = false;
     bool suppressRewards = false;
     int moneyDrop = 0;
     std::string objectDropId;

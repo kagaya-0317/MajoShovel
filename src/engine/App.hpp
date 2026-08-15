@@ -55,6 +55,8 @@ private:
     bool executeSettingsDebugCommand(const std::string& normalizedCommand);
     void executeDebugCommand(const std::string& command);
     void runAutoSimulationStep(float dt, Time& updateTime);
+    void openPendingAutoSimulationReport();
+    std::vector<autosim::AutoSimulationIntent> autoSimulationOverlayIntents() const;
     void advanceStartupLoad();
     void renderStartupFrame();
     float startupLoadProgress() const;
@@ -117,6 +119,7 @@ private:
     std::vector<std::string> devBuildChangeSummaries_;
     float settingsSaveDelaySeconds_ = 0.0f;
     float autoSimulationStepDebtSeconds_ = 0.0f;
+    float autoSimulationSpeedNoticeTimer_ = 0.0f;
     float devBuildNoticeTimer_ = 0.0f;
     int width_ = 1280;
     int height_ = 720;

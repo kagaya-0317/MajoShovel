@@ -157,6 +157,7 @@ DebugConsoleLayout makeDefaultDebugConsoleLayout()
                     {
                         {DebugControlKind::Dropdown, "autosim_state", "状態", "autosim", 0, 0, {"開始", "停止"}, {"start", "stop"}},
                         {DebugControlKind::Slider, "autosim_speed", "速度", "autosim speed", 1, 16},
+                        {DebugControlKind::DropdownButton, "autosim_checkpoint_stage", "ボス前計測", "autosim checkpoint", 0, 0, {"ステージ1", "ステージ2", "ステージ3"}, {"stage_01_stardust", "stage_02_junk_magic", "stage_03_star_core"}},
                         {DebugControlKind::Button, "autosim_report", "ログ", "autosim report"},
                     },
                 },

@@ -30,6 +30,8 @@ enum class DamageSource {
 
 struct DamageCause {
     DamageSource source = DamageSource::Unknown;
+    int enemyRuntimeId = 0;
+    std::string enemyId;
     std::string actorName;
     std::string objectName;
 };
@@ -54,6 +56,7 @@ inline float witchSelfLightRadius(float baseRadius)
 struct PlayerDamageEvent {
     int amount = 0;
     Vec2 position{};
+    DamageCause cause;
 };
 
 struct PlayerHealEvent {

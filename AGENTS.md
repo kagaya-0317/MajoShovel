@@ -44,6 +44,14 @@
 - 操作説明や UI 文言を変更した場合は、実装だけでなく `ui_texts.tsv` の対応行も同じ仕様へ更新する。
 - デバッグ専用画面の操作説明や UI は、ユーザーから明示的に依頼された場合を除き、この統一作業の対象外とする。
 
+### F1 Debug Overlay Rendering Paths
+
+- 拠点とダンジョンでは F1 デバッグ表示の描画経路が異なる。共通の F1 ウィンドウだと仮定してはならない。
+- 拠点表示中は `GameRender.cpp` の `basePresentationActive()` 分岐から `Game::renderBaseDebugOverlay()` を呼び、実装は `GameDevTools.cpp` にある。ここでは `DebugOverlay::render()` を呼ばない。
+- ダンジョンなど通常画面では `Game::renderDebugOverlay()` から `DebugOverlay::render()` を呼ぶ。
+- F1 に情報を追加・修正する場合は、依頼対象が拠点、ダンジョン、または両方のどれかを実際の render 分岐で確認し、対象となる全経路へ反映する。スクリーンショットに拠点固有の `Base: area` や `ReturnMode` がある場合は拠点専用経路として扱う。
+- 拠点とダンジョンの両方へ同じ診断情報を出す場合は、文字列生成を共有ヘルパーへまとめ、各描画経路から呼ぶ。片方の描画関数への追加だけで完了扱いにしない。
+
 ## Answering Policy
 
 - 設定、仕様、既存実装、シナリオ意図に関わる回答は、必ず該当するローカルデータ、設計書、コード、会話ファイルを確認してから行う。

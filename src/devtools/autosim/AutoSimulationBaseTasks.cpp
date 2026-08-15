@@ -12,8 +12,8 @@ namespace majo::autosim {
 namespace {
 
 constexpr float ProtectThreshold = 86.0f;
-constexpr float RepairThreshold = 72.0f;
 constexpr float EnhanceThreshold = 92.0f;
+constexpr int EnhancementBudgetDivisor = 4;
 constexpr int MinDepartureFreeSlots = 8;
 constexpr int MaxDepartureFreeSlots = 12;
 constexpr int MinWarehouseFreeSlots = 2;
@@ -187,13 +187,15 @@ GameTestAction itemAction(
     GameTestActionKind kind,
     const GameTestObjectEntrySnapshot& item,
     int count,
-    std::string reason)
+    std::string reason,
+    int estimatedMoneyCost = 0)
 {
     GameTestAction action;
     action.kind = kind;
     action.objectId = item.objectId;
     action.instanceId = item.instanceId;
     action.count = count;
+    action.estimatedMoneyCost = std::max(0, estimatedMoneyCost);
     action.reason = std::move(reason);
     return action;
 }
@@ -220,7 +222,8 @@ GameTestActionKind unprotectKindForItem(const GameTestObjectEntrySnapshot& item)
 GameTestAction ringItemAction(
     GameTestActionKind kind,
     const GameTestRingItemSnapshot& item,
-    std::string reason)
+    std::string reason,
+    int estimatedMoneyCost = 0)
 {
     GameTestAction action;
     action.kind = kind;
@@ -228,8 +231,54 @@ GameTestAction ringItemAction(
     action.instanceId = item.instanceId;
     action.ringIndex = item.ringIndex;
     action.ringItemIndex = item.itemIndex;
+    action.estimatedMoneyCost = std::max(0, estimatedMoneyCost);
     action.reason = std::move(reason);
     return action;
+}
+
+bool isItemEnhancementAction(GameTestActionKind kind)
+{
+    switch (kind) {
+    case GameTestActionKind::EnhanceBackpackStackAttack:
+    case GameTestActionKind::EnhanceBackpackStackDig:
+    case GameTestActionKind::EnhanceBackpackInstanceAttack:
+    case GameTestActionKind::EnhanceBackpackInstanceDig:
+    case GameTestActionKind::EnhanceRingItemAttack:
+    case GameTestActionKind::EnhanceRingItemDig:
+        return true;
+    default:
+        return false;
+    }
+}
+
+int enhancementMoneyCost(
+    const GameTestObjectEntrySnapshot& item,
+    GameTestActionKind kind)
+{
+    switch (kind) {
+    case GameTestActionKind::EnhanceBackpackStackAttack:
+    case GameTestActionKind::EnhanceBackpackInstanceAttack:
+        return item.enhanceAttackMoneyCost;
+    case GameTestActionKind::EnhanceBackpackStackDig:
+    case GameTestActionKind::EnhanceBackpackInstanceDig:
+        return item.enhanceDigMoneyCost;
+    default:
+        return 0;
+    }
+}
+
+int enhancementMoneyCost(
+    const GameTestRingItemSnapshot& item,
+    GameTestActionKind kind)
+{
+    switch (kind) {
+    case GameTestActionKind::EnhanceRingItemAttack:
+        return item.enhanceAttackMoneyCost;
+    case GameTestActionKind::EnhanceRingItemDig:
+        return item.enhanceDigMoneyCost;
+    default:
+        return 0;
+    }
 }
 
 std::optional<GameTestActionKind> backpackEnhanceKind(
@@ -285,24 +334,13 @@ std::optional<GameTestActionKind> ringEnhanceKind(
 
 std::optional<GameTestAction> chooseCodexAction(const GameTestSnapshot& snapshot)
 {
-    const auto syncActionIfNeeded = [](const std::vector<GameTestObjectEntrySnapshot>& items) -> std::optional<GameTestAction> {
-        for (const GameTestObjectEntrySnapshot& item : items) {
-            if (codexNeedsSync(item)) {
-                GameTestAction action;
-                action.kind = GameTestActionKind::SyncEncyclopedia;
-                action.reason = "codex_obtained_sync";
-                return action;
-            }
-        }
+    if (!snapshot.base.encyclopediaSyncAvailable) {
         return std::nullopt;
-    };
-    if (std::optional<GameTestAction> action = syncActionIfNeeded(snapshot.inventory.backpackItems)) {
-        return action;
     }
-    if (std::optional<GameTestAction> action = syncActionIfNeeded(snapshot.inventory.warehouseItems)) {
-        return action;
-    }
-    return std::nullopt;
+    GameTestAction action;
+    action.kind = GameTestActionKind::SyncEncyclopedia;
+    action.reason = "codex_obtained_sync";
+    return action;
 }
 
 float upgradePriority(const GameTestSnapshot& snapshot, const GameTestUpgradeSnapshot& upgrade)
@@ -341,11 +379,41 @@ bool AutoSimulationBaseTasks::backpackReadyForDeparture(const GameTestInventoryS
     return backpackFreeSlots(inventory) >= desiredBackpackFreeSlots(inventory);
 }
 
+bool AutoSimulationBaseTasks::backpackCanDepart(const GameTestInventorySnapshot& inventory)
+{
+    return inventory.backpackCapacity <= 0 || backpackFreeSlots(inventory) > 0;
+}
+
+int AutoSimulationBaseTasks::enhancementBudgetRemaining() const
+{
+    return std::max(0, enhancementBudgetLimit_ - enhancementBudgetSpent_);
+}
+
+void AutoSimulationBaseTasks::observeMoney(int money) const
+{
+    const int candidateLimit = std::max(0, money) / EnhancementBudgetDivisor;
+    enhancementBudgetLimit_ = std::max(enhancementBudgetLimit_, candidateLimit);
+}
+
+void AutoSimulationBaseTasks::recordActionResult(
+    const GameTestAction& action,
+    const GameTestActionResult& result)
+{
+    if (!result.applied || !isItemEnhancementAction(action.kind)) {
+        return;
+    }
+    const int cost = std::max(0, action.estimatedMoneyCost);
+    enhancementBudgetSpent_ = cost > std::numeric_limits<int>::max() - enhancementBudgetSpent_
+        ? std::numeric_limits<int>::max()
+        : enhancementBudgetSpent_ + cost;
+}
+
 std::optional<GameTestAction> AutoSimulationBaseTasks::choosePreparationAction(const GameTestSnapshot& snapshot) const
 {
     if (!baseTasksAvailable(snapshot)) {
         return std::nullopt;
     }
+    observeMoney(snapshot.base.money);
 
     if (std::optional<GameTestAction> action = chooseCodexAction(snapshot)) {
         return action;
@@ -362,12 +430,22 @@ std::optional<GameTestAction> AutoSimulationBaseTasks::chooseCheckpointPrepActio
         return std::nullopt;
     }
 
+    if (snapshot.base.bulkRepairExecutable &&
+        snapshot.base.bulkRepairTargetCount > 0 &&
+        snapshot.base.bulkRepairMoneyCost == 0 &&
+        snapshot.base.bulkRepairOreCost == 0) {
+        GameTestAction action;
+        action.kind = GameTestActionKind::BulkRepairAtBase;
+        action.count = snapshot.base.bulkRepairTargetCount;
+        action.reason = "free_bulk_repair";
+        return action;
+    }
+
     std::optional<GameTestAction> bestProtect;
-    std::optional<GameTestAction> bestRepair;
     std::optional<GameTestAction> bestEnhance;
     float bestProtectScore = ProtectThreshold;
-    float bestRepairScore = RepairThreshold;
     float bestEnhanceScore = EnhanceThreshold;
+    const int remainingEnhancementBudget = enhancementBudgetRemaining();
     const AutoSimulationItemEvaluationContext itemContext =
         autoSimulationItemEvaluationContextForSnapshot(snapshot);
 
@@ -384,45 +462,39 @@ std::optional<GameTestAction> AutoSimulationBaseTasks::chooseCheckpointPrepActio
                 "protect " + score.reason);
             bestProtectScore = score.protect;
         }
-        if (item.kind == GameTestObjectEntryKind::Instance &&
-            item.broken &&
-            item.canRepair &&
-            score.keep > bestRepairScore) {
-            bestRepair = itemAction(
-                GameTestActionKind::RepairBackpackInstance,
+        if (const std::optional<GameTestActionKind> kind = backpackEnhanceKind(item, score);
+            kind &&
+            !item.broken &&
+            enhancementMoneyCost(item, *kind) <= remainingEnhancementBudget &&
+            score.enhance > bestEnhanceScore) {
+            bestEnhance = itemAction(
+                *kind,
                 item,
                 1,
-                "repair " + score.reason);
-            bestRepairScore = score.keep;
-        }
-        if (const std::optional<GameTestActionKind> kind = backpackEnhanceKind(item, score);
-            kind && !item.broken && score.enhance > bestEnhanceScore) {
-            bestEnhance = itemAction(*kind, item, 1, "enhance " + score.reason);
+                "enhance " + score.reason,
+                enhancementMoneyCost(item, *kind));
             bestEnhanceScore = score.enhance;
         }
     }
 
     for (const GameTestRingItemSnapshot& item : snapshot.ring.items) {
         const AutoSimulationItemScore score = itemEvaluator_.evaluate(item, itemContext);
-        if (item.broken && item.canRepair && score.keep > bestRepairScore) {
-            bestRepair = ringItemAction(
-                GameTestActionKind::RepairRingItem,
-                item,
-                "repair_ring " + score.reason);
-            bestRepairScore = score.keep;
-        }
         if (const std::optional<GameTestActionKind> kind = ringEnhanceKind(item, score);
-            kind && !item.broken && score.enhance > bestEnhanceScore) {
-            bestEnhance = ringItemAction(*kind, item, "enhance_ring " + score.reason);
+            kind &&
+            !item.broken &&
+            enhancementMoneyCost(item, *kind) <= remainingEnhancementBudget &&
+            score.enhance > bestEnhanceScore) {
+            bestEnhance = ringItemAction(
+                *kind,
+                item,
+                "enhance_ring " + score.reason,
+                enhancementMoneyCost(item, *kind));
             bestEnhanceScore = score.enhance;
         }
     }
 
     if (bestProtect) {
         return bestProtect;
-    }
-    if (bestRepair) {
-        return bestRepair;
     }
     if (bestEnhance) {
         return bestEnhance;
@@ -538,10 +610,11 @@ std::optional<GameTestAction> AutoSimulationBaseTasks::chooseAction(const GameTe
         }
     }
 
+    const bool backpackCapacityDeadlock = backpackCleanup && freeSlots <= 0;
     if (cleanup &&
         bestSell == nullptr &&
         fallbackSell != nullptr &&
-        fallbackSellScore <= CleanupFallbackKeepThreshold) {
+        (fallbackSellScore <= CleanupFallbackKeepThreshold || backpackCapacityDeadlock)) {
         bestSell = fallbackSell;
     }
     if (cleanup &&

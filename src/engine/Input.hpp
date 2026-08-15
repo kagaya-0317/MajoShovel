@@ -25,6 +25,7 @@ struct InputAutomationFrame {
     bool exclusive = true;
     Vec2 moveAxis{};
     Vec2 aimScreen{};
+    Vec2 ringShiftAxis{};
     bool throwPressed = false;
     bool ringOffsetHeld = false;
     bool confirmPressed = false;

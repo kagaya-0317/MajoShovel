@@ -9,6 +9,7 @@ enum class GameTestActionKind {
     ReturnToBaseViaWarp,
     ReturnToBaseAfterGameOver,
     StartMiningFromBase,
+    StartCheckpointMeasurement,
     SyncEncyclopedia,
     UseBackpackStackItem,
     UseBackpackInstanceItem,
@@ -27,6 +28,7 @@ enum class GameTestActionKind {
     ProtectBackpackInstance,
     UnprotectBackpackInstance,
     UnprotectWarehouseInstance,
+    BulkRepairAtBase,
     RepairBackpackInstance,
     RepairRingItem,
     EnhanceBackpackStackAttack,
@@ -43,10 +45,12 @@ struct GameTestAction {
     GameTestActionKind kind = GameTestActionKind::None;
     std::string objectId;
     std::string instanceId;
+    std::string stageId;
     int count = 1;
     int upgradeIndex = -1;
     int ringIndex = -1;
     int ringItemIndex = -1;
+    int estimatedMoneyCost = 0;
     std::string reason;
 };
 
@@ -62,6 +66,7 @@ inline const char* gameTestActionKindName(GameTestActionKind kind)
     case GameTestActionKind::ReturnToBaseViaWarp: return "return_to_base_via_warp";
     case GameTestActionKind::ReturnToBaseAfterGameOver: return "return_to_base_after_game_over";
     case GameTestActionKind::StartMiningFromBase: return "start_mining_from_base";
+    case GameTestActionKind::StartCheckpointMeasurement: return "start_checkpoint_measurement";
     case GameTestActionKind::SyncEncyclopedia: return "sync_encyclopedia";
     case GameTestActionKind::UseBackpackStackItem: return "use_backpack_stack_item";
     case GameTestActionKind::UseBackpackInstanceItem: return "use_backpack_instance_item";
@@ -80,6 +85,7 @@ inline const char* gameTestActionKindName(GameTestActionKind kind)
     case GameTestActionKind::ProtectBackpackInstance: return "protect_backpack_instance";
     case GameTestActionKind::UnprotectBackpackInstance: return "unprotect_backpack_instance";
     case GameTestActionKind::UnprotectWarehouseInstance: return "unprotect_warehouse_instance";
+    case GameTestActionKind::BulkRepairAtBase: return "bulk_repair_at_base";
     case GameTestActionKind::RepairBackpackInstance: return "repair_backpack_instance";
     case GameTestActionKind::RepairRingItem: return "repair_ring_item";
     case GameTestActionKind::EnhanceBackpackStackAttack: return "enhance_backpack_stack_attack";

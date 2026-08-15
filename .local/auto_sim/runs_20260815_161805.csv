@@ -1,0 +1,2 @@
+﻿run_index,stage_id,stage_name,seed,result,elapsed_seconds,player_level,hp,max_hp,dug_tiles,defeated_enemies,acquired_items,acquired_object_items,money,total_materials,warp_discovered,warp_total,boss_defeated,timeout,stuck_count
+1,stage_02_junk_magic,魔導具廃棄層,2762338949,stopped,23.90,20,58,58,64,5,13,0,12949,269,5,5,false,false,0

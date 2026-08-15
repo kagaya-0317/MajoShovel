@@ -10,6 +10,7 @@ namespace majo::autosim {
 struct AutoSimulationExplorationTarget {
     Vec2 world{};
     std::string reason;
+    float utilityAdjustment = 0.0f;
 };
 
 class AutoSimulationExplorationModel {

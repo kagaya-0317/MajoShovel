@@ -147,7 +147,7 @@ void Player::applyDamage(int amount, const DamageCause& cause)
     if (damageTaken > 0) {
         damageFlash = 0.16f;
         status.removeState("status_sleep");
-        damageEvents.push_back({damageTaken, position});
+        damageEvents.push_back({damageTaken, position, cause});
     }
 }
 

@@ -110,6 +110,10 @@ InputAutomationFrame AutoSimulationNavigator::makeInput(
         const float offsetDistance = std::max(1.0f, plan.ringOffsetMoveTargetDistance);
         frame.ringOffsetHeld = targetDistanceSq <= offsetDistance * offsetDistance;
     }
+    if (frame.ringOffsetHeld && aimDistance > 0.0001f) {
+        const float directionSign = plan.ringOffsetAwayFromAim ? -1.0f : 1.0f;
+        frame.ringShiftAxis = toAim * (directionSign / aimDistance);
+    }
 
     if (plan.throwRing &&
         snapshot.ringState == GameTestRingState::Normal &&

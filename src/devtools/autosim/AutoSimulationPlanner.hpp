@@ -8,11 +8,30 @@
 #include "devtools/autosim/AutoSimulationTypes.hpp"
 #include "game/GameTestProbe.hpp"
 
+#include <optional>
+
 namespace majo::autosim {
+
+enum class AutoSimulationPlanScope {
+    All,
+    CombatOnly,
+    OpportunityOnly,
+    ProgressOnly,
+};
 
 class AutoSimulationPlanner {
 public:
-    AutoSimulationPlan makePlan(const GameTestSnapshot& snapshot, bool escapeStuck) const;
+    AutoSimulationPlan makePlan(
+        const GameTestSnapshot& snapshot,
+        bool escapeStuck,
+        AutoSimulationPlanScope scope = AutoSimulationPlanScope::All) const;
+    AutoSimulationPlan makeDirectedPlan(
+        const GameTestSnapshot& snapshot,
+        AutoSimulationGoal goal,
+        Vec2 target,
+        std::string reason,
+        AutoSimulationDigPolicy digPolicy,
+        AutoSimulationRingRole preferredRingRole = AutoSimulationRingRole::Utility) const;
 
 private:
     static bool needsConfirmInput(const GameTestSnapshot& snapshot);
@@ -32,7 +51,8 @@ private:
         std::string reason,
         bool throwRing = false,
         bool ringOffset = false,
-        AutoSimulationRingRole preferredRingRole = AutoSimulationRingRole::Utility) const;
+        AutoSimulationRingRole preferredRingRole = AutoSimulationRingRole::Utility,
+        std::optional<AutoSimulationDigPolicy> digPolicyOverride = std::nullopt) const;
 
     AutoSimulationCombatModel combatModel_;
     AutoSimulationExplorationModel explorationModel_;

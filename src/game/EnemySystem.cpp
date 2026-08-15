@@ -2390,6 +2390,22 @@ bool ringItemHitboxOverlapsEnemy(
         });
 }
 
+EnemyEvent makePlayerAttackHitEvent(
+    const Enemy& enemy,
+    std::string effectId = {},
+    int damageAmount = -1,
+    bool critical = false)
+{
+    EnemyEvent event = makeEnemyEvent(
+        EnemyEventType::AttackHit,
+        enemy,
+        std::move(effectId),
+        damageAmount,
+        critical);
+    event.playerDealtDamage = true;
+    return event;
+}
+
 bool ringItemHitboxOverlapsCircle(
     const SpellRingItem& item,
     const RingItemHitbox& itemHitbox,
@@ -4763,8 +4779,7 @@ bool tryHitJunkCrabDebris(
             broken ? RingImpactResult::Break : RingImpactResult::Hit,
             debrisPosition,
             static_cast<float>(damageDealt)));
-        EnemyEvent event = makeEnemyEvent(
-            EnemyEventType::AttackHit,
+        EnemyEvent event = makePlayerAttackHitEvent(
             enemy,
             broken ? "junk_debris_break" : "junk_debris_hit",
             damageDealt,
@@ -4878,6 +4893,8 @@ void updateJunkCrabDebrisMotion(
                     damage,
                     DamageCause{
                         .source = DamageSource::SlimeAttack,
+                        .enemyRuntimeId = enemy.id,
+                        .enemyId = enemy.enemyId,
                         .actorName = enemyDisplayName(enemy),
                     });
                 player.applyKnockback(debris.velocity, 155.0f, 0.14f);
@@ -4949,6 +4966,8 @@ void resolveJunkCrabClawStrike(
         applyDefenseModifier(player.status, damage),
         DamageCause{
             .source = DamageSource::SlimeAttack,
+            .enemyRuntimeId = enemy.id,
+            .enemyId = enemy.enemyId,
             .actorName = enemyDisplayName(enemy),
         });
 
@@ -5806,7 +5825,11 @@ void fireAstragnaEmitterLaser(
     tuning.speedMultiplier = std::max(0.05f, astragnaParamFloat(enemy, "emitterLaserSpeedMultiplier", 1.0f));
     tuning.damageMultiplier = std::max(0.0f, astragnaParamFloat(enemy, "emitterLaserDamageMultiplier", 1.0f));
     tuning.radiusScale = std::max(0.1f, astragnaParamFloat(enemy, "emitterLaserRadiusScale", 1.0f));
-    const ProjectileSpawnMetadata metadata{.sourceActorName = enemyDisplayName(enemy)};
+    const ProjectileSpawnMetadata metadata{
+        .sourceEnemyRuntimeId = enemy.id,
+        .sourceEnemyId = enemy.enemyId,
+        .sourceActorName = enemyDisplayName(enemy),
+    };
     static const std::vector<EffectSpec> NoEffects;
     if (projectiles.spawn(AstragnaLaserProjectileId, emitter.position + direction * (emitter.radius + 3.0f), direction, ProjectileOwnerType::Enemy, NoEffects, tuning, metadata)) {
         events.push_back(makeEnemyEventAt(EnemyEventType::Shoot, enemy, emitter.position, "astragna_laser"));
@@ -5895,6 +5918,8 @@ void updateAstragnaEmitterAttack(
                         applyDefenseModifier(player.status, damage),
                         DamageCause{
                             .source = DamageSource::Projectile,
+                            .enemyRuntimeId = enemy.id,
+                            .enemyId = enemy.enemyId,
                             .actorName = enemyDisplayName(enemy),
                             .objectName = "封印火炎",
                         });
@@ -6136,11 +6161,13 @@ bool damageAstragnaSealPart(
     revealEnemyHpBar(enemy, damage);
     enemy.hitFlash = 0.12f;
     syncAstragnaBodyState(enemy);
-    events.push_back(makeEnemyEventAt(
+    EnemyEvent hitEvent = makeEnemyEventAt(
         EnemyEventType::AttackHit,
         enemy,
         astragnaSealPartPosition(enemy, part),
-        broken ? "astragna_seal_break" : "astragna_seal_hit"));
+        broken ? "astragna_seal_break" : "astragna_seal_hit");
+    hitEvent.playerDealtDamage = true;
+    events.push_back(std::move(hitEvent));
     if (astragnaAllSealPartsDestroyed(enemy)) {
         enterAstragnaPhase(enemy, AstragnaPhase::Downed, events);
     }
@@ -9346,7 +9373,11 @@ bool fireEnemyProjectile(Enemy& enemy, ProjectileSystem& projectiles, Vec2 playe
     tuning.damageOverride = enemy.projectileDamageOverride;
     tuning.damageMultiplier = std::max(0.0, enemy.status.multiplierFor(ModifierStat::Attack));
     tuning.radiusScale = std::max(0.1f, enemy.projectileRadiusScale);
-    const ProjectileSpawnMetadata metadata{.sourceActorName = enemyDisplayName(enemy)};
+    const ProjectileSpawnMetadata metadata{
+        .sourceEnemyRuntimeId = enemy.id,
+        .sourceEnemyId = enemy.enemyId,
+        .sourceActorName = enemyDisplayName(enemy),
+    };
 
     const Vec2 toPlayer = enemyAimDirection(enemy, playerPosition, rng);
     const float radius = effectiveEnemyRadius(enemy);
@@ -9939,8 +9970,7 @@ void EnemySystem::update(
                     if (damageDealt > 0) {
                         enemy.hitFlash = 0.12f;
                     }
-                    events_.push_back(makeEnemyEvent(
-                        EnemyEventType::AttackHit,
+                    events_.push_back(makePlayerAttackHitEvent(
                         enemy,
                         "fall_damage_synergy",
                         damageDealt));
@@ -10557,6 +10587,8 @@ void EnemySystem::update(
                             applyDefenseModifier(player.status, enemy.countdownExplodeDamage),
                             DamageCause{
                                 .source = DamageSource::Explosion,
+                                .enemyRuntimeId = enemy.id,
+                                .enemyId = enemy.enemyId,
                                 .actorName = enemyDisplayName(enemy),
                                 .objectName = "爆発",
                             });
@@ -10639,6 +10671,8 @@ void EnemySystem::update(
                     applyDefenseModifier(player.status, contactDamage),
                     DamageCause{
                         .source = enemy.isBoss ? DamageSource::SlimeAttack : DamageSource::SlimeContact,
+                        .enemyRuntimeId = enemy.id,
+                        .enemyId = enemy.enemyId,
                         .actorName = enemyDisplayName(enemy),
                     });
                 if (hasBehavior(enemy, "rust_touch")) {
@@ -11011,7 +11045,7 @@ void EnemySystem::update(
                 }
             }
             enemy.hitFlash = 0.12f;
-            EnemyEvent attackHitEvent = makeEnemyEvent(EnemyEventType::AttackHit, enemy, hitEffectId, damageDealt, criticalHit);
+            EnemyEvent attackHitEvent = makePlayerAttackHitEvent(enemy, hitEffectId, damageDealt, criticalHit);
             attackHitEvent.ringItemImpact = true;
             attackHitEvent.frontGuarded = frontGuarded;
             attackHitEvent.weakPointHit = weakPointHit;
@@ -11371,7 +11405,7 @@ bool EnemySystem::hitByPlayerProjectile(
         if (!bossDamage.effectId.empty()) {
             hitEffectId = std::string(bossDamage.effectId);
         }
-        EnemyEvent hitEvent = makeEnemyEvent(EnemyEventType::AttackHit, enemy, hitEffectId, adjustedDamage);
+        EnemyEvent hitEvent = makePlayerAttackHitEvent(enemy, hitEffectId, adjustedDamage);
         hitEvent.weakPointHit = bossDamage.weakPointHit;
         events_.push_back(std::move(hitEvent));
         if (enemy.hp <= 0) {
@@ -11695,8 +11729,7 @@ int EnemySystem::applyMagicArea(const EnemyMagicHitSpec& spec, SpellRingSystem& 
             applyEnemyDamageTyped(enemy, damageDealt, spec.damageType.empty() ? spec.effectId : spec.damageType);
             revealEnemyHpBar(enemy, damageDealt);
             enemy.hitFlash = 0.12f;
-            EnemyEvent hitEvent = makeEnemyEvent(
-                EnemyEventType::AttackHit,
+            EnemyEvent hitEvent = makePlayerAttackHitEvent(
                 enemy,
                 bossDamage.effectId.empty()
                     ? (spec.effectId.empty() ? spec.damageType : spec.effectId)
@@ -11811,8 +11844,7 @@ void EnemySystem::applyExplosionDamage(Vec2 position, float radius, SpellRingSys
         enemy.hitFlash = 0.18f;
         enemy.knockbackVelocity = normalize(enemy.position - position) * 110.0f;
         enemy.knockbackTimer = std::max(enemy.knockbackTimer, 0.14f);
-        EnemyEvent hitEvent = makeEnemyEvent(
-            EnemyEventType::AttackHit,
+        EnemyEvent hitEvent = makePlayerAttackHitEvent(
             enemy,
             bossDamage.effectId.empty() ? "fire" : std::string(bossDamage.effectId),
             damageDealt);

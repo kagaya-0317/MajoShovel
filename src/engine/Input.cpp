@@ -436,6 +436,10 @@ void Input::applyAutomation(const InputAutomationFrame& frame)
         moveAxis_ = normalize(moveAxis_);
     }
     mouseScreen_ = frame.aimScreen;
+    ringShiftAxis_ = frame.ringShiftAxis;
+    if (lengthSquared(ringShiftAxis_) > 1.0f) {
+        ringShiftAxis_ = normalize(ringShiftAxis_);
+    }
     lastActiveDevice_ = InputDeviceKind::KeyboardMouse;
     lastInputModality_ = InputModality::Keyboard;
 

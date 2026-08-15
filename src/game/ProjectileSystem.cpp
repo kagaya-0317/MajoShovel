@@ -396,6 +396,8 @@ bool addProjectileMudZone(const Projectile& projectile, EnemySystem& enemies)
         mud.damageType,
         DamageCause{
             .source = DamageSource::Poison,
+            .enemyRuntimeId = projectile.sourceEnemyRuntimeId,
+            .enemyId = projectile.sourceEnemyId,
             .actorName = projectile.sourceActorName,
             .objectName = projectile.displayName,
         });
@@ -1980,6 +1982,8 @@ bool ProjectileSystem::spawn(
     updateProjectileAltitude(*projectile);
     projectile->ownerType = ownerType;
     projectile->projectileId = std::string(prototype.id);
+    projectile->sourceEnemyRuntimeId = metadata.sourceEnemyRuntimeId;
+    projectile->sourceEnemyId = metadata.sourceEnemyId;
     projectile->sourceActorName = metadata.sourceActorName;
     projectile->displayName = std::string(prototype.displayName);
     projectile->trailTimer = sampleFloat(0.0f, projectileTrailInterval(*projectile) * 0.65f);
@@ -2182,6 +2186,8 @@ void ProjectileSystem::update(
                 applyDefenseModifier(player.status, projectileDamage(projectile)),
                 DamageCause{
                     .source = DamageSource::Projectile,
+                    .enemyRuntimeId = projectile.sourceEnemyRuntimeId,
+                    .enemyId = projectile.sourceEnemyId,
                     .actorName = projectile.sourceActorName,
                     .objectName = projectile.displayName,
                 });

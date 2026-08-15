@@ -252,6 +252,8 @@ struct AudioCueEditEntry {
     float pitch = 0.0f;
     bool loop = false;
     float cooldownMs = 0.0f;
+
+    bool operator==(const AudioCueEditEntry&) const = default;
 };
 
 struct AudioCueFileEntry {
@@ -405,6 +407,29 @@ private:
         int acquiredObjectItems = 0;
         int dugTilesSinceMoneyDrop = 0;
         int dugTilesSinceItemDrop = 0;
+    };
+
+    struct AutoSimulationEnemyEncounter {
+        std::string enemyId;
+        std::string enemyName;
+        float startedAtSeconds = 0.0f;
+        int playerHitCount = 0;
+    };
+
+    struct AutoSimulationCheckpointMeasurementState {
+        bool active = false;
+        bool completed = false;
+        bool gameplayStarted = false;
+        std::string stageId;
+        std::string stageName;
+        std::uint32_t seed = 0;
+        int totalWarpPoints = 0;
+        int lastObservedAcquiredItems = 0;
+        std::vector<std::string> ringLoadout;
+        std::vector<std::string> backpackLoadout;
+        GameTestCheckpointMeasurementTotals totals;
+        std::vector<GameTestCheckpointMeasurementPoint> checkpoints;
+        std::unordered_map<int, AutoSimulationEnemyEncounter> encounters;
     };
 
     struct DiarySaveSummary {
@@ -1615,6 +1640,7 @@ private:
     std::vector<EndingKind> bookshelfEndingReplayChoices() const;
     int bookshelfMenuItemCount() const;
     bool encyclopediaComplete() const;
+    bool canSyncEncyclopediaFromInventoryAndRing() const;
     void syncEncyclopediaFromInventoryAndRing();
     void captureEncyclopediaSyncSuppressState();
     void applyEffectDiscoveries(const std::vector<EffectDiscoveryEvent>& discoveries);
@@ -1807,6 +1833,9 @@ private:
     bool dungeonInspectableInRange(Vec2 center, Vec2 size) const;
     bool dungeonInspectableHovered(Vec2 center, Vec2 size, Vec2 worldPosition) const;
     int nearbyDiscoveredWarpPointIndex() const;
+    bool warpReturnInteractionArmed(int pointVectorIndex) const;
+    void disarmWarpReturnInteractionAt(Vec2 startPosition);
+    void updateWarpReturnInteractionArming();
     bool updateWarpReturnUi(const Input& input, UiContext& ui);
     bool unlockAllWarpPointsForCurrentDungeon();
     void updateWarpPoints(float dt);
@@ -2091,6 +2120,16 @@ private:
     void renderRingEquipFx(Renderer& renderer) const;
     void initializeDefaultSpellRing();
     void observeRingItemInstanceIds();
+    int debugStoryUnlockCountForStage(std::string_view stageId) const;
+    bool selectDebugStageForTest(std::string_view stageId);
+    void beginAutoSimulationCheckpointMeasurement();
+    void updateAutoSimulationCheckpointMeasurement(float dt);
+    void recordAutoSimulationEnemyEvent(const EnemyEvent& event);
+    void recordAutoSimulationPlayerDamage(const PlayerDamageEvent& event);
+    void recordAutoSimulationRecoveryUse();
+    void recordAutoSimulationItemBreak();
+    void captureAutoSimulationCheckpoint(int warpIndex);
+    GameTestCheckpointMeasurementSnapshot autoSimulationCheckpointMeasurementSnapshot() const;
     bool loadSaveData();
     bool saveSaveData(std::string& message) const;
     bool loadSaveData(const std::filesystem::path& path);
@@ -2206,9 +2245,13 @@ private:
     bool loadAudioCueManifestForEdit();
     bool saveAudioCueManifestFromEdit(std::string& message);
     bool handleAudioCueEditCommand(std::string_view normalized);
+    bool handleAudioCueEditEvent(const SDL_Event& event);
     void rebuildAudioCueFileList();
     void enterAudioCueEditMode(AudioCueEditMode editMode);
     void exitAudioCueEditMode();
+    void syncAudioCueEditDraftFromSelection();
+    void copySelectedAudioCueSettings();
+    void pasteCopiedAudioCueSettings();
     void previewSelectedAudioCueFile();
     void applySelectedAudioCueFile();
     void updateAudioCueEditScreen(const Input& input, UiContext& ui);
@@ -2722,6 +2765,10 @@ private:
     std::vector<AudioCueFileEntry> audioCueEditFiles_;
     int audioCueEditCueIndex_ = -1;
     int audioCueEditFileIndex_ = -1;
+    AudioCueEditEntry audioCueEditDraft_{};
+    int audioCueEditDraftCueIndex_ = -1;
+    AudioCueEditEntry audioCueEditClipboard_{};
+    bool audioCueEditClipboardValid_ = false;
     float audioCueEditCueScrollOffset_ = 0.0f;
     float audioCueEditFileScrollOffset_ = 0.0f;
     UiScrollAreaState audioCueEditCueScrollState_{};
@@ -2927,6 +2974,7 @@ private:
     int previousPlayerDustFrame_ = -1;
     int previousBasePlayerDustFrame_ = -1;
     RunStats runStats_{};
+    AutoSimulationCheckpointMeasurementState autoSimulationCheckpointMeasurement_{};
     double playerRegenPerSecond_ = 0.0;
     double playerRegenAccumulator_ = 0.0;
     std::vector<PlayerRegenSource> playerRegenSources_;
@@ -3018,6 +3066,7 @@ private:
     UiConfirmDialogState warpReturnConfirm_{};
     int focusedWarpReturnPointIndex_ = -1;
     int hoveredWarpReturnPointIndex_ = -1;
+    int disarmedWarpReturnPointIndex_ = -1;
     bool introTutorialExitHovered_ = false;
     int money_ = 0;
     double playTimeSeconds_ = 0.0;

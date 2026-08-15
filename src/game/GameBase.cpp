@@ -10199,6 +10199,80 @@ bool Game::encyclopediaComplete() const
     return targetCount > 0 && discoveredCount >= targetCount;
 }
 
+bool Game::canSyncEncyclopediaFromInventoryAndRing() const
+{
+    if (!gameplayRewardsEnabled()) {
+        return false;
+    }
+
+    const auto stageBelow = [this](const ObjectDefinition& object, EncyclopediaStage requiredStage) {
+        const bool treasure = object.category == "宝";
+        return static_cast<int>(encyclopedia_.objectStage(object.id, treasure)) <
+            static_cast<int>(requiredStage);
+    };
+    const auto countExceedsSuppression = [](
+        const std::unordered_map<std::string, int>& suppressCounts,
+        const std::string& objectId,
+        int count) {
+        const auto it = suppressCounts.find(objectId);
+        const int suppressed = it == suppressCounts.end() ? 0 : it->second;
+        return count > suppressed;
+    };
+
+    std::unordered_map<std::string, int> ownedCounts;
+    std::unordered_map<std::string, const ObjectDefinition*> ownedObjects;
+    const auto addOwnedObject = [&ownedCounts, &ownedObjects](const ObjectDefinition& object, int count) {
+        if (object.id.empty() || count <= 0 || isCodexHiddenObject(object)) {
+            return;
+        }
+        ownedCounts[object.id] += count;
+        ownedObjects.try_emplace(object.id, &object);
+    };
+    for (const InventoryObjectStack& stack : inventory_.objectStacks()) {
+        addOwnedObject(stack.item, stack.count);
+    }
+    for (const InventoryObjectInstance& objectInstance : inventory_.objectInstances()) {
+        addOwnedObject(objectInstance.item, 1);
+    }
+    for (const InventoryObjectStack& stack : warehouseObjectStacks_) {
+        addOwnedObject(stack.item, stack.count);
+    }
+    for (const InventoryObjectInstance& objectInstance : warehouseObjectInstances_) {
+        addOwnedObject(objectInstance.item, 1);
+    }
+    for (const auto& [objectId, count] : ownedCounts) {
+        const auto objectIt = ownedObjects.find(objectId);
+        if (objectIt != ownedObjects.end() && objectIt->second != nullptr &&
+            countExceedsSuppression(encyclopediaOwnedSyncSuppressCounts_, objectId, count) &&
+            stageBelow(*objectIt->second, EncyclopediaStage::Obtained)) {
+            return true;
+        }
+    }
+
+    std::unordered_map<std::string, int> ringCounts;
+    std::unordered_map<std::string, const ObjectDefinition*> ringObjects;
+    for (const SpellRingItem* item : spellRing_.runtimeItems()) {
+        if (item == nullptr || item->objectId.empty()) {
+            continue;
+        }
+        const ObjectDefinition* object = objectCatalog_.registry.findById(item->objectId);
+        if (object == nullptr || isCodexHiddenObject(*object)) {
+            continue;
+        }
+        ++ringCounts[object->id];
+        ringObjects.try_emplace(object->id, object);
+    }
+    for (const auto& [objectId, count] : ringCounts) {
+        const auto objectIt = ringObjects.find(objectId);
+        if (objectIt != ringObjects.end() && objectIt->second != nullptr &&
+            countExceedsSuppression(encyclopediaRingSyncSuppressCounts_, objectId, count) &&
+            stageBelow(*objectIt->second, EncyclopediaStage::Equipped)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void Game::syncEncyclopediaFromInventoryAndRing()
 {
     if (!gameplayRewardsEnabled()) {

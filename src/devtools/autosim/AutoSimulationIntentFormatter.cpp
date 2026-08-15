@@ -102,6 +102,7 @@ AutoSimulationIntent AutoSimulationIntentFormatter::format(
             plan.goal == AutoSimulationGoal::CollectDrop ||
             plan.goal == AutoSimulationGoal::OpenChest ||
             plan.goal == AutoSimulationGoal::DiscoverWarp ||
+            plan.goal == AutoSimulationGoal::ResumeFrontier ||
             plan.goal == AutoSimulationGoal::ApproachBoss)) {
         intent = makeIntent(plan.goal, "", "硬い壁があるから遠回りしていこう", "", AutoSimulationIntentIconKind::Path);
         attachTarget(intent, plan);
@@ -180,6 +181,9 @@ AutoSimulationIntent AutoSimulationIntentFormatter::format(
         } else {
             intent = makeIntent(plan.goal, "", "拠点へ戻りたい", "", AutoSimulationIntentIconKind::Base);
         }
+        break;
+    case AutoSimulationGoal::ResumeFrontier:
+        intent = makeIntent(plan.goal, "", "前に進んだ地点へ戻りたい", "", AutoSimulationIntentIconKind::Path);
         break;
     case AutoSimulationGoal::ApproachBoss:
         intent = makeIntent(plan.goal, "", "奥へ進んでボスを探したい", "", AutoSimulationIntentIconKind::Path);

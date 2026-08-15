@@ -45,6 +45,131 @@ double profileMilliseconds(const FrameProfileSnapshot& snapshot, const char* nam
 
 }
 
+void DebugOverlay::appendAutoSimulationText(
+    char* buffer,
+    std::size_t bufferSize,
+    bool enabled,
+    const autosim::AutoSimulationDebugSnapshot& debug,
+    bool includeDungeonDetails)
+{
+    if (!enabled || buffer == nullptr || bufferSize == 0) {
+        return;
+    }
+
+    const std::size_t used = std::char_traits<char>::length(buffer);
+    if (used >= bufferSize) {
+        return;
+    }
+    if (!debug.active) {
+        std::snprintf(
+            buffer + used,
+            bufferSize - used,
+            "\nAutoSim: idle"
+            "\nAutoDecision: phase=idle detail=オートシミュは停止中");
+        return;
+    }
+
+    std::snprintf(
+        buffer + used,
+        bufferSize - used,
+        "\nAutoSim: %s x%d steps=%d plan=%s goal=%s reason=%s lock=%s %.1fs"
+        "\nAutoDecision: phase=%s detail=%s"
+        "\nAutoLastAction: %s"
+        "\nAutoObjective: mission=%s(%s) task=%s(%s) noProgress=%.1f opportunity=%d suspend=%.1f"
+        "\nAutoBase: screen=%s backpack=%d/%d free=%d desired=%d ready=%s canDepart=%s warehouse=%d/%d enhanceBudget=%d/%d remain=%d idle=%.2f cooldown=%.2f pending=%s",
+        autosim::autoSimulationStateName(debug.state),
+        debug.speedMultiplier,
+        debug.simulationStepsLastFrame,
+        yesNo(debug.hasPlan),
+        autosim::autoSimulationGoalName(debug.goal),
+        debug.reason.empty() ? "-" : debug.reason.c_str(),
+        yesNo(debug.lockedPlanActive),
+        debug.planLockSeconds,
+        debug.decisionPhase.empty() ? "-" : debug.decisionPhase.c_str(),
+        debug.decisionDetail.empty() ? "-" : debug.decisionDetail.c_str(),
+        debug.lastActionResult.empty() ? "-" : debug.lastActionResult.c_str(),
+        autosim::autoSimulationGoalName(debug.missionGoal),
+        debug.missionReason.empty() ? "-" : debug.missionReason.c_str(),
+        autosim::autoSimulationGoalName(debug.taskGoal),
+        debug.taskReason.empty() ? "-" : debug.taskReason.c_str(),
+        debug.missionNoProgressSeconds,
+        debug.opportunityBudget,
+        debug.opportunitySuspendSeconds,
+        yesNo(debug.baseScreen),
+        debug.backpackUsedSlots,
+        debug.backpackCapacity,
+        debug.backpackFreeSlots,
+        debug.desiredBackpackFreeSlots,
+        yesNo(debug.backpackReadyForDeparture),
+        yesNo(debug.backpackCanDepart),
+        debug.warehouseUsedSlots,
+        debug.warehouseCapacity,
+        debug.enhancementBudgetSpent,
+        debug.enhancementBudgetLimit,
+        debug.enhancementBudgetRemaining,
+        debug.baseIdleSeconds,
+        debug.actionCooldownSeconds,
+        yesNo(debug.pendingAction));
+
+    if (!includeDungeonDetails) {
+        return;
+    }
+    const std::size_t commonUsed = std::char_traits<char>::length(buffer);
+    if (commonUsed >= bufferSize) {
+        return;
+    }
+    std::snprintf(
+        buffer + commonUsed,
+        bufferSize - commonUsed,
+        "\nAutoPlan: player(%.0f,%.0f) target=%s(%.0f,%.0f) d=%.1f move=%s(%.0f,%.0f) d=%.1f arrive=%.1f axis(%.2f,%.2f)"
+        "\nAutoRoute: path=%d wp=%d digAt=%d dig=%d hard=%d avoidHard=%s stuck=%d still=%.1f move=%.1f mineIdle=%.1f escape=%.1f"
+        "\nAutoLight: active=%.0f backpack=%.0f missing=%s"
+        "\nAutoWarp: known=%d discovered=%d unlocked=%d total=%d nearest=%d %s known=%s d=%.1f"
+        "\nAutoWarpTarget: target=%d %s known=%s dToPlan=%.1f nextUnknown=%d %s d=%.1f",
+        debug.playerWorld.x,
+        debug.playerWorld.y,
+        yesNo(debug.hasTarget),
+        debug.targetWorld.x,
+        debug.targetWorld.y,
+        debug.distanceToTarget,
+        yesNo(debug.hasMoveTarget),
+        debug.moveTargetWorld.x,
+        debug.moveTargetWorld.y,
+        debug.distanceToMoveTarget,
+        debug.moveTargetArriveDistance,
+        debug.inputMoveAxis.x,
+        debug.inputMoveAxis.y,
+        debug.routePathTileCount,
+        debug.routeWaypointPathIndex,
+        debug.routeFirstDigPathIndex,
+        debug.routeDigTileCount,
+        debug.routeHardTileCount,
+        yesNo(debug.routeAvoidingHardWall),
+        debug.stuckCount,
+        debug.stillSeconds,
+        debug.stuckMoveDistance,
+        debug.miningNoProgressSeconds,
+        debug.escapeStuckSeconds,
+        debug.activeLightRadius,
+        debug.bestBackpackLightRadius,
+        yesNo(debug.missingLight),
+        debug.knownWarpPoints,
+        debug.discoveredWarpPoints,
+        debug.unlockedWarpPoints,
+        debug.totalWarpPoints,
+        debug.nearestWarpIndex,
+        debug.nearestWarpDiscovered ? "found" : "hidden",
+        yesNo(debug.nearestWarpKnown),
+        debug.nearestWarpDistance,
+        debug.targetWarpIndex,
+        debug.targetWarpDiscovered ? "found" : "hidden",
+        yesNo(debug.targetWarpKnown),
+        debug.targetWarpDistance,
+        debug.nextUnknownWarpIndex,
+        debug.nextUnknownWarpDiscovered ? "found" : "hidden",
+        debug.nextUnknownWarpDistance);
+}
+
 void DebugOverlay::render(
     Renderer& renderer,
     const Time& time,
@@ -103,7 +228,7 @@ void DebugOverlay::render(
         requestedWarpPointStartPosition.y);
 
     const FrameProfileSnapshot& profile = frameProfiler().snapshot();
-    char buffer[6144];
+    char buffer[8192];
     std::snprintf(buffer, sizeof(buffer),
         "FPS: %03d   Auto reload block: %s\n"
         "Stage: %d %s / %s   Seed: %u\n"
@@ -213,67 +338,12 @@ void DebugOverlay::render(
         profileMilliseconds(profile, "TileMap.render"),
         profileMilliseconds(profile, "WorldDepth.draw"),
         profileMilliseconds(profile, "DungeonUI.render"));
-    if (autoSimulationDebugActive && autoSimulationDebug.active) {
-        std::snprintf(
-            buffer + std::char_traits<char>::length(buffer),
-            sizeof(buffer) - std::char_traits<char>::length(buffer),
-            "\nAutoSim: %s x%d steps=%d plan=%s goal=%s reason=%s lock=%s %.1fs"
-            "\nAutoPlan: player(%.0f,%.0f) target=%s(%.0f,%.0f) d=%.1f move=%s(%.0f,%.0f) d=%.1f arrive=%.1f axis(%.2f,%.2f)"
-            "\nAutoRoute: path=%d wp=%d digAt=%d dig=%d hard=%d avoidHard=%s stuck=%d still=%.1f move=%.1f mineIdle=%.1f escape=%.1f"
-            "\nAutoLight: active=%.0f backpack=%.0f missing=%s"
-            "\nAutoWarp: known=%d discovered=%d unlocked=%d total=%d nearest=%d %s known=%s d=%.1f"
-            "\nAutoWarpTarget: target=%d %s known=%s dToPlan=%.1f nextUnknown=%d %s d=%.1f",
-            autosim::autoSimulationStateName(autoSimulationDebug.state),
-            autoSimulationDebug.speedMultiplier,
-            autoSimulationDebug.simulationStepsLastFrame,
-            yesNo(autoSimulationDebug.hasPlan),
-            autosim::autoSimulationGoalName(autoSimulationDebug.goal),
-            autoSimulationDebug.reason.empty() ? "-" : autoSimulationDebug.reason.c_str(),
-            yesNo(autoSimulationDebug.lockedPlanActive),
-            autoSimulationDebug.planLockSeconds,
-            autoSimulationDebug.playerWorld.x,
-            autoSimulationDebug.playerWorld.y,
-            yesNo(autoSimulationDebug.hasTarget),
-            autoSimulationDebug.targetWorld.x,
-            autoSimulationDebug.targetWorld.y,
-            autoSimulationDebug.distanceToTarget,
-            yesNo(autoSimulationDebug.hasMoveTarget),
-            autoSimulationDebug.moveTargetWorld.x,
-            autoSimulationDebug.moveTargetWorld.y,
-            autoSimulationDebug.distanceToMoveTarget,
-            autoSimulationDebug.moveTargetArriveDistance,
-            autoSimulationDebug.inputMoveAxis.x,
-            autoSimulationDebug.inputMoveAxis.y,
-            autoSimulationDebug.routePathTileCount,
-            autoSimulationDebug.routeWaypointPathIndex,
-            autoSimulationDebug.routeFirstDigPathIndex,
-            autoSimulationDebug.routeDigTileCount,
-            autoSimulationDebug.routeHardTileCount,
-            yesNo(autoSimulationDebug.routeAvoidingHardWall),
-            autoSimulationDebug.stuckCount,
-            autoSimulationDebug.stillSeconds,
-            autoSimulationDebug.stuckMoveDistance,
-            autoSimulationDebug.miningNoProgressSeconds,
-            autoSimulationDebug.escapeStuckSeconds,
-            autoSimulationDebug.activeLightRadius,
-            autoSimulationDebug.bestBackpackLightRadius,
-            yesNo(autoSimulationDebug.missingLight),
-            autoSimulationDebug.knownWarpPoints,
-            autoSimulationDebug.discoveredWarpPoints,
-            autoSimulationDebug.unlockedWarpPoints,
-            autoSimulationDebug.totalWarpPoints,
-            autoSimulationDebug.nearestWarpIndex,
-            autoSimulationDebug.nearestWarpDiscovered ? "found" : "hidden",
-            yesNo(autoSimulationDebug.nearestWarpKnown),
-            autoSimulationDebug.nearestWarpDistance,
-            autoSimulationDebug.targetWarpIndex,
-            autoSimulationDebug.targetWarpDiscovered ? "found" : "hidden",
-            yesNo(autoSimulationDebug.targetWarpKnown),
-            autoSimulationDebug.targetWarpDistance,
-            autoSimulationDebug.nextUnknownWarpIndex,
-            autoSimulationDebug.nextUnknownWarpDiscovered ? "found" : "hidden",
-            autoSimulationDebug.nextUnknownWarpDistance);
-    }
+    appendAutoSimulationText(
+        buffer,
+        sizeof(buffer),
+        autoSimulationDebugActive,
+        autoSimulationDebug,
+        true);
     std::snprintf(
         buffer + std::char_traits<char>::length(buffer),
         sizeof(buffer) - std::char_traits<char>::length(buffer),

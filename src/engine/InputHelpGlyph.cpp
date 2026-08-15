@@ -1264,36 +1264,31 @@ void drawShoulder(Renderer& renderer, Vec2 pos, Vec2 size, const Glyph& glyph, c
 void drawMouse(Renderer& renderer, Vec2 pos, Vec2 size, const Glyph& glyph)
 {
     const float r = size.x * 0.5f;
+    const Vec2 innerPos = pos + Vec2{2.0f, 2.0f};
+    const Vec2 innerSize = size - Vec2{4.0f, 4.0f};
+    const float innerRadius = std::max(1.0f, r - 2.0f);
     fillSoftRoundedRect(renderer, pos + Vec2{0.0f, 2.0f}, size, r, {0, 0, 0, 76});
     fillSoftRoundedRect(renderer, pos, size, r, {216, 226, 244, 230});
-    fillSoftRoundedRect(renderer, pos + Vec2{2.0f, 2.0f}, size - Vec2{4.0f, 4.0f}, std::max(1.0f, r - 2.0f), {42, 50, 66, 248});
+    fillSoftRoundedRect(renderer, innerPos, innerSize, innerRadius, {42, 50, 66, 248});
     const float splitX = pos.x + size.x * 0.5f;
     const float top = pos.y + 4.0f;
     const float midY = pos.y + size.y * 0.47f;
-    renderer.drawSoftLine({splitX, top}, {splitX, midY}, 1.2f, {204, 214, 232, 170});
-    renderer.drawSoftLine({pos.x + 5.0f, midY}, {pos.x + size.x - 5.0f, midY}, 1.2f, {204, 214, 232, 116});
     const Color activeColor{242, 248, 255, 210};
     if (glyph.mousePart == MousePart::Left || glyph.mousePart == MousePart::Right) {
-        // ボタン片を小さな丸として重ねず、上面全体の形を半分に切り出す。
-        // これにより左右端はマウス外形に沿い、クリック部分が明瞭に塗り分けられる。
-        const Vec2 buttonPos{pos.x + 3.0f, pos.y + 3.0f};
-        const Vec2 buttonSize{size.x - 6.0f, size.y * 0.42f};
+        // 内側本体と同じ形をボタン領域で切り抜き、外周の曲線と区切り線まで隙間なく塗る。
         const bool right = glyph.mousePart == MousePart::Right;
+        const float clipLeft = right ? splitX : innerPos.x;
+        const float clipRight = right ? innerPos.x + innerSize.x : splitX;
         const Vec2 clipPos{
-            right ? splitX : buttonPos.x,
-            buttonPos.y,
+            clipLeft,
+            innerPos.y,
         };
         const Vec2 clipSize{
-            right ? buttonPos.x + buttonSize.x - splitX : splitX - buttonPos.x,
-            buttonSize.y,
+            clipRight - clipLeft,
+            midY - innerPos.y,
         };
         renderer.pushClipRect(clipPos, clipSize);
-        fillSoftRoundedRect(
-            renderer,
-            buttonPos,
-            buttonSize,
-            std::max(2.0f, r - 3.0f),
-            activeColor);
+        fillSoftRoundedRect(renderer, innerPos, innerSize, innerRadius, activeColor);
         renderer.popClipRect();
     } else {
         fillSoftRoundedRect(
@@ -1303,6 +1298,9 @@ void drawMouse(Renderer& renderer, Vec2 pos, Vec2 size, const Glyph& glyph)
             2.0f,
             activeColor);
     }
+    // 選択色で埋めた後に境界を重ね、左右ボタンの区切りを常に明瞭に保つ。
+    renderer.drawSoftLine({splitX, top}, {splitX, midY}, 1.2f, {204, 214, 232, 170});
+    renderer.drawSoftLine({pos.x + 5.0f, midY}, {pos.x + size.x - 5.0f, midY}, 1.2f, {204, 214, 232, 116});
 }
 
 void drawDpadButton(Renderer& renderer, Vec2 pos, Vec2 size, bool active, Color accent)

@@ -890,6 +890,9 @@ bool Game::handleEvent(const SDL_Event& event)
     if (handleOperationSettingsEvent(event)) {
         return true;
     }
+    if (handleAudioCueEditEvent(event)) {
+        return true;
+    }
     if (handleDebugNamedSaveEvent(event)) {
         return true;
     }
@@ -1857,12 +1860,15 @@ void Game::finishWorldBuild()
         const Vec2 warpStartPosition = warpPointStartPositionForCurrentRequest();
         rebuildUnlockedWarpPointsForStart(warpStartPosition);
         player_.position = safePlayerStartPosition(warpStartPosition);
+        disarmWarpReturnInteractionAt(warpStartPosition);
         tileMap_.updateAround(player_.position, 0.0f, runtimeBalanceForDungeon(), dungeonLayout_);
         normalizeOpenBuriedPlacementNodes();
         updateDungeonMinimap(0.0);
     }
     if (job.useLatestWarpPoint) {
         captureRetrySnapshotAtWarpPoint();
+    } else {
+        disarmedWarpReturnPointIndex_ = -1;
     }
     requestedWarpPointStartPosition_.reset();
 
@@ -2868,10 +2874,13 @@ void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
         const Vec2 startPosition = warpPointStartPositionForCurrentRequest();
         clearKnownWarpPointTerrain();
         player_.position = safePlayerStartPosition(startPosition);
+        disarmWarpReturnInteractionAt(startPosition);
         tileMap_.updateAround(player_.position, 0.0f, runtimeBalanceForDungeon(), dungeonLayout_);
         normalizeOpenBuriedPlacementNodes();
         updateDungeonMinimap(0.0);
         captureRetrySnapshotAtWarpPoint();
+    } else {
+        disarmedWarpReturnPointIndex_ = -1;
     }
     requestedWarpPointStartPosition_.reset();
     baseEditEnabled_ = false;
@@ -4923,6 +4932,7 @@ void Game::update(const Input& input, const Time& time, Renderer& renderer)
 
     if (!paused) {
         runStats_.elapsedSeconds += time.deltaSeconds();
+        updateAutoSimulationCheckpointMeasurement(time.deltaSeconds());
         updateAstralRunProgress();
         updatePlayerFootstepDust(time.deltaSeconds());
         bool deathActive = playerDeathSequenceActive();
@@ -5440,6 +5450,7 @@ void Game::update(const Input& input, const Time& time, Renderer& renderer)
             playAudioSeAt(sound.cueId, sound.position, sound.volumeScale, sound.pitchScale);
         }
         for (const EnemyEvent& event : enemies_.events()) {
+            recordAutoSimulationEnemyEvent(event);
             if (event.type == EnemyEventType::Alert) {
                 playAudioSeAt(AudioSeEnemyAlert, event.position);
             } else if (event.type == EnemyEventType::Attack) {
@@ -5699,6 +5710,7 @@ void Game::update(const Input& input, const Time& time, Renderer& renderer)
         }
         int playerDamageTotal = 0;
         for (const PlayerDamageEvent& event : player_.damageEvents) {
+            recordAutoSimulationPlayerDamage(event);
             effects_.spawnDamagePopup(event.position, event.amount, DamagePopupStyle::Player);
             playerDamageTotal += std::max(0, event.amount);
         }

@@ -38,6 +38,7 @@ const char* autoSimulationGoalName(AutoSimulationGoal goal)
     case AutoSimulationGoal::OpenChest: return "open_chest";
     case AutoSimulationGoal::DiscoverWarp: return "discover_warp";
     case AutoSimulationGoal::ReturnToBase: return "return_to_base";
+    case AutoSimulationGoal::ResumeFrontier: return "resume_frontier";
     case AutoSimulationGoal::ApproachBoss: return "approach_boss";
     case AutoSimulationGoal::FollowMainPath: return "follow_main_path";
     case AutoSimulationGoal::EscapeStuck: return "escape_stuck";

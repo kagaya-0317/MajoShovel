@@ -14,6 +14,7 @@ namespace {
 constexpr float TileSize = static_cast<float>(balance::TileSize);
 constexpr float UnreachableScore = std::numeric_limits<float>::max();
 constexpr float MaxClueAttractionDistance = TileSize * 18.0f;
+constexpr float MaxOptionalExplorationCost = 520.0f;
 constexpr int NoveltyRadiusTiles = 2;
 
 struct ExplorationCandidate {
@@ -387,13 +388,14 @@ std::optional<AutoSimulationExplorationTarget> AutoSimulationExplorationModel::c
     if (bestOpen && (!best || bestOpen->score < best->score - 30.0f)) {
         best = bestOpen;
     }
-    if (!best) {
+    if (!best || best->score > MaxOptionalExplorationCost) {
         return std::nullopt;
     }
 
     return AutoSimulationExplorationTarget{
         .world = best->target,
         .reason = best->reason,
+        .utilityAdjustment = std::clamp(-best->score * 0.08f, -36.0f, 36.0f),
     };
 }
 

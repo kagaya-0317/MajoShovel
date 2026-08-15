@@ -35,6 +35,7 @@ enum class AutoSimulationGoal {
     OpenChest,
     DiscoverWarp,
     ReturnToBase,
+    ResumeFrontier,
     ApproachBoss,
     FollowMainPath,
     EscapeStuck,
@@ -48,9 +49,17 @@ enum class AutoSimulationRingRole {
     Utility,
 };
 
+enum class AutoSimulationDigPolicy {
+    Avoid,
+    CheapOnly,
+    Required,
+};
+
+inline constexpr float DefaultAutoSimulationTimeoutSeconds = 2.0f * 60.0f * 60.0f;
+
 struct AutoSimulationSettings {
     int requestedRuns = 1;
-    float timeoutSeconds = 600.0f;
+    float timeoutSeconds = DefaultAutoSimulationTimeoutSeconds;
     int speedMultiplier = 1;
     bool trace = false;
 };
@@ -81,15 +90,19 @@ struct AutoSimulationIntent {
 
 struct AutoSimulationPlan {
     AutoSimulationGoal goal = AutoSimulationGoal::None;
+    AutoSimulationGoal objectiveGoal = AutoSimulationGoal::None;
     Vec2 targetWorld{};
+    Vec2 objectiveTargetWorld{};
     Vec2 moveTargetWorld{};
     Vec2 aimTargetWorld{};
     bool hasTarget = false;
+    bool hasObjectiveTarget = false;
     bool hasMoveTarget = false;
     bool hasAimTarget = false;
     bool confirm = false;
     bool throwRing = false;
     bool ringOffset = false;
+    bool ringOffsetAwayFromAim = false;
     bool ringOffsetRequiresMoveTarget = false;
     float ringOffsetMoveTargetDistance = 18.0f;
     bool moveAwayFromTarget = false;
@@ -100,6 +113,7 @@ struct AutoSimulationPlan {
     float desiredRangeMax = 0.0f;
     bool strafe = false;
     AutoSimulationRingRole preferredRingRole = AutoSimulationRingRole::None;
+    AutoSimulationDigPolicy digPolicy = AutoSimulationDigPolicy::Avoid;
     GameTestTerrainKind targetTerrainKind = GameTestTerrainKind::Empty;
     bool hasTargetTerrainKind = false;
     int routePathTileCount = 0;
@@ -108,6 +122,9 @@ struct AutoSimulationPlan {
     int routeDigTileCount = 0;
     int routeHardTileCount = 0;
     bool routeAvoidingHardWall = false;
+    float routeTotalCost = 0.0f;
+    float routeDigCost = 0.0f;
+    float routeExpectedDigHits = 0.0f;
     std::string reason;
 };
 
@@ -118,7 +135,14 @@ struct AutoSimulationDebugSnapshot {
     int simulationStepsLastFrame = 0;
     bool hasPlan = false;
     AutoSimulationGoal goal = AutoSimulationGoal::None;
+    AutoSimulationGoal missionGoal = AutoSimulationGoal::None;
+    AutoSimulationGoal taskGoal = AutoSimulationGoal::None;
+    std::string missionReason;
+    std::string taskReason;
     std::string reason;
+    std::string decisionPhase;
+    std::string decisionDetail;
+    std::string lastActionResult;
     Vec2 playerWorld{};
     Vec2 targetWorld{};
     Vec2 moveTargetWorld{};
@@ -146,6 +170,24 @@ struct AutoSimulationDebugSnapshot {
     float stillSeconds = 0.0f;
     float miningNoProgressSeconds = 0.0f;
     float escapeStuckSeconds = 0.0f;
+    float missionNoProgressSeconds = 0.0f;
+    float opportunitySuspendSeconds = 0.0f;
+    int opportunityBudget = 0;
+    bool baseScreen = false;
+    int backpackUsedSlots = 0;
+    int backpackCapacity = 0;
+    int backpackFreeSlots = 0;
+    int desiredBackpackFreeSlots = 0;
+    bool backpackReadyForDeparture = false;
+    bool backpackCanDepart = false;
+    int warehouseUsedSlots = 0;
+    int warehouseCapacity = 0;
+    int enhancementBudgetLimit = 0;
+    int enhancementBudgetSpent = 0;
+    int enhancementBudgetRemaining = 0;
+    float actionCooldownSeconds = 0.0f;
+    float baseIdleSeconds = 0.0f;
+    bool pendingAction = false;
     int totalWarpPoints = 0;
     int discoveredWarpPoints = 0;
     int unlockedWarpPoints = 0;

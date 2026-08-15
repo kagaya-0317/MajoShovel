@@ -9470,6 +9470,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderPortraitExpressionPicker(renderer);
         renderItemAcquisitionNotice(renderer, static_cast<float>(time.totalSeconds()));
         renderLevelUpOverlay(renderer);
+        renderAutoSimulationIntentOverlay(renderer);
         finishUiFrame(renderer);
         renderBaseDebugOverlay(renderer, time);
         renderScreenTransitionOverlay(renderer);

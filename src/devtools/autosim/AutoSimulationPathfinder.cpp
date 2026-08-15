@@ -238,8 +238,14 @@ float enemyDangerCost(const GameTestSnapshot& snapshot, Vec2 position)
     return cost;
 }
 
-float enterCost(const GameTestSnapshot& snapshot, const GameTestPathTileSnapshot& tile)
+float enterCost(
+    const GameTestSnapshot& snapshot,
+    const GameTestPathTileSnapshot& tile,
+    AutoSimulationRoutePolicy policy)
 {
+    if (tile.solid && policy.digPolicy == AutoSimulationDigPolicy::Avoid) {
+        return UnreachableCost;
+    }
     const float digCost = terrainDigCost(snapshot, tile);
     if (!std::isfinite(digCost)) {
         return UnreachableCost;
@@ -447,7 +453,9 @@ int AutoSimulationPathField::indexForTile(int tileX, int tileY) const
     return localY * width + localX;
 }
 
-AutoSimulationPathField AutoSimulationPathfinder::buildField(const GameTestSnapshot& snapshot) const
+AutoSimulationPathField AutoSimulationPathfinder::buildField(
+    const GameTestSnapshot& snapshot,
+    AutoSimulationRoutePolicy policy) const
 {
     AutoSimulationPathField field;
     field.minTileX = snapshot.pathGrid.minTileX;
@@ -469,6 +477,8 @@ AutoSimulationPathField AutoSimulationPathfinder::buildField(const GameTestSnaps
         field.cells.push_back(AutoSimulationPathCell{
             .tile = tile,
             .cost = UnreachableCost,
+            .digCost = terrainDigCost(snapshot, tile),
+            .expectedDigHits = expectedBreakHits(snapshot, tile),
             .previous = -1,
             .digCount = 0,
         });
@@ -513,7 +523,7 @@ AutoSimulationPathField AutoSimulationPathfinder::buildField(const GameTestSnaps
             }
 
             AutoSimulationPathCell& neighbor = field.cells[static_cast<std::size_t>(neighborIndex)];
-            const float stepCost = enterCost(snapshot, neighbor.tile);
+            const float stepCost = enterCost(snapshot, neighbor.tile, policy);
             if (!std::isfinite(stepCost)) {
                 continue;
             }
@@ -563,10 +573,14 @@ std::optional<AutoSimulationRoute> AutoSimulationPathfinder::findRoute(
 
     int firstDigPathIndex = -1;
     for (int i = 0; i < static_cast<int>(path.size()); ++i) {
-        const GameTestPathTileSnapshot& tile = field.cells[static_cast<std::size_t>(path[static_cast<std::size_t>(i)])].tile;
+        const AutoSimulationPathCell& cell =
+            field.cells[static_cast<std::size_t>(path[static_cast<std::size_t>(i)])];
+        const GameTestPathTileSnapshot& tile = cell.tile;
         route.debugWorldPoints.push_back(tile.center);
         if (i > 0 && tile.solid) {
             ++route.digTileCount;
+            route.digCost += cell.digCost;
+            route.expectedDigHits += cell.expectedDigHits;
             if (hardTerrain(tile.terrainKind)) {
                 ++route.hardTileCount;
             }

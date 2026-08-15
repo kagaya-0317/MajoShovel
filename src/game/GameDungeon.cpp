@@ -3751,16 +3751,11 @@ void Game::updateAmbientParticleEffects(float dt)
     enemies_.emitStatusParticles(effects_);
     updateWetGroundFromStatus();
 
-    if (warpPointsEnabled_) {
-        if (!lightweight) {
-            for (const WarpPoint& point : warpPoints_) {
-                if (point.discovered || point.unlocked) {
-                    effects_.spawnWarpCircle(point.position, false);
-                }
+    if (warpPointsEnabled_ && !lightweight) {
+        for (const WarpPoint& point : warpPoints_) {
+            if (point.discovered || point.unlocked) {
+                effects_.spawnWarpCircle(point.position, false);
             }
-        }
-        if (hasBossSpawnPoint_ && !bossSpawned_ && !hasCapturedBossForCurrentStage()) {
-            effects_.spawnWarpCircle(bossSpawnPoint_, true);
         }
     }
 }
@@ -9267,7 +9262,7 @@ int Game::nearbyDiscoveredWarpPointIndex() const
     float nearestDistance = DungeonInspectableInteractionRange;
     for (int i = 0; i < static_cast<int>(warpPoints_.size()); ++i) {
         const WarpPoint& point = warpPoints_[static_cast<std::size_t>(i)];
-        if (!point.discovered) {
+        if (!point.discovered || !warpReturnInteractionArmed(i)) {
             continue;
         }
         const float dist = distanceToRect(
@@ -9281,8 +9276,47 @@ int Game::nearbyDiscoveredWarpPointIndex() const
     return nearest;
 }
 
+bool Game::warpReturnInteractionArmed(int pointVectorIndex) const
+{
+    return pointVectorIndex >= 0 && pointVectorIndex != disarmedWarpReturnPointIndex_;
+}
+
+void Game::disarmWarpReturnInteractionAt(Vec2 startPosition)
+{
+    disarmedWarpReturnPointIndex_ = -1;
+    float nearestDistanceSq = std::numeric_limits<float>::max();
+    for (int i = 0; i < static_cast<int>(warpPoints_.size()); ++i) {
+        const float distanceSq = distanceSquared(
+            startPosition,
+            warpPoints_[static_cast<std::size_t>(i)].position);
+        if (distanceSq < nearestDistanceSq) {
+            nearestDistanceSq = distanceSq;
+            disarmedWarpReturnPointIndex_ = i;
+        }
+    }
+}
+
+void Game::updateWarpReturnInteractionArming()
+{
+    if (disarmedWarpReturnPointIndex_ < 0 ||
+        disarmedWarpReturnPointIndex_ >= static_cast<int>(warpPoints_.size())) {
+        disarmedWarpReturnPointIndex_ = -1;
+        return;
+    }
+
+    const WarpPoint& point = warpPoints_[static_cast<std::size_t>(disarmedWarpReturnPointIndex_)];
+    constexpr float RearmMargin = 24.0f;
+    const float distance = distanceToRect(
+        player_.position,
+        dungeonInspectableRect(point.position, {DungeonWarpPointImageSize, DungeonWarpPointImageSize}));
+    if (distance > DungeonInspectableInteractionRange + RearmMargin) {
+        disarmedWarpReturnPointIndex_ = -1;
+    }
+}
+
 bool Game::updateWarpReturnUi(const Input& input, UiContext& ui)
 {
+    updateWarpReturnInteractionArming();
     if (mode_ != ScreenMode::Playing || enemyTestActive_ || introTutorialActive()) {
         warpReturnConfirm_ = {};
         focusedWarpReturnPointIndex_ = -1;
@@ -9345,6 +9379,7 @@ bool Game::updateWarpReturnUi(const Input& input, UiContext& ui)
             const WarpPoint& point = warpPoints_[static_cast<std::size_t>(i)];
             const UiRect rect = dungeonInspectableRect(point.position, {DungeonWarpPointImageSize, DungeonWarpPointImageSize});
             if (!point.discovered ||
+                !warpReturnInteractionArmed(i) ||
                 distanceToRect(player_.position, rect) > DungeonInspectableInteractionRange ||
                 !rect.contains(clickWorld)) {
                 continue;
@@ -9460,6 +9495,7 @@ void Game::updateWarpPoints(float dt)
             }
             point.discovered = true;
             point.unlocked = true;
+            captureAutoSimulationCheckpoint(point.index);
             unlockedWarpPointCount_ = std::max(unlockedWarpPointCount_, discoveredWarpPointCount());
             latestWarpPointPosition_ = point.position;
             hasLatestWarpPointPosition_ = true;
@@ -11087,6 +11123,7 @@ void Game::consumeInventoryUseEvents()
         }
 
         if (event.healedAmount > 0) {
+            recordAutoSimulationRecoveryUse();
             magicFx_.playHealPulse(player_.position, 28.0f);
         }
 
@@ -14429,6 +14466,7 @@ void Game::appendPickupLogs(const std::vector<WorldDropPickupEvent>& pickupEvent
 void Game::handleRingItemBreakEvents(std::vector<EffectDiscoveryEvent>* discoveryEvents)
 {
     for (const RingItemBreakEvent& event : spellRing_.consumeItemBreakEvents()) {
+        recordAutoSimulationItemBreak();
         recordCapturedMonsterRingBreak(event.objectId);
 
         const ItemData* object = objectCatalog_.registry.findById(event.objectId);
@@ -14930,55 +14968,42 @@ void Game::renderDungeonEntrance(Renderer& renderer) const
 
 void Game::renderWarpPoints(Renderer& renderer) const
 {
-    const bool roguelikeGate =
-        currentStageIsRoguelike() &&
-        roguelikeBigHole_.active &&
-        !roguelikeBigHole_.unlocked;
-    if (!warpPointsEnabled_ && !roguelikeGate) {
+    if (!warpPointsEnabled_) {
         return;
     }
 
-    if (warpPointsEnabled_) {
-        for (const WarpPoint& point : warpPoints_) {
-            const Color core = point.discovered ? Color{92, 236, 210, 255} : Color{255, 208, 92, 255};
-            const Color ring = point.discovered ? Color{170, 255, 238, 220} : Color{255, 232, 150, 220};
-            const bool inInteractionRange =
-                point.discovered &&
-                dungeonInspectableInRange(point.position, {DungeonWarpPointImageSize, DungeonWarpPointImageSize});
-            const bool hovered =
-                point.discovered &&
-                hoveredWarpReturnPointIndex_ >= 0 &&
-                hoveredWarpReturnPointIndex_ < static_cast<int>(warpPoints_.size()) &&
-                warpPoints_[static_cast<std::size_t>(hoveredWarpReturnPointIndex_)].index == point.index;
-            renderer.fillSoftCircle(point.position, point.discovered ? 34.0f : 24.0f, {150, 210, 255, 42});
+    for (const WarpPoint& point : warpPoints_) {
+        const Color core = point.discovered ? Color{92, 236, 210, 255} : Color{255, 208, 92, 255};
+        const Color ring = point.discovered ? Color{170, 255, 238, 220} : Color{255, 232, 150, 220};
+        const bool inInteractionRange =
+            point.discovered &&
+            dungeonInspectableInRange(point.position, {DungeonWarpPointImageSize, DungeonWarpPointImageSize});
+        const bool hovered =
+            point.discovered &&
+            hoveredWarpReturnPointIndex_ >= 0 &&
+            hoveredWarpReturnPointIndex_ < static_cast<int>(warpPoints_.size()) &&
+            warpPoints_[static_cast<std::size_t>(hoveredWarpReturnPointIndex_)].index == point.index;
+        renderer.fillSoftCircle(point.position, point.discovered ? 34.0f : 24.0f, {150, 210, 255, 42});
 
-            WorldIconDrawOptions options;
-            options.tint = point.discovered ? Color{255, 255, 255, 255} : Color{255, 228, 154, 238};
-            options.outlineColor = inInteractionRange
-                ? (hovered ? DungeonInspectableHoverOutlineColor : DungeonInspectableOutlineColor)
-                : (point.discovered ? Color{42, 76, 88, 210} : Color{116, 74, 24, 205});
-            options.outlinePx = DungeonInspectableOutlinePx;
-            if (!drawWorldIcon(
-                    renderer,
-                    WorldIconId::WarpPoint,
-                    point.position,
-                    {DungeonWarpPointImageSize, DungeonWarpPointImageSize},
-                    options)) {
-                renderer.fillCircle(point.position, 12.0f, core);
-                if (hovered) {
-                    renderer.drawCircle(point.position, 17.0f, DungeonInspectableHoverOutlineColor);
-                }
-                renderer.drawLine(point.position + Vec2{-18.0f, 0.0f}, point.position + Vec2{18.0f, 0.0f}, ring);
-                renderer.drawLine(point.position + Vec2{0.0f, -18.0f}, point.position + Vec2{0.0f, 18.0f}, ring);
+        WorldIconDrawOptions options;
+        options.tint = point.discovered ? Color{255, 255, 255, 255} : Color{255, 228, 154, 238};
+        options.outlineColor = inInteractionRange
+            ? (hovered ? DungeonInspectableHoverOutlineColor : DungeonInspectableOutlineColor)
+            : (point.discovered ? Color{42, 76, 88, 210} : Color{116, 74, 24, 205});
+        options.outlinePx = DungeonInspectableOutlinePx;
+        if (!drawWorldIcon(
+                renderer,
+                WorldIconId::WarpPoint,
+                point.position,
+                {DungeonWarpPointImageSize, DungeonWarpPointImageSize},
+                options)) {
+            renderer.fillCircle(point.position, 12.0f, core);
+            if (hovered) {
+                renderer.drawCircle(point.position, 17.0f, DungeonInspectableHoverOutlineColor);
             }
+            renderer.drawLine(point.position + Vec2{-18.0f, 0.0f}, point.position + Vec2{18.0f, 0.0f}, ring);
+            renderer.drawLine(point.position + Vec2{0.0f, -18.0f}, point.position + Vec2{0.0f, 18.0f}, ring);
         }
-    }
-
-    if (hasBossSpawnPoint_ && !bossSpawned_ && (roguelikeGate || !hasCapturedBossForCurrentStage())) {
-        renderer.drawCircle(bossSpawnPoint_, BossSpawnTriggerRadius, {255, 98, 92, 150});
-        renderer.drawCircle(bossSpawnPoint_, 18.0f, {255, 180, 80, 230});
-        renderer.drawLine(bossSpawnPoint_ + Vec2{-22.0f, -22.0f}, bossSpawnPoint_ + Vec2{22.0f, 22.0f}, {255, 120, 90, 210});
-        renderer.drawLine(bossSpawnPoint_ + Vec2{-22.0f, 22.0f}, bossSpawnPoint_ + Vec2{22.0f, -22.0f}, {255, 120, 90, 210});
     }
 }
 

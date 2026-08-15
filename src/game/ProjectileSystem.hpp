@@ -52,6 +52,8 @@ struct Projectile {
     std::string projectileId;
     int damage = 1;
     std::string damageType = "blunt";
+    int sourceEnemyRuntimeId = 0;
+    std::string sourceEnemyId;
     std::string sourceActorName;
     std::string displayName;
     std::vector<EffectSpec> effects;
@@ -99,6 +101,8 @@ struct ProjectileSpawnTuning {
 };
 
 struct ProjectileSpawnMetadata {
+    int sourceEnemyRuntimeId = 0;
+    std::string sourceEnemyId;
     std::string sourceActorName;
 };
 

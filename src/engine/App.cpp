@@ -25,6 +25,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -42,6 +43,7 @@ namespace {
 constexpr float AutoSimulationFixedStepSeconds = 1.0f / 60.0f;
 constexpr float AutoSimulationMaxDebtSeconds = 0.75f;
 constexpr int AutoSimulationMaxStepsPerFrame = 16;
+constexpr float AutoSimulationSpeedNoticeSeconds = 1.0f;
 constexpr int LogicalScreenWidth = balance::ScreenWidth;
 constexpr int LogicalScreenHeight = balance::ScreenHeight;
 constexpr std::string_view GameCursorPath = "assets/system/UI_cursor.png";
@@ -90,6 +92,34 @@ bool utf8ToWide(std::string_view text, std::wstring& out)
     }
     out.resize(static_cast<std::size_t>(size));
     return MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), size) == size;
+}
+
+bool launchNotepad(const std::filesystem::path& path)
+{
+    std::error_code error;
+    const std::filesystem::path absolutePath = std::filesystem::absolute(path, error);
+    const std::wstring reportPath = (error ? path : absolutePath).wstring();
+    std::wstring commandLine = L"notepad.exe \"" + reportPath + L"\"";
+    STARTUPINFOW startupInfo{};
+    startupInfo.cb = sizeof(startupInfo);
+    PROCESS_INFORMATION processInfo{};
+    const BOOL started = CreateProcessW(
+        nullptr,
+        commandLine.data(),
+        nullptr,
+        nullptr,
+        FALSE,
+        0,
+        nullptr,
+        nullptr,
+        &startupInfo,
+        &processInfo);
+    if (!started) {
+        return false;
+    }
+    CloseHandle(processInfo.hThread);
+    CloseHandle(processInfo.hProcess);
+    return true;
 }
 #endif
 
@@ -1705,9 +1735,14 @@ void App::executeDebugCommand(const std::string& command)
             logWarning("AutoSim commands are available only in test-play mode.");
             return;
         }
+        const int previousSpeedMultiplier = autoSimulation_.speedMultiplier();
         autoSimulation_.executeCommand(normalized, game_.makeTestSnapshot());
+        openPendingAutoSimulationReport();
         debugConsole_.setSliderValue("autosim_speed", autoSimulation_.speedMultiplier());
         autoSimulationStepDebtSeconds_ = 0.0f;
+        if (autoSimulation_.speedMultiplier() != previousSpeedMultiplier) {
+            autoSimulationSpeedNoticeTimer_ = AutoSimulationSpeedNoticeSeconds;
+        }
         return;
     }
     if (std::optional<DevLaunchMode> launchMode = parseDevLaunchModeCommand(normalized)) {
@@ -1764,15 +1799,53 @@ void App::runAutoSimulationStep(float dt, Time& updateTime)
     Input effectiveInput = input_;
     const GameTestSnapshot snapshot = game_.makeTestSnapshot(autoSimulation_.snapshotOptionsForNextStep());
     autoSimulation_.update(snapshot, dt);
+    openPendingAutoSimulationReport();
+    if (autoSimulation_.state() == autosim::AutoSimulationState::Idle) {
+        return;
+    }
     while (std::optional<GameTestAction> action = autoSimulation_.consumeAction()) {
         const GameTestActionResult result = game_.applyTestAction(*action);
-        autoSimulation_.recordActionResult(*action, result);
+        autoSimulation_.recordActionResult(*action, result, snapshot);
+    }
+    if (autoSimulation_.state() == autosim::AutoSimulationState::Idle) {
+        return;
     }
     effectiveInput.applyAutomation(autoSimulation_.inputFrame());
     game_.update(
         effectiveInput,
         updateTime,
         *renderer_);
+}
+
+void App::openPendingAutoSimulationReport()
+{
+    std::optional<std::filesystem::path> path = autoSimulation_.consumePendingReportPath();
+    if (!path || path->empty()) {
+        return;
+    }
+#ifdef _WIN32
+    if (!launchNotepad(*path)) {
+        logError("AutoSim: failed to open checkpoint report in Notepad: " + path->string());
+        return;
+    }
+    logInfo("AutoSim: opened checkpoint report in Notepad: " + path->string());
+#else
+    logInfo("AutoSim: checkpoint report saved: " + path->string());
+#endif
+}
+
+std::vector<autosim::AutoSimulationIntent> App::autoSimulationOverlayIntents() const
+{
+    std::vector<autosim::AutoSimulationIntent> intents = autoSimulation_.intentHistory();
+    if (autoSimulationSpeedNoticeTimer_ <= 0.0f) {
+        return intents;
+    }
+
+    autosim::AutoSimulationIntent speedIntent;
+    speedIntent.visible = true;
+    speedIntent.subject = "再生速度 ×" + std::to_string(autoSimulation_.speedMultiplier());
+    intents.insert(intents.begin(), std::move(speedIntent));
+    return intents;
 }
 
 float App::startupLoadProgress() const
@@ -2067,6 +2140,7 @@ void App::run()
                     autoSimulation_.executeCommand(
                         autosimRunning ? "autosim stop" : "autosim start",
                         game_.makeTestSnapshot());
+                    openPendingAutoSimulationReport();
                 }
                 if (event.type == SDL_EVENT_WINDOW_RESIZED) {
                     width_ = event.window.data1;
@@ -2118,6 +2192,16 @@ void App::run()
             }
             continue;
         }
+        if (testPlayMode_ && autoSimulation_.state() != autosim::AutoSimulationState::Idle) {
+            const int speedDelta =
+                (input_.pressed(InputAction::MoveUp) ? 1 : 0) -
+                (input_.pressed(InputAction::MoveDown) ? 1 : 0);
+            if (speedDelta != 0 && autoSimulation_.adjustSpeedMultiplier(speedDelta)) {
+                debugConsole_.setSliderValue("autosim_speed", autoSimulation_.speedMultiplier());
+                autoSimulationStepDebtSeconds_ = 0.0f;
+                autoSimulationSpeedNoticeTimer_ = AutoSimulationSpeedNoticeSeconds;
+            }
+        }
         if (testPlayMode_ && input_.toggleAutoReloadBlockPressed()) {
             const bool blocked = !loadDevAutoReloadBlocked();
             std::string error;
@@ -2152,6 +2236,9 @@ void App::run()
             checkDevBuildStatus();
         }
         time_.tick();
+        autoSimulationSpeedNoticeTimer_ = std::max(
+            0.0f,
+            autoSimulationSpeedNoticeTimer_ - std::max(0.0f, time_.deltaSeconds()));
         updateSettingsSave(time_.deltaSeconds());
         updateDevBuildNotice(time_.deltaSeconds());
         if (!testFreezePaused_) {
@@ -2210,9 +2297,9 @@ void App::run()
                 testPlayMode_ && autoSimulation_.state() != autosim::AutoSimulationState::Idle;
             game_.setAutoSimulationIntentOverlay(
                 autoSimulationOverlayActive,
-                autoSimulation_.intentHistory());
+                autoSimulationOverlayIntents());
             game_.setAutoSimulationDebugOverlay(
-                autoSimulationOverlayActive,
+                testPlayMode_,
                 autoSimulation_.debugSnapshot());
             if (game_.quitRequested()) {
                 running_ = false;
@@ -2223,9 +2310,9 @@ void App::run()
                 testPlayMode_ && autoSimulation_.state() != autosim::AutoSimulationState::Idle;
             game_.setAutoSimulationIntentOverlay(
                 autoSimulationOverlayActive,
-                autoSimulation_.intentHistory());
+                autoSimulationOverlayIntents());
             game_.setAutoSimulationDebugOverlay(
-                autoSimulationOverlayActive,
+                testPlayMode_,
                 autoSimulation_.debugSnapshot());
         }
         const Time& renderTime =

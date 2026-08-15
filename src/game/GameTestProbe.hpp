@@ -92,6 +92,47 @@ struct GameTestRunStats {
     int acquiredObjectItems = 0;
 };
 
+struct GameTestEnemyMeasurementSnapshot {
+    std::string enemyId;
+    std::string enemyName;
+    int defeatedCount = 0;
+    float combatSeconds = 0.0f;
+    int defeatedEnemyHitCount = 0;
+    int playerDamagedCount = 0;
+    int playerDamageTotal = 0;
+};
+
+struct GameTestCheckpointMeasurementTotals {
+    float elapsedSeconds = 0.0f;
+    int defeatedEnemies = 0;
+    float combatSeconds = 0.0f;
+    int defeatedEnemyHitCount = 0;
+    int playerDamagedCount = 0;
+    int playerDamageTotal = 0;
+    int recoveryUseCount = 0;
+    int acquiredItemCount = 0;
+    int brokenItemCount = 0;
+    std::vector<GameTestEnemyMeasurementSnapshot> enemies;
+};
+
+struct GameTestCheckpointMeasurementPoint {
+    int warpIndex = -1;
+    GameTestCheckpointMeasurementTotals totals;
+};
+
+struct GameTestCheckpointMeasurementSnapshot {
+    bool active = false;
+    bool completed = false;
+    std::string stageId;
+    std::string stageName;
+    std::uint32_t seed = 0;
+    int totalWarpPoints = 0;
+    std::vector<std::string> ringLoadout;
+    std::vector<std::string> backpackLoadout;
+    GameTestCheckpointMeasurementTotals totals;
+    std::vector<GameTestCheckpointMeasurementPoint> checkpoints;
+};
+
 struct GameTestPlayerStateSnapshot {
     std::string id;
     double value = 0.0;
@@ -212,7 +253,15 @@ struct GameTestWarpPointSnapshot {
     Vec2 position{};
     int index = 0;
     bool discovered = false;
+    bool unlocked = false;
     bool visible = false;
+    bool returnInteractionArmed = true;
+};
+
+enum class GameTestAutomationUiDirective {
+    None,
+    Wait,
+    Confirm,
 };
 
 struct GameTestMapClueSnapshot {
@@ -227,6 +276,14 @@ struct GameTestChestSnapshot {
     Vec2 position{};
     bool revealed = false;
     bool opened = false;
+    bool contentsReleased = false;
+};
+
+struct GameTestUseEffectSnapshot {
+    std::string target;
+    std::string effect;
+    double value = 0.0;
+    double duration = 0.0;
 };
 
 struct GameTestDropSnapshot {
@@ -236,6 +293,7 @@ struct GameTestDropSnapshot {
     std::string category;
     std::string damageType;
     std::vector<std::string> tags;
+    std::vector<GameTestUseEffectSnapshot> useEffects;
     GameTestIconKind iconKind = GameTestIconKind::None;
     std::string iconKey;
     Vec2 position{};
@@ -246,7 +304,11 @@ struct GameTestDropSnapshot {
     int digPower = 0;
     float lightRadius = 0.0f;
     int durability = -1;
+    int currentDurability = -1;
+    int maxDurability = -1;
     double weightKg = 0.0;
+    bool broken = false;
+    bool canAcquire = true;
 };
 
 struct GameTestMineTileSnapshot {
@@ -295,13 +357,7 @@ struct GameTestPathGridSnapshot {
 
 struct GameTestSnapshotOptions {
     bool includePathGrid = true;
-};
-
-struct GameTestUseEffectSnapshot {
-    std::string target;
-    std::string effect;
-    double value = 0.0;
-    double duration = 0.0;
+    bool useLightweightAutomationUiSnapshot = false;
 };
 
 struct GameTestObjectEntrySnapshot {
@@ -380,6 +436,11 @@ struct GameTestUpgradeSnapshot {
 
 struct GameTestBaseSnapshot {
     bool active = false;
+    bool encyclopediaSyncAvailable = false;
+    int bulkRepairTargetCount = 0;
+    int bulkRepairMoneyCost = 0;
+    int bulkRepairOreCost = 0;
+    bool bulkRepairExecutable = false;
     int money = 0;
     GameTestMaterialSnapshot materials;
     bool ringWorkshopUnlocked = false;
@@ -419,6 +480,8 @@ struct GameTestSnapshot {
     bool pendingStoryDelayActive = false;
     bool warpReturnConfirmOpen = false;
     bool introTutorialActive = false;
+    GameTestAutomationUiDirective automationUiDirective = GameTestAutomationUiDirective::None;
+    std::string automationUiReason;
     Vec2 cameraPosition{};
     int viewportWidth = 1280;
     int viewportHeight = 720;
@@ -436,6 +499,7 @@ struct GameTestSnapshot {
     GameTestBaseSnapshot base;
     GameTestLevelUpSnapshot levelUp;
     GameTestRunStats runStats;
+    GameTestCheckpointMeasurementSnapshot checkpointMeasurement;
     int money = 0;
     int totalMaterials = 0;
 };

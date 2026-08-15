@@ -65,6 +65,7 @@ AutoSimulationRingRole effectiveRole(const AutoSimulationPlan& plan)
     case AutoSimulationGoal::CollectDrop:
     case AutoSimulationGoal::OpenChest:
     case AutoSimulationGoal::DiscoverWarp:
+    case AutoSimulationGoal::ResumeFrontier:
     case AutoSimulationGoal::ApproachBoss:
     case AutoSimulationGoal::FollowMainPath:
         return AutoSimulationRingRole::Light;

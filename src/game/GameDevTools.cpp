@@ -1,6 +1,7 @@
 ﻿#include "game/GameInternal.hpp"
 
 #include "engine/Audio.hpp"
+#include "engine/InputHelpGlyph.hpp"
 #include "game/EffectPreviewCatalog.hpp"
 #include "game/EnemyImageRenderer.hpp"
 #include "game/EntityStatusVisuals.hpp"
@@ -2213,6 +2214,32 @@ std::string audioCueEditFolderText(AudioCueEditMode mode)
 std::string audioCueEditTitle(AudioCueEditMode mode)
 {
     return mode == AudioCueEditMode::Bgm ? "BGM編集" : "効果音編集";
+}
+
+std::string audioCueEditHelpText(AudioCueEditMode mode)
+{
+    std::string help = "ゲージをドラッグ  ";
+    help += buildInputHelpText({
+        {InputHelpGroup::Primary, {InputAction::Confirm}, "適用"},
+        {InputHelpGroup::Back, {InputAction::Cancel, InputAction::Pause}, "戻る"},
+        {InputHelpGroup::Other, {InputAction::UseSelectedItem}, "試聴"},
+    });
+    help += "  ダブルクリック 試聴";
+    if (mode == AudioCueEditMode::Se) {
+        help += "  " + inlineInputKeyChordTag({"Ctrl", "C"}) + " コピー";
+        help += "  " + inlineInputKeyChordTag({"Ctrl", "P"}) + " 貼り付け";
+    }
+    help += "  " + inlineInputKeyChordTag({"Ctrl", "S"}) + " 保存";
+    return help;
+}
+
+void copyAudioCueSettings(const AudioCueEditEntry& source, AudioCueEditEntry& target)
+{
+    target.path = source.path;
+    target.volume = source.volume;
+    target.pitch = source.pitch;
+    target.loop = source.loop;
+    target.cooldownMs = source.cooldownMs;
 }
 
 AudioCueType audioCueEngineType(AudioCueEditMode mode)
@@ -7398,6 +7425,101 @@ void Game::renderEnemyShadowEditScreen(Renderer& renderer, double totalSeconds) 
     }
 }
 
+void Game::syncAudioCueEditDraftFromSelection()
+{
+    audioCueEditDraft_ = {};
+    audioCueEditDraftCueIndex_ = -1;
+    audioCueEditVolumeSliderState_ = {};
+    audioCueEditPitchSliderState_ = {};
+    if (audioCueEditCueIndex_ < 0 ||
+        audioCueEditCueIndex_ >= static_cast<int>(audioCueEditEntries_.size())) {
+        return;
+    }
+
+    audioCueEditDraft_ = audioCueEditEntries_[static_cast<std::size_t>(audioCueEditCueIndex_)];
+    audioCueEditDraftCueIndex_ = audioCueEditCueIndex_;
+    audioCueEditFileIndex_ = audioCueEditFileIndexForPath(
+        audioCueEditFiles_,
+        audioCueEditDraft_.path);
+}
+
+void Game::copySelectedAudioCueSettings()
+{
+    if (audioCueEditMode_ != AudioCueEditMode::Se) {
+        audioCueEditStatus_ = "コピーは効果音編集でのみ使用できます";
+        return;
+    }
+    if (audioCueEditCueIndex_ < 0 ||
+        audioCueEditCueIndex_ >= static_cast<int>(audioCueEditEntries_.size())) {
+        audioCueEditStatus_ = "コピーする効果音を選択してください";
+        return;
+    }
+
+    audioCueEditClipboard_ = audioCueEditEntries_[static_cast<std::size_t>(audioCueEditCueIndex_)];
+    audioCueEditClipboardValid_ = true;
+    audioCueEditStatus_ = "コピー: " + audioCueDisplayName(audioCueEditClipboard_);
+}
+
+void Game::pasteCopiedAudioCueSettings()
+{
+    if (audioCueEditMode_ != AudioCueEditMode::Se) {
+        audioCueEditStatus_ = "貼り付けは効果音編集でのみ使用できます";
+        return;
+    }
+    if (!audioCueEditClipboardValid_) {
+        audioCueEditStatus_ = "コピーされた効果音がありません";
+        return;
+    }
+    if (audioCueEditCueIndex_ < 0 ||
+        audioCueEditCueIndex_ >= static_cast<int>(audioCueEditEntries_.size())) {
+        audioCueEditStatus_ = "貼り付ける効果音を選択してください";
+        return;
+    }
+
+    const int fileIndex = audioCueEditFileIndexForPath(
+        audioCueEditFiles_,
+        audioCueEditClipboard_.path);
+    if (fileIndex < 0) {
+        audioCueEditStatus_ = "コピー元のWAVが見つかりません: " + audioCueEditClipboard_.path;
+        return;
+    }
+    if (audioCueEditDraftCueIndex_ != audioCueEditCueIndex_) {
+        syncAudioCueEditDraftFromSelection();
+    }
+
+    const std::string sourceName = audioCueDisplayName(audioCueEditClipboard_);
+    const std::string targetName = audioCueDisplayName(
+        audioCueEditEntries_[static_cast<std::size_t>(audioCueEditCueIndex_)]);
+    copyAudioCueSettings(audioCueEditClipboard_, audioCueEditDraft_);
+    audioCueEditFileIndex_ = fileIndex;
+    audioCueEditVolumeSliderState_ = {};
+    audioCueEditPitchSliderState_ = {};
+    audioCueEditStatus_ = "貼り付け（未適用）: " + sourceName + " → " + targetName;
+}
+
+bool Game::handleAudioCueEditEvent(const SDL_Event& event)
+{
+    if (mode_ != ScreenMode::AudioCueEdit ||
+        event.type != SDL_EVENT_KEY_DOWN ||
+        event.key.repeat) {
+        return false;
+    }
+
+    const SDL_Keymod modifiers = SDL_GetModState();
+    if ((modifiers & SDL_KMOD_CTRL) == 0) {
+        return false;
+    }
+    if (event.key.scancode == SDL_SCANCODE_C) {
+        copySelectedAudioCueSettings();
+        return true;
+    }
+    if (event.key.scancode == SDL_SCANCODE_P) {
+        pasteCopiedAudioCueSettings();
+        return true;
+    }
+    return false;
+}
+
 bool Game::loadAudioCueManifestForEdit()
 {
     std::string previousId;
@@ -7410,6 +7532,8 @@ bool Game::loadAudioCueManifestForEdit()
     if (!loadAudioCueManifestRows(rows, message)) {
         audioCueEditEntries_.clear();
         audioCueEditCueIndex_ = -1;
+        audioCueEditDraft_ = {};
+        audioCueEditDraftCueIndex_ = -1;
         audioCueEditDirty_ = false;
         audioCueEditStatus_ = message;
         return false;
@@ -7435,13 +7559,7 @@ bool Game::loadAudioCueManifestForEdit()
         audioCueEditCueIndex_ = 0;
     }
 
-    if (audioCueEditCueIndex_ >= 0 && audioCueEditCueIndex_ < static_cast<int>(audioCueEditEntries_.size())) {
-        const AudioCueEditEntry& cue = audioCueEditEntries_[static_cast<std::size_t>(audioCueEditCueIndex_)];
-        const int fileIndex = audioCueEditFileIndexForPath(audioCueEditFiles_, cue.path);
-        if (fileIndex >= 0) {
-            audioCueEditFileIndex_ = fileIndex;
-        }
-    }
+    syncAudioCueEditDraftFromSelection();
 
     audioCueEditDirty_ = false;
     audioCueEditStatus_ = audioCueEditEntries_.empty()
@@ -7608,6 +7726,8 @@ void Game::enterAudioCueEditMode(AudioCueEditMode editMode)
     audioCueEditFileScrollState_ = {};
     audioCueEditVolumeSliderState_ = {};
     audioCueEditPitchSliderState_ = {};
+    audioCueEditDraft_ = {};
+    audioCueEditDraftCueIndex_ = -1;
     audioCueEditCancelState_ = {};
 
     rebuildAudioCueFileList();
@@ -7631,6 +7751,9 @@ void Game::exitAudioCueEditMode()
         }
     }
 
+    audioCueEditDraft_ = {};
+    audioCueEditDraftCueIndex_ = -1;
+
     mode_ = audioCueEditReturnMode_;
     if (mode_ == ScreenMode::AudioCueEdit) {
         mode_ = ScreenMode::Playing;
@@ -7649,7 +7772,13 @@ void Game::previewSelectedAudioCueFile()
     }
 
     AudioCueOptions options;
-    if (audioCueEditCueIndex_ >= 0 && audioCueEditCueIndex_ < static_cast<int>(audioCueEditEntries_.size())) {
+    if (audioCueEditDraftCueIndex_ == audioCueEditCueIndex_) {
+        options.volume = audioCueEditDraft_.volume;
+        options.pitchScale = audioCueEditPitchScale(audioCueEditDraft_.pitch);
+        options.loop = audioCueEditDraft_.loop;
+        options.cooldownSeconds = audioCueEditDraft_.cooldownMs / 1000.0f;
+    } else if (audioCueEditCueIndex_ >= 0 &&
+               audioCueEditCueIndex_ < static_cast<int>(audioCueEditEntries_.size())) {
         const AudioCueEditEntry& cue = audioCueEditEntries_[static_cast<std::size_t>(audioCueEditCueIndex_)];
         options.volume = cue.volume;
         options.pitchScale = audioCueEditPitchScale(cue.pitch);
@@ -7689,10 +7818,20 @@ void Game::applySelectedAudioCueFile()
         return;
     }
 
+    if (audioCueEditDraftCueIndex_ != audioCueEditCueIndex_) {
+        syncAudioCueEditDraftFromSelection();
+    }
+
     AudioCueEditEntry& cue = audioCueEditEntries_[static_cast<std::size_t>(audioCueEditCueIndex_)];
     const AudioCueFileEntry& file = audioCueEditFiles_[static_cast<std::size_t>(audioCueEditFileIndex_)];
-    cue.path = file.relativePath;
-    audioCueEditDirty_ = true;
+    AudioCueEditEntry applied = audioCueEditDraft_;
+    applied.path = file.relativePath;
+    if (!(cue == applied)) {
+        cue = std::move(applied);
+        audioCueEditDirty_ = true;
+    }
+    audioCueEditDraft_ = cue;
+    audioCueEditDraftCueIndex_ = audioCueEditCueIndex_;
 
     AudioCueOptions options;
     options.volume = cue.volume;
@@ -7753,9 +7892,11 @@ void Game::updateAudioCueEditScreen(const Input& input, UiContext& ui)
     bool keepFileSelectionVisible = false;
     bool previewAfterParameterChange = false;
 
+    if (audioCueEditDraftCueIndex_ != audioCueEditCueIndex_) {
+        syncAudioCueEditDraftFromSelection();
+    }
     if (audioCueEditCueIndex_ >= 0 && audioCueEditCueIndex_ < cueCount) {
-        AudioCueEditEntry& cue =
-            audioCueEditEntries_[static_cast<std::size_t>(audioCueEditCueIndex_)];
+        AudioCueEditEntry& cue = audioCueEditDraft_;
         const UiSliderResult volumeResult = updateUiSlider(
             ui,
             input,
@@ -7765,8 +7906,7 @@ void Game::updateAudioCueEditScreen(const Input& input, UiContext& ui)
             audioCueEditVolumeSliderState_);
         if (volumeResult.changed) {
             cue.volume = volumeResult.value / 100.0f;
-            audioCueEditDirty_ = true;
-            audioCueEditStatus_ = "音量: " + audioCueEditPercentText(volumeResult.value);
+            audioCueEditStatus_ = "音量（未適用）: " + audioCueEditPercentText(volumeResult.value);
             previewAfterParameterChange = true;
         }
 
@@ -7780,8 +7920,7 @@ void Game::updateAudioCueEditScreen(const Input& input, UiContext& ui)
                 audioCueEditPitchSliderState_);
             if (pitchResult.changed) {
                 cue.pitch = audioCueEditPitchForPercent(pitchResult.value);
-                audioCueEditDirty_ = true;
-                audioCueEditStatus_ = "ピッチ: " + audioCueEditPercentText(pitchResult.value);
+                audioCueEditStatus_ = "ピッチ（未適用）: " + audioCueEditPercentText(pitchResult.value);
                 previewAfterParameterChange = true;
             }
         } else {
@@ -7812,13 +7951,7 @@ void Game::updateAudioCueEditScreen(const Input& input, UiContext& ui)
 
     if (ui.pressed(audioCueEditRescanButtonRect(layout.panel))) {
         rebuildAudioCueFileList();
-        if (audioCueEditCueIndex_ >= 0 && audioCueEditCueIndex_ < cueCount) {
-            const int fileIndex = audioCueEditFileIndexForPath(audioCueEditFiles_, audioCueEditEntries_[static_cast<std::size_t>(audioCueEditCueIndex_)].path);
-            if (fileIndex >= 0) {
-                audioCueEditFileIndex_ = fileIndex;
-                keepFileSelectionVisible = true;
-            }
-        }
+        keepFileSelectionVisible = audioCueEditFileIndex_ >= 0;
     }
 
     if (ui.pressed(audioCueEditPreviewButtonRect(layout.panel))) {
@@ -7838,10 +7971,9 @@ void Game::updateAudioCueEditScreen(const Input& input, UiContext& ui)
         }
         if (cueViewport.contains(ui.mouse()) && ui.pressed(rect)) {
             resetFileDoubleClick();
-            audioCueEditCueIndex_ = i;
-            const int fileIndex = audioCueEditFileIndexForPath(audioCueEditFiles_, audioCueEditEntries_[static_cast<std::size_t>(i)].path);
-            if (fileIndex >= 0) {
-                audioCueEditFileIndex_ = fileIndex;
+            if (audioCueEditCueIndex_ != i) {
+                audioCueEditCueIndex_ = i;
+                syncAudioCueEditDraftFromSelection();
                 keepFileSelectionVisible = true;
             }
             audioCueEditStatus_ = audioCueDisplayName(audioCueEditEntries_[static_cast<std::size_t>(i)]);
@@ -7880,11 +8012,11 @@ void Game::updateAudioCueEditScreen(const Input& input, UiContext& ui)
         (input.pressed(InputAction::MoveLeft) ? 1 : 0);
     if (cueDelta != 0 && cueCount > 0) {
         resetFileDoubleClick();
-        audioCueEditCueIndex_ = std::clamp(audioCueEditCueIndex_ + cueDelta, 0, cueCount - 1);
-        keepCueSelectionVisible = true;
-        const int fileIndex = audioCueEditFileIndexForPath(audioCueEditFiles_, audioCueEditEntries_[static_cast<std::size_t>(audioCueEditCueIndex_)].path);
-        if (fileIndex >= 0) {
-            audioCueEditFileIndex_ = fileIndex;
+        const int nextCueIndex = std::clamp(audioCueEditCueIndex_ + cueDelta, 0, cueCount - 1);
+        if (audioCueEditCueIndex_ != nextCueIndex) {
+            audioCueEditCueIndex_ = nextCueIndex;
+            syncAudioCueEditDraftFromSelection();
+            keepCueSelectionVisible = true;
             keepFileSelectionVisible = true;
         }
     }
@@ -7923,12 +8055,13 @@ void Game::renderAudioCueEditScreen(Renderer& renderer) const
 
     const AudioCueEditLayout layout = makeAudioCueEditLayout(camera_.width(), camera_.height());
     const std::string title = audioCueEditTitle(audioCueEditMode_);
+    const std::string help = audioCueEditHelpText(audioCueEditMode_);
     UiWindowScope window(
         renderer,
         audioCueEditMode_ == AudioCueEditMode::Bgm ? "audio.cue_edit.bgm" : "audio.cue_edit.se",
         layout.panel,
         title,
-        "ゲージをドラッグ / F適用 / Space・ダブルクリック試聴 / Ctrl+S保存 / Esc戻る",
+        help,
         UiWindowOptions{true, true});
 
     drawUiSubPanel(renderer, layout.cueList);
@@ -7998,9 +8131,13 @@ void Game::renderAudioCueEditScreen(Renderer& renderer) const
     drawUiScrollAreaFrame(renderer, fileList, fileListStyle.scroll);
 
     const AudioCueEditEntry* cue = nullptr;
+    const AudioCueEditEntry* draft = nullptr;
     const AudioCueFileEntry* file = nullptr;
     if (audioCueEditCueIndex_ >= 0 && audioCueEditCueIndex_ < cueCount) {
         cue = &audioCueEditEntries_[static_cast<std::size_t>(audioCueEditCueIndex_)];
+        if (audioCueEditDraftCueIndex_ == audioCueEditCueIndex_) {
+            draft = &audioCueEditDraft_;
+        }
     }
     if (audioCueEditFileIndex_ >= 0 && audioCueEditFileIndex_ < fileCount) {
         file = &audioCueEditFiles_[static_cast<std::size_t>(audioCueEditFileIndex_)];
@@ -8044,12 +8181,12 @@ void Game::renderAudioCueEditScreen(Renderer& renderer) const
         {{detailContent.pos.x, detailContent.pos.y + 140.0f}, {detailContent.size.x, 1.0f}},
         {255, 255, 255, 54});
 
-    if (cue != nullptr) {
+    if (draft != nullptr) {
         drawAudioCueEditSlider(
             renderer,
             audioCueEditVolumeSliderRect(layout.detail),
             "音量",
-            cue->volume * 100.0f,
+            draft->volume * 100.0f,
             audioCueEditVolumeSliderSpec(),
             audioCueEditVolumeSliderState_,
             audioCueEditSliderStyle(false));
@@ -8058,7 +8195,7 @@ void Game::renderAudioCueEditScreen(Renderer& renderer) const
                 renderer,
                 audioCueEditPitchSliderRect(layout.detail),
                 "ピッチ",
-                audioCueEditPitchPercent(cue->pitch),
+                audioCueEditPitchPercent(draft->pitch),
                 audioCueEditPitchSliderSpec(),
                 audioCueEditPitchSliderState_,
                 audioCueEditSliderStyle(true));
@@ -11232,6 +11369,261 @@ bool Game::handleDebugStoryTestCommand(std::string_view normalized)
     return false;
 }
 
+int Game::debugStoryUnlockCountForStage(std::string_view stageId) const
+{
+    if (stageId == "stage_04_astral_mine") {
+        return 2;
+    }
+    int storyStageNumber = 0;
+    for (const StageDefinition& stage : stageCatalog_.getStagesSortedByDisplayOrder()) {
+        if (debugIsRoguelikeStageDefinition(stage)) {
+            continue;
+        }
+        ++storyStageNumber;
+        if (stage.id == stageId) {
+            return std::max(1, storyStageNumber);
+        }
+    }
+    return 1;
+}
+
+bool Game::selectDebugStageForTest(std::string_view stageId)
+{
+    if (stageId.empty() || stageCatalog_.getStageById(stageId) == nullptr) {
+        logWarning("Debug: stage not found: " + std::string(stageId));
+        return false;
+    }
+    if (effectTestActive_) {
+        exitEffectTestToBase();
+    } else if (projectileTestActive_) {
+        exitProjectileTestToBase();
+    } else if (enemyTestActive_) {
+        exitEnemyTestToBase();
+    }
+
+    unlockedStages_ = std::max(unlockedStages_, debugStoryUnlockCountForStage(stageId));
+    currentStageId_ = std::string(stageId);
+    currentStage_ = stageCatalogIndexForId(currentStageId_);
+    resolveCurrentStageDefinition();
+    syncWarpStateForCurrentStage();
+    baseMiningStartSelection_ = unlockedWarpPointCount_ > 0 ? 1 : 0;
+    baseWarpPointSelectActive_ = false;
+    baseWarpPointSelection_ = 0;
+    baseRegenerateConfirm_ = {};
+    baseBrokenRingDepartureConfirm_ = {};
+    return true;
+}
+
+void Game::beginAutoSimulationCheckpointMeasurement()
+{
+    autoSimulationCheckpointMeasurement_ = {};
+    AutoSimulationCheckpointMeasurementState& measurement = autoSimulationCheckpointMeasurement_;
+    measurement.active = true;
+    measurement.stageId = currentStageId_;
+    measurement.stageName = currentStageDefinition_.name;
+
+    const auto itemLabel = [this](std::string_view objectId, int durability, int maxDurability) {
+        const ItemData* item = objectCatalog_.registry.findById(objectId);
+        std::string label = item != nullptr && !item->name.empty() ? item->name : std::string(objectId);
+        if (maxDurability >= 0) {
+            label += " (耐久 " + std::to_string(std::max(0, durability)) + "/" +
+                std::to_string(std::max(0, maxDurability)) + ")";
+        }
+        return label;
+    };
+
+    for (int ringIndex = 0; ringIndex < unlockedRingCount(); ++ringIndex) {
+        for (const SpellRingItem& item : spellRing_.itemsForRing(ringIndex)) {
+            measurement.ringLoadout.push_back(
+                "リング" + std::to_string(ringIndex + 1) + ": " +
+                itemLabel(
+                    item.objectId,
+                    durabilityUnitsToDisplayPoints(item.durability),
+                    durabilityUnitsToDisplayPoints(item.maxDurability)));
+        }
+    }
+    for (const InventoryObjectStack& stack : inventory_.objectStacks()) {
+        measurement.backpackLoadout.push_back(
+            itemLabel(stack.objectId, stack.item.durability, stack.item.durability) +
+            " ×" + std::to_string(stack.count));
+    }
+    for (const InventoryObjectInstance& instance : inventory_.objectInstances()) {
+        measurement.backpackLoadout.push_back(itemLabel(
+            instance.item.id,
+            durabilityUnitsToDisplayPoints(instance.instance.currentDurability),
+            durabilityUnitsToDisplayPoints(instance.instance.maxDurability)));
+    }
+}
+
+void Game::updateAutoSimulationCheckpointMeasurement(float dt)
+{
+    AutoSimulationCheckpointMeasurementState& measurement = autoSimulationCheckpointMeasurement_;
+    if (!measurement.active || measurement.completed || mode_ != ScreenMode::Playing) {
+        return;
+    }
+    if (!measurement.gameplayStarted) {
+        measurement.gameplayStarted = true;
+        measurement.seed = dungeonLayout_.seed;
+        measurement.totalWarpPoints = static_cast<int>(warpPoints_.size());
+        measurement.lastObservedAcquiredItems = 0;
+    }
+    measurement.totals.elapsedSeconds += std::max(0.0f, dt);
+    if (runStats_.acquiredItems >= measurement.lastObservedAcquiredItems) {
+        measurement.totals.acquiredItemCount +=
+            runStats_.acquiredItems - measurement.lastObservedAcquiredItems;
+    }
+    measurement.lastObservedAcquiredItems = runStats_.acquiredItems;
+}
+
+void Game::recordAutoSimulationEnemyEvent(const EnemyEvent& event)
+{
+    AutoSimulationCheckpointMeasurementState& measurement = autoSimulationCheckpointMeasurement_;
+    if (!measurement.active || measurement.completed || event.enemyId.empty()) {
+        return;
+    }
+    const auto enemyTotals = [&]() -> GameTestEnemyMeasurementSnapshot& {
+        const auto it = std::find_if(
+            measurement.totals.enemies.begin(),
+            measurement.totals.enemies.end(),
+            [&](const GameTestEnemyMeasurementSnapshot& enemy) { return enemy.enemyId == event.enemyId; });
+        if (it != measurement.totals.enemies.end()) {
+            if (it->enemyName.empty() && !event.enemyName.empty()) {
+                it->enemyName = event.enemyName;
+            }
+            return *it;
+        }
+        measurement.totals.enemies.push_back(GameTestEnemyMeasurementSnapshot{
+            .enemyId = event.enemyId,
+            .enemyName = event.enemyName,
+        });
+        return measurement.totals.enemies.back();
+    };
+    const auto beginEncounter = [&]() {
+        if (event.enemyRuntimeId <= 0 || measurement.encounters.contains(event.enemyRuntimeId)) {
+            return;
+        }
+        measurement.encounters.emplace(event.enemyRuntimeId, AutoSimulationEnemyEncounter{
+            .enemyId = event.enemyId,
+            .enemyName = event.enemyName,
+            .startedAtSeconds = measurement.totals.elapsedSeconds,
+        });
+    };
+
+    if (event.type == EnemyEventType::AttackHit && event.playerDealtDamage && event.damageAmount > 0) {
+        beginEncounter();
+        const auto encounter = measurement.encounters.find(event.enemyRuntimeId);
+        if (encounter != measurement.encounters.end()) {
+            ++encounter->second.playerHitCount;
+        }
+        return;
+    }
+    if (event.type != EnemyEventType::Death && event.type != EnemyEventType::BossDeath) {
+        return;
+    }
+
+    GameTestEnemyMeasurementSnapshot& enemy = enemyTotals();
+    ++measurement.totals.defeatedEnemies;
+    ++enemy.defeatedCount;
+    const auto encounter = measurement.encounters.find(event.enemyRuntimeId);
+    if (encounter != measurement.encounters.end()) {
+        measurement.totals.defeatedEnemyHitCount += encounter->second.playerHitCount;
+        enemy.defeatedEnemyHitCount += encounter->second.playerHitCount;
+        const float combatSeconds = std::max(
+            0.0f,
+            measurement.totals.elapsedSeconds - encounter->second.startedAtSeconds);
+        measurement.totals.combatSeconds += combatSeconds;
+        enemy.combatSeconds += combatSeconds;
+        measurement.encounters.erase(encounter);
+    }
+}
+
+void Game::recordAutoSimulationPlayerDamage(const PlayerDamageEvent& event)
+{
+    AutoSimulationCheckpointMeasurementState& measurement = autoSimulationCheckpointMeasurement_;
+    if (!measurement.active || measurement.completed || event.amount <= 0) {
+        return;
+    }
+    ++measurement.totals.playerDamagedCount;
+    measurement.totals.playerDamageTotal += event.amount;
+    if (event.cause.enemyId.empty()) {
+        return;
+    }
+
+    auto enemy = std::find_if(
+        measurement.totals.enemies.begin(),
+        measurement.totals.enemies.end(),
+        [&](const GameTestEnemyMeasurementSnapshot& value) { return value.enemyId == event.cause.enemyId; });
+    if (enemy == measurement.totals.enemies.end()) {
+        measurement.totals.enemies.push_back(GameTestEnemyMeasurementSnapshot{
+            .enemyId = event.cause.enemyId,
+            .enemyName = event.cause.actorName,
+        });
+        enemy = std::prev(measurement.totals.enemies.end());
+    }
+    ++enemy->playerDamagedCount;
+    enemy->playerDamageTotal += event.amount;
+    if (event.cause.enemyRuntimeId > 0 && !measurement.encounters.contains(event.cause.enemyRuntimeId)) {
+        measurement.encounters.emplace(event.cause.enemyRuntimeId, AutoSimulationEnemyEncounter{
+            .enemyId = event.cause.enemyId,
+            .enemyName = event.cause.actorName,
+            .startedAtSeconds = measurement.totals.elapsedSeconds,
+        });
+    }
+}
+
+void Game::recordAutoSimulationRecoveryUse()
+{
+    if (autoSimulationCheckpointMeasurement_.active && !autoSimulationCheckpointMeasurement_.completed) {
+        ++autoSimulationCheckpointMeasurement_.totals.recoveryUseCount;
+    }
+}
+
+void Game::recordAutoSimulationItemBreak()
+{
+    if (autoSimulationCheckpointMeasurement_.active && !autoSimulationCheckpointMeasurement_.completed) {
+        ++autoSimulationCheckpointMeasurement_.totals.brokenItemCount;
+    }
+}
+
+void Game::captureAutoSimulationCheckpoint(int warpIndex)
+{
+    AutoSimulationCheckpointMeasurementState& measurement = autoSimulationCheckpointMeasurement_;
+    if (!measurement.active || measurement.completed) {
+        return;
+    }
+    measurement.seed = dungeonLayout_.seed;
+    measurement.totalWarpPoints = static_cast<int>(warpPoints_.size());
+    if (!measurement.checkpoints.empty() && measurement.checkpoints.back().warpIndex == warpIndex) {
+        return;
+    }
+    measurement.checkpoints.push_back(GameTestCheckpointMeasurementPoint{
+        .warpIndex = warpIndex,
+        .totals = measurement.totals,
+    });
+    const int finalWarpIndex = std::max(0, measurement.totalWarpPoints - 1);
+    if (measurement.totalWarpPoints > 0 && warpIndex == finalWarpIndex) {
+        measurement.completed = true;
+        measurement.active = false;
+    }
+}
+
+GameTestCheckpointMeasurementSnapshot Game::autoSimulationCheckpointMeasurementSnapshot() const
+{
+    const AutoSimulationCheckpointMeasurementState& measurement = autoSimulationCheckpointMeasurement_;
+    return GameTestCheckpointMeasurementSnapshot{
+        .active = measurement.active,
+        .completed = measurement.completed,
+        .stageId = measurement.stageId,
+        .stageName = measurement.stageName,
+        .seed = measurement.seed,
+        .totalWarpPoints = measurement.totalWarpPoints,
+        .ringLoadout = measurement.ringLoadout,
+        .backpackLoadout = measurement.backpackLoadout,
+        .totals = measurement.totals,
+        .checkpoints = measurement.checkpoints,
+    };
+}
+
 GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
 {
     const int ringCount = unlockedRingCount();
@@ -11338,11 +11730,11 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
         fillMode(ProcessingMode::Attack, entry.canEnhanceAttack, entry.enhanceAttackMoneyCost, entry.enhanceAttackOreCost);
         fillMode(ProcessingMode::Dig, entry.canEnhanceDig, entry.enhanceDigMoneyCost, entry.enhanceDigOreCost);
     };
-    const auto fillUseEffects = [](GameTestObjectEntrySnapshot& entry, const ItemData& item) {
+    const auto appendUseEffects = [](std::vector<GameTestUseEffectSnapshot>& effects, const ItemData& item) {
         for (const EffectSpec& spec : item.normalEffects) {
             const std::size_t count = std::min(spec.effects.size(), spec.values.size());
             for (std::size_t i = 0; i < count; ++i) {
-                entry.useEffects.push_back(GameTestUseEffectSnapshot{
+                effects.push_back(GameTestUseEffectSnapshot{
                     .target = spec.target,
                     .effect = spec.effects[i],
                     .value = spec.values[i],
@@ -11386,7 +11778,7 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
         this,
         &codexStageForItem,
         &fillProcessingState,
-        &fillUseEffects,
+        &appendUseEffects,
         &expectedLoadoutLightRadius,
         &fillRingAddability](
         const InventoryObjectStack& stack,
@@ -11400,7 +11792,7 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
         entry.category = stack.item.category;
         entry.damageType = stack.item.damageType;
         entry.tags = stack.item.tags;
-        fillUseEffects(entry, stack.item);
+        appendUseEffects(entry.useEffects, stack.item);
         entry.count = stack.count;
         entry.rarity = stack.item.rarity;
         entry.price = stack.item.price;
@@ -11429,7 +11821,7 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
         this,
         &codexStageForItem,
         &fillProcessingState,
-        &fillUseEffects,
+        &appendUseEffects,
         &expectedLoadoutLightRadius,
         &fillRingAddability](
         const InventoryObjectInstance& objectInstance,
@@ -11444,7 +11836,7 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
         entry.category = objectInstance.item.category;
         entry.damageType = objectInstance.item.damageType;
         entry.tags = objectInstance.item.tags;
-        fillUseEffects(entry, objectInstance.item);
+        appendUseEffects(entry.useEffects, objectInstance.item);
         entry.count = 1;
         entry.rarity = objectInstance.item.rarity;
         entry.price = objectInstance.item.price;
@@ -11493,6 +11885,53 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
     snapshot.pendingStoryDelayActive = pendingStoryTriggerDelayActive();
     snapshot.warpReturnConfirmOpen = warpReturnConfirm_.open;
     snapshot.introTutorialActive = introTutorialActive();
+    if (snapshot.worldLoading) {
+        snapshot.automationUiDirective = GameTestAutomationUiDirective::Wait;
+        snapshot.automationUiReason = "ワールド生成の完了待ち";
+    } else if (snapshot.transitionActive) {
+        snapshot.automationUiDirective = GameTestAutomationUiDirective::Wait;
+        snapshot.automationUiReason = "画面遷移の完了待ち";
+    } else if (snapshot.pendingStoryDelayActive) {
+        snapshot.automationUiDirective = GameTestAutomationUiDirective::Wait;
+        snapshot.automationUiReason = "予約イベントの開始待ち（遅延中）";
+    } else if (snapshot.firstItemNoticeActive) {
+        snapshot.automationUiDirective = GameTestAutomationUiDirective::Confirm;
+        snapshot.automationUiReason = "初回入手通知を決定入力で閉じる";
+    } else if (snapshot.dialogueActive) {
+        snapshot.automationUiDirective = GameTestAutomationUiDirective::Confirm;
+        snapshot.automationUiReason = "会話を決定入力で進行中";
+    } else if (mode_ == ScreenMode::OpeningKamishibai) {
+        snapshot.automationUiDirective = GameTestAutomationUiDirective::Confirm;
+        snapshot.automationUiReason = "オープニング紙芝居を決定入力で進行中";
+    } else if (mode_ == ScreenMode::EndingKamishibai) {
+        snapshot.automationUiDirective = GameTestAutomationUiDirective::Confirm;
+        snapshot.automationUiReason = "エンディング紙芝居を決定入力で進行中";
+    } else if (mode_ == ScreenMode::LevelUp && levelUpResultDialog_.open) {
+        snapshot.automationUiDirective = GameTestAutomationUiDirective::Confirm;
+        snapshot.automationUiReason = "レベルアップ結果を決定入力で閉じる";
+    } else if (mode_ == ScreenMode::Base && baseResultDialog_.open) {
+        snapshot.automationUiDirective = GameTestAutomationUiDirective::Confirm;
+        snapshot.automationUiReason = "拠点の結果ダイアログを決定入力で閉じる";
+    } else if (mode_ == ScreenMode::LevelUp && levelUpPresentation_.active) {
+        snapshot.automationUiDirective = GameTestAutomationUiDirective::Wait;
+        snapshot.automationUiReason = "レベルアップ演出の完了待ち";
+    } else if (snapshot.dungeonFocusActive) {
+        snapshot.automationUiDirective = GameTestAutomationUiDirective::Wait;
+        snapshot.automationUiReason = "ダンジョン注目演出の完了待ち";
+    } else if (snapshot.bossPresentationActive) {
+        snapshot.automationUiDirective = GameTestAutomationUiDirective::Wait;
+        snapshot.automationUiReason = "ボス演出の完了待ち";
+    } else if (baseMiningRescueDrop_.active) {
+        snapshot.automationUiDirective = GameTestAutomationUiDirective::Wait;
+        snapshot.automationUiReason = "拠点の救済アイテム演出の完了待ち";
+    } else if (!pendingStoryTrigger_.empty()) {
+        snapshot.automationUiDirective = GameTestAutomationUiDirective::Wait;
+        snapshot.automationUiReason = "予約イベントの開始待ち: " + pendingStoryTrigger_;
+    } else if (!pendingStoryTriggers_.empty()) {
+        snapshot.automationUiDirective = GameTestAutomationUiDirective::Wait;
+        snapshot.automationUiReason = "予約イベント列の処理待ち（残り" +
+            std::to_string(pendingStoryTriggers_.size()) + "件）";
+    }
     snapshot.cameraPosition = camera_.position();
     snapshot.viewportWidth = camera_.width();
     snapshot.viewportHeight = camera_.height();
@@ -11509,6 +11948,61 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
     snapshot.player.hp = player_.hp;
     snapshot.player.maxHp = player_.maxHp;
     snapshot.player.level = player_.level;
+    snapshot.dungeon.active = mode_ == ScreenMode::Playing ||
+        mode_ == ScreenMode::Inventory ||
+        mode_ == ScreenMode::PauseMenu ||
+        mode_ == ScreenMode::Ring ||
+        mode_ == ScreenMode::LevelUp ||
+        mode_ == ScreenMode::GameOver ||
+        mode_ == ScreenMode::StageClear ||
+        mode_ == ScreenMode::AstralResult;
+    snapshot.dungeon.seed = dungeonLayout_.seed;
+    snapshot.dungeon.startWorld = tileWorldCenter(dungeonLayout_.startTile);
+    snapshot.dungeon.goalWorld = tileWorldCenter(dungeonLayout_.goalTile);
+    snapshot.dungeon.hasBossSpawnPoint = hasBossSpawnPoint_;
+    snapshot.dungeon.bossSpawnPoint = bossSpawnPoint_;
+    snapshot.dungeon.bossSpawned = bossSpawned_;
+    snapshot.dungeon.discoveredWarpPoints = discoveredWarpPointCount();
+    snapshot.dungeon.unlockedWarpPoints = unlockedWarpPointCount_;
+    const Vec2 cameraCenter = camera_.position();
+    const float visibleWarpMargin = 72.0f;
+    const float visibleWarpHalfWidth = static_cast<float>(camera_.width()) * 0.5f + visibleWarpMargin;
+    const float visibleWarpHalfHeight = static_cast<float>(camera_.height()) * 0.5f + visibleWarpMargin;
+    snapshot.dungeon.warpPoints.reserve(warpPoints_.size());
+    for (int warpVectorIndex = 0; warpVectorIndex < static_cast<int>(warpPoints_.size()); ++warpVectorIndex) {
+        const WarpPoint& point = warpPoints_[static_cast<std::size_t>(warpVectorIndex)];
+        const bool knownDiscovered =
+            point.discovered ||
+            point.unlocked ||
+            point.index < unlockedWarpPointCount_;
+        const bool visibleOnScreen =
+            std::abs(point.position.x - cameraCenter.x) <= visibleWarpHalfWidth &&
+            std::abs(point.position.y - cameraCenter.y) <= visibleWarpHalfHeight;
+        snapshot.dungeon.warpPoints.push_back(GameTestWarpPointSnapshot{
+            .position = point.position,
+            .index = point.index,
+            .discovered = point.discovered,
+            .unlocked = point.unlocked || point.index < unlockedWarpPointCount_,
+            .visible = knownDiscovered || visibleOnScreen,
+            .returnInteractionArmed = warpReturnInteractionArmed(warpVectorIndex),
+        });
+    }
+    snapshot.runStats = GameTestRunStats{
+        .elapsedSeconds = runStats_.elapsedSeconds,
+        .defeatedEnemies = runStats_.defeatedEnemies,
+        .dugTiles = runStats_.dugTiles,
+        .acquiredItems = runStats_.acquiredItems,
+        .acquiredObjectItems = runStats_.acquiredObjectItems,
+    };
+    snapshot.checkpointMeasurement = autoSimulationCheckpointMeasurementSnapshot();
+    snapshot.money = money_;
+    for (int materialIndex = 0; materialIndex < static_cast<int>(MaterialType::Count); ++materialIndex) {
+        snapshot.totalMaterials += inventory_.materials().counts[static_cast<std::size_t>(materialIndex)];
+    }
+    if (options.useLightweightAutomationUiSnapshot &&
+        snapshot.automationUiDirective != GameTestAutomationUiDirective::None) {
+        return snapshot;
+    }
     snapshot.player.states.reserve(player_.status.states().size());
     for (const EntityState& state : player_.status.states()) {
         snapshot.player.states.push_back(GameTestPlayerStateSnapshot{
@@ -11620,47 +12114,17 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
     snapshot.ring.hasCombatTool = snapshot.ring.bestDamage > 0;
     snapshot.ring.hasDigTool = snapshot.ring.bestDigPower > 0;
     snapshot.ring.hasLightTool = snapshot.ring.bestLightRadius > 0.0f;
-    snapshot.dungeon.active = mode_ == ScreenMode::Playing ||
-        mode_ == ScreenMode::Inventory ||
-        mode_ == ScreenMode::PauseMenu ||
-        mode_ == ScreenMode::Ring ||
-        mode_ == ScreenMode::LevelUp ||
-        mode_ == ScreenMode::GameOver ||
-        mode_ == ScreenMode::StageClear ||
-        mode_ == ScreenMode::AstralResult;
-    snapshot.dungeon.seed = dungeonLayout_.seed;
-    snapshot.dungeon.startWorld = tileWorldCenter(dungeonLayout_.startTile);
-    snapshot.dungeon.goalWorld = tileWorldCenter(dungeonLayout_.goalTile);
-    snapshot.dungeon.hasBossSpawnPoint = hasBossSpawnPoint_;
-    snapshot.dungeon.bossSpawnPoint = bossSpawnPoint_;
-    snapshot.dungeon.bossSpawned = bossSpawned_;
-    snapshot.dungeon.discoveredWarpPoints = discoveredWarpPointCount();
-    snapshot.dungeon.unlockedWarpPoints = unlockedWarpPointCount_;
     snapshot.dungeon.mainPathWorldPoints.reserve(dungeonLayout_.mainPathPoints.size());
     for (Vec2 tilePoint : dungeonLayout_.mainPathPoints) {
         snapshot.dungeon.mainPathWorldPoints.push_back(tileWorldCenter(roundDungeonTile(tilePoint)));
     }
-    const Vec2 cameraCenter = camera_.position();
-    const float visibleWarpMargin = 72.0f;
-    const float visibleWarpHalfWidth = static_cast<float>(camera_.width()) * 0.5f + visibleWarpMargin;
-    const float visibleWarpHalfHeight = static_cast<float>(camera_.height()) * 0.5f + visibleWarpMargin;
-    snapshot.dungeon.warpPoints.reserve(warpPoints_.size());
     snapshot.dungeon.mapClues.reserve(warpPoints_.size());
-    for (const WarpPoint& point : warpPoints_) {
+    for (int warpVectorIndex = 0; warpVectorIndex < static_cast<int>(warpPoints_.size()); ++warpVectorIndex) {
+        const WarpPoint& point = warpPoints_[static_cast<std::size_t>(warpVectorIndex)];
         const bool knownDiscovered =
             point.discovered ||
             point.unlocked ||
             point.index < unlockedWarpPointCount_;
-        const bool visibleOnScreen =
-            std::abs(point.position.x - cameraCenter.x) <= visibleWarpHalfWidth &&
-            std::abs(point.position.y - cameraCenter.y) <= visibleWarpHalfHeight;
-        snapshot.dungeon.warpPoints.push_back(GameTestWarpPointSnapshot{
-            .position = point.position,
-            .index = point.index,
-            .discovered = knownDiscovered,
-            .visible = knownDiscovered || visibleOnScreen,
-        });
-
         if (knownDiscovered) {
             continue;
         }
@@ -11721,6 +12185,7 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
             .position = chestVisualCenter(node),
             .revealed = node.revealed,
             .opened = node.opened,
+            .contentsReleased = node.lootSpawned,
         });
     }
 
@@ -11731,6 +12196,7 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
         std::string category;
         std::string damageType;
         std::vector<std::string> tags;
+        std::vector<GameTestUseEffectSnapshot> useEffects;
         GameTestIconKind iconKind = GameTestIconKind::None;
         std::string iconKey;
         int rarity = 0;
@@ -11739,21 +12205,39 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
         int digPower = 0;
         float lightRadius = 0.0f;
         int durability = -1;
+        int currentDurability = -1;
+        int maxDurability = -1;
         double weightKg = 0.0;
+        bool broken = false;
+        bool canAcquire = true;
         if (drop.kind == WorldDropKind::Object) {
-            const ItemData* object = objectCatalog_.registry.findById(drop.id);
+            const ItemData* object = drop.runtimeItem
+                ? &*drop.runtimeItem
+                : objectCatalog_.registry.findById(drop.id);
             displayName = object != nullptr ? object->name : drop.id;
             if (object != nullptr) {
                 category = object->category;
                 damageType = object->damageType;
                 tags = object->tags;
+                appendUseEffects(useEffects, *object);
                 rarity = object->rarity;
                 price = object->price;
                 attackPower = object->attackPower;
                 digPower = object->digPower;
                 lightRadius = expectedLoadoutLightRadius(*object);
                 durability = object->durability;
+                currentDurability = durability;
+                maxDurability = durability;
                 weightKg = object->weightKg;
+            }
+            if (drop.instance) {
+                currentDurability = durabilityUnitsToDisplayPoints(drop.instance->currentDurability);
+                maxDurability = durabilityUnitsToDisplayPoints(drop.instance->maxDurability);
+                broken = drop.instance->isBroken || currentDurability == 0;
+                canAcquire = backpackUsedSlots() < inventory_.screenSlotCount();
+            } else {
+                broken = durability == 0;
+                canAcquire = inventory_.canAddObjectItem(objectCatalog_, drop.id);
             }
             iconKind = GameTestIconKind::Object;
             iconKey = drop.id;
@@ -11776,6 +12260,7 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
             .category = std::move(category),
             .damageType = std::move(damageType),
             .tags = std::move(tags),
+            .useEffects = std::move(useEffects),
             .iconKind = iconKind,
             .iconKey = std::move(iconKey),
             .position = drop.position,
@@ -11786,7 +12271,11 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
             .digPower = digPower,
             .lightRadius = lightRadius,
             .durability = durability,
+            .currentDurability = currentDurability,
+            .maxDurability = maxDurability,
             .weightKg = weightKg,
+            .broken = broken,
+            .canAcquire = canAcquire,
         });
     }
 
@@ -11796,7 +12285,7 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
         const int playerTileX = tileMap_.worldToTile(player_.position.x);
         const int playerTileY = tileMap_.worldToTile(player_.position.y);
 
-        if (options.includePathGrid) {
+        if (options.includePathGrid && snapshot.screenMode == GameTestScreenMode::Playing) {
             constexpr int PathGridScanRadius = 30;
             const std::vector<CollisionRect> objectBlockers = enemyTestActive_
                 ? std::vector<CollisionRect>{}
@@ -11931,6 +12420,11 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
     }
 
     snapshot.base.active = mode_ == ScreenMode::Base;
+    snapshot.base.encyclopediaSyncAvailable = canSyncEncyclopediaFromInventoryAndRing();
+    snapshot.base.bulkRepairTargetCount = processingBulkRepairTargetCount();
+    snapshot.base.bulkRepairMoneyCost = processingBulkRepairMoneyCost();
+    snapshot.base.bulkRepairOreCost = processingBulkRepairOreCost();
+    snapshot.base.bulkRepairExecutable = processingBulkRepairExecutable();
     snapshot.base.money = money_;
     snapshot.base.materials.oldWoodBuildingMaterial = inventory_.materialCount(MaterialType::OldWoodBuildingMaterial);
     snapshot.base.materials.enhancementOre = inventory_.materialCount(MaterialType::EnhancementOre);
@@ -11959,18 +12453,6 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
             money_ >= moneyCost &&
             inventory_.materialCount(materialType) >= materialCost;
         snapshot.base.upgrades.push_back(std::move(upgrade));
-    }
-
-    snapshot.runStats = GameTestRunStats{
-        .elapsedSeconds = runStats_.elapsedSeconds,
-        .defeatedEnemies = runStats_.defeatedEnemies,
-        .dugTiles = runStats_.dugTiles,
-        .acquiredItems = runStats_.acquiredItems,
-        .acquiredObjectItems = runStats_.acquiredObjectItems,
-    };
-    snapshot.money = money_;
-    for (int materialIndex = 0; materialIndex < static_cast<int>(MaterialType::Count); ++materialIndex) {
-        snapshot.totalMaterials += inventory_.materials().counts[static_cast<std::size_t>(materialIndex)];
     }
 
     return snapshot;
@@ -12174,13 +12656,27 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
         requestMiningStartTransition(true, false);
         return result(screenTransition_.active(), "mining start requested");
 
+    case GameTestActionKind::StartCheckpointMeasurement:
+        if (mode_ != ScreenMode::Base || worldBuildActive() || screenTransition_.active()) {
+            return result(false, "checkpoint measurement requires the base screen");
+        }
+        if (action.stageId == "stage_04_astral_mine") {
+            return result(false, "selected stage has no warp points");
+        }
+        if (!selectDebugStageForTest(action.stageId)) {
+            return result(false, "measurement stage not found");
+        }
+        beginAutoSimulationCheckpointMeasurement();
+        requestMiningStartTransition(false, true);
+        return result(screenTransition_.active(), "checkpoint measurement started");
+
     case GameTestActionKind::SyncEncyclopedia:
     {
         const std::size_t before = encyclopedia_.updateLog().size();
         syncEncyclopediaFromInventoryAndRing();
         const bool changed = encyclopedia_.updateLog().size() != before;
         baseStatus_ = changed ? "図鑑を同期しました" : baseStatus_;
-        return result(true, changed ? "encyclopedia updated" : "encyclopedia already current");
+        return result(changed, changed ? "encyclopedia updated" : "encyclopedia already current");
     }
 
     case GameTestActionKind::UseBackpackStackItem:
@@ -12492,6 +12988,28 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
         objectInstance.instance.protectionEnabled = false;
         baseStatus_ = "保護OFF";
         return result(true, "warehouse protection disabled");
+    }
+
+    case GameTestActionKind::BulkRepairAtBase:
+    {
+        if (mode_ != ScreenMode::Base) {
+            return result(false, "not in base");
+        }
+        if (processingBulkRepairMoneyCost() != 0 || processingBulkRepairOreCost() != 0) {
+            return result(false, "free bulk repair unavailable");
+        }
+        const int beforeCount = processingBulkRepairTargetCount();
+        if (beforeCount <= 0 || !processingBulkRepairExecutable()) {
+            return result(false, "bulk repair unavailable");
+        }
+        applyProcessingBulkRepair();
+        baseResultDialog_ = {};
+        const int repairedCount = beforeCount - processingBulkRepairTargetCount();
+        return result(
+            repairedCount > 0,
+            repairedCount > 0
+                ? "bulk repaired " + std::to_string(repairedCount) + " items"
+                : (baseStatus_.empty() ? "bulk repair failed" : baseStatus_));
     }
 
     case GameTestActionKind::RepairBackpackInstance:
@@ -12900,48 +13418,8 @@ bool Game::executeDebugCommand(std::string_view command)
         warpReturnConfirm_ = {};
     };
 
-    const auto storyUnlockCountForStageId = [&](std::string_view stageId) {
-        if (stageId == "stage_04_astral_mine") {
-            return 2;
-        }
-
-        int storyStageNumber = 0;
-        for (const StageDefinition& stage : stageCatalog_.getStagesSortedByDisplayOrder()) {
-            if (debugIsRoguelikeStageDefinition(stage)) {
-                continue;
-            }
-            ++storyStageNumber;
-            if (stage.id == stageId) {
-                return std::max(1, storyStageNumber);
-            }
-        }
-        return 1;
-    };
-
     const auto selectDebugStage = [&](std::string_view stageId) {
-        if (stageId.empty() || stageCatalog_.getStageById(stageId) == nullptr) {
-            logWarning("Debug: stage not found: " + std::string(stageId));
-            return false;
-        }
-        if (effectTestActive_) {
-            exitEffectTestToBase();
-        } else if (projectileTestActive_) {
-            exitProjectileTestToBase();
-        } else if (enemyTestActive_) {
-            exitEnemyTestToBase();
-        }
-
-        unlockedStages_ = std::max(unlockedStages_, storyUnlockCountForStageId(stageId));
-        currentStageId_ = std::string(stageId);
-        currentStage_ = stageCatalogIndexForId(currentStageId_);
-        resolveCurrentStageDefinition();
-        syncWarpStateForCurrentStage();
-        baseMiningStartSelection_ = unlockedWarpPointCount_ > 0 ? 1 : 0;
-        baseWarpPointSelectActive_ = false;
-        baseWarpPointSelection_ = 0;
-        baseRegenerateConfirm_ = {};
-        baseBrokenRingDepartureConfirm_ = {};
-        return true;
+        return selectDebugStageForTest(stageId);
     };
 
     const auto markStoryTriggerSeenForCurrentStage = [&](std::string_view triggerName) {
@@ -12973,8 +13451,8 @@ bool Game::executeDebugCommand(std::string_view command)
         if (!clearFlag.empty()) {
             addStoryFlag(clearFlag);
         }
-        unlockedStages_ = std::max(unlockedStages_, storyUnlockCountForStageId(currentStageId_) + 1);
-        setUnlockedRingCount(std::max(unlockedRingCount(), storyUnlockCountForStageId(currentStageId_) + 1));
+        unlockedStages_ = std::max(unlockedStages_, debugStoryUnlockCountForStage(currentStageId_) + 1);
+        setUnlockedRingCount(std::max(unlockedRingCount(), debugStoryUnlockCountForStage(currentStageId_) + 1));
         markStoryTriggerSeenForCurrentStage("boss_before");
         markStoryTriggerSeenForCurrentStage("boss_after");
         markStoryTriggerSeenForCurrentStage("stage_clear");
@@ -14891,7 +15369,7 @@ void Game::renderBaseDebugOverlay(Renderer& renderer, const Time& time) const
         }
     }
 
-    char debugBuffer[768];
+    char debugBuffer[4096];
     std::snprintf(debugBuffer, sizeof(debugBuffer),
         "FPS: %03d   Auto reload block: %s\n"
         "Base: area %s   mode %s\n"
@@ -14909,6 +15387,12 @@ void Game::renderBaseDebugOverlay(Renderer& renderer, const Time& time) const
         nearest != nullptr ? "true" : "false",
         hovered != nullptr ? hovered->displayName : "-",
         screenModeName(pauseReturnMode_));
+    DebugOverlay::appendAutoSimulationText(
+        debugBuffer,
+        sizeof(debugBuffer),
+        autoSimulationDebugOverlayActive_,
+        autoSimulationDebug_,
+        false);
 
     renderer.setScreenSpace();
     constexpr Vec2 PanelPos{10.0f, 10.0f};
