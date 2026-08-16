@@ -122,7 +122,9 @@ private:
     void updateThunder(EnemySystem& enemies, SpellRingSystem& spellRing);
     void updateTransientLights(float dt);
     void updateItemAuras(SpellRingSystem& spellRing, float dt);
+    void stopOrphanedAuraFxEmitters(const std::vector<SpellRingItem*>& runtimeItems);
     std::uint32_t startAuraFxEmitter(MagicElement element, Vec2 position, float radius);
+    void stopAuraFxEmitter(std::uint32_t& emitterId);
     std::uint32_t startProjectileFxEmitter(const MagicProjectile& projectile);
     void updateProjectileFx(MagicProjectile& projectile);
     void playProjectileImpactFx(const MagicProjectile& projectile);
@@ -137,6 +139,7 @@ private:
     std::vector<MagicGroundArea> groundAreas_;
     std::vector<PendingThunder> pendingThunder_;
     std::vector<MagicLight> transientLights_;
+    std::vector<std::uint32_t> auraFxEmitterIds_;
     std::vector<MagicSoundEvent> soundEvents_;
 };
 

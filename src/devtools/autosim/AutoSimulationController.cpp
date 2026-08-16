@@ -312,6 +312,25 @@ AutoSimulationIntent actionIntent(const GameTestAction& action)
         intent.subject = "荷物";
         intent.suffix = "を空けたい";
         break;
+    case GameTestActionKind::PrepareMerchantStock:
+        intent.goal = AutoSimulationGoal::EquipLoadout;
+        intent.iconKind = AutoSimulationIntentIconKind::Base;
+        intent.subject = "商人の品揃えを確認したい";
+        break;
+    case GameTestActionKind::WithdrawWarehouseStack:
+        intent.goal = AutoSimulationGoal::EquipLoadout;
+        intent.iconKind = action.objectId.empty() ? AutoSimulationIntentIconKind::Base : AutoSimulationIntentIconKind::Object;
+        intent.iconKey = action.objectId;
+        intent.prefix = "収納箱から";
+        intent.subject = "回復アイテム";
+        intent.suffix = "を持っていきたい";
+        break;
+    case GameTestActionKind::BuyMerchantProduct:
+        intent.goal = AutoSimulationGoal::EquipLoadout;
+        intent.iconKind = action.objectId.empty() ? AutoSimulationIntentIconKind::Base : AutoSimulationIntentIconKind::Object;
+        intent.iconKey = action.objectId;
+        intent.subject = "回復アイテムを補充したい";
+        break;
     case GameTestActionKind::SyncEncyclopedia:
         intent.goal = AutoSimulationGoal::EquipLoadout;
         intent.iconKind = AutoSimulationIntentIconKind::Base;
@@ -394,6 +413,9 @@ bool actionTargetsObjectEntry(
     if (!action.instanceId.empty()) {
         return item.instanceId == action.instanceId;
     }
+    if (action.stackRuntimeId != 0) {
+        return item.stackRuntimeId == action.stackRuntimeId;
+    }
     return !action.objectId.empty() && item.objectId == action.objectId;
 }
 
@@ -412,6 +434,15 @@ std::string actionTargetName(
     }
     if (std::string name = findInventoryName(snapshot.inventory.warehouseItems); !name.empty()) {
         return name;
+    }
+    const auto merchantIt = std::find_if(
+        snapshot.base.merchantProducts.begin(),
+        snapshot.base.merchantProducts.end(),
+        [&action](const GameTestMerchantProductSnapshot& product) {
+            return !action.objectId.empty() && product.item.objectId == action.objectId;
+        });
+    if (merchantIt != snapshot.base.merchantProducts.end() && !merchantIt->item.name.empty()) {
+        return merchantIt->item.name;
     }
     const auto ringIt = std::find_if(
         snapshot.ring.items.begin(),
@@ -472,6 +503,19 @@ AutoSimulationIntent completedActionIntent(
         intent.prefix = "リュックから";
         intent.subject = itemName;
         intent.suffix = "を捨てた";
+        break;
+    case GameTestActionKind::PrepareMerchantStock:
+        intent.subject = "商人の品揃えを確認した";
+        break;
+    case GameTestActionKind::WithdrawWarehouseStack:
+        intent.prefix = "収納箱から";
+        intent.subject = itemName;
+        intent.suffix = "を取り出した";
+        break;
+    case GameTestActionKind::BuyMerchantProduct:
+        intent.prefix = "商人から";
+        intent.subject = itemName;
+        intent.suffix = "を買った";
         break;
     case GameTestActionKind::SyncEncyclopedia:
         intent.subject = "図鑑を同期した";
@@ -1108,8 +1152,16 @@ void AutoSimulationController::recordActionResult(
     baseTasks_.recordActionResult(action, result);
     if (result.applied && action.kind == GameTestActionKind::StartMiningFromBase) {
         beginDungeonExcursion(knownWarpCount(snapshot));
+        if (checkpointMeasurementMode_ &&
+            checkpointDeathRecoveryState_ == CheckpointDeathRecoveryState::ServicingBase) {
+            checkpointDeathRecoveryState_ = CheckpointDeathRecoveryState::ResumingDungeon;
+        }
     } else if (result.applied && action.kind == GameTestActionKind::StartCheckpointMeasurement) {
         beginDungeonExcursion(0);
+    } else if (result.applied && action.kind == GameTestActionKind::ReturnToBaseAfterGameOver &&
+        checkpointMeasurementMode_ &&
+        checkpointDeathRecoveryState_ == CheckpointDeathRecoveryState::AwaitingGameOverReturn) {
+        checkpointDeathRecoveryState_ = CheckpointDeathRecoveryState::ServicingBase;
     }
     if (action.kind == GameTestActionKind::StartCheckpointMeasurement && !result.applied) {
         state_ = AutoSimulationState::Idle;
@@ -1208,6 +1260,57 @@ void AutoSimulationController::resetObjectiveState()
     backpackReturnRearmMainPathIndex_ = 0;
     backpackReturnArmed_ = true;
     backpackReturnRearmProgressPending_ = false;
+    checkpointDeathRecoveryState_ = CheckpointDeathRecoveryState::None;
+}
+
+void AutoSimulationController::beginCheckpointDeathRecovery()
+{
+    if (checkpointDeathRecoveryState_ != CheckpointDeathRecoveryState::None) {
+        return;
+    }
+
+    checkpointDeathRecoveryState_ = CheckpointDeathRecoveryState::AwaitingGameOverReturn;
+    mission_ = {};
+    task_ = {};
+    missionNoProgressSeconds_ = 0.0f;
+    opportunitySuspendSeconds_ = 0.0f;
+    objectiveSwitchWindowSeconds_ = 0.0f;
+    opportunityBudget_ = 1;
+    objectiveSwitchCount_ = 0;
+    resumeBreadcrumbIndex_ = -1;
+    observedMissionProgressGeneration_ = 0;
+    lastObjectiveGoal_ = AutoSimulationGoal::None;
+    lastObjectiveTarget_ = {};
+    resumeFrontierRequested_ = traversalMemory_.breadcrumbs.size() > 1;
+    stillSeconds_ = 0.0f;
+    miningNoProgressSeconds_ = 0.0f;
+    escapeStuckSeconds_ = 0.0f;
+    hasLastMiningTarget_ = false;
+    clearPlanLock();
+    clearCachedPlan();
+    navigator_.reset();
+    ringPlanner_.reset();
+    logInfo("AutoSim: checkpoint death recorded; returning to base before resuming measurement.");
+}
+
+void AutoSimulationController::updateCheckpointDeathRecoveryState(const GameTestSnapshot& snapshot)
+{
+    if (!checkpointMeasurementMode_) {
+        checkpointDeathRecoveryState_ = CheckpointDeathRecoveryState::None;
+        return;
+    }
+
+    if (checkpointDeathRecoveryState_ == CheckpointDeathRecoveryState::AwaitingGameOverReturn &&
+        snapshot.screenMode == GameTestScreenMode::Base) {
+        checkpointDeathRecoveryState_ = CheckpointDeathRecoveryState::ServicingBase;
+    } else if (checkpointDeathRecoveryState_ == CheckpointDeathRecoveryState::ServicingBase &&
+        snapshot.screenMode == GameTestScreenMode::Playing) {
+        checkpointDeathRecoveryState_ = CheckpointDeathRecoveryState::ResumingDungeon;
+    } else if (checkpointDeathRecoveryState_ == CheckpointDeathRecoveryState::ResumingDungeon &&
+        snapshot.screenMode == GameTestScreenMode::Playing &&
+        !snapshot.worldLoading && !snapshot.transitionActive) {
+        checkpointDeathRecoveryState_ = CheckpointDeathRecoveryState::None;
+    }
 }
 
 void AutoSimulationController::beginDungeonExcursion(int knownWarpCountAtDeparture)
@@ -1811,9 +1914,9 @@ void AutoSimulationController::update(const GameTestSnapshot& snapshot, float dt
         return;
     }
     if (checkpointMeasurementMode_ && snapshot.screenMode == GameTestScreenMode::GameOver) {
-        finishCheckpointMeasurement(snapshot, AutoSimulationResult::GameOver);
-        return;
+        beginCheckpointDeathRecovery();
     }
+    updateCheckpointDeathRecoveryState(snapshot);
 
     if (const AutoSimulationResult result = resultForSnapshot(snapshot); result != AutoSimulationResult::None) {
         if (checkpointMeasurementMode_) {
@@ -1884,7 +1987,9 @@ void AutoSimulationController::update(const GameTestSnapshot& snapshot, float dt
         if (actionCooldownSeconds_ <= 0.0f) {
             GameTestAction action;
             action.kind = GameTestActionKind::ReturnToBaseAfterGameOver;
-            action.reason = "game_over_return";
+            action.reason = checkpointMeasurementMode_
+                ? "checkpoint_death_return"
+                : "game_over_return";
             queueAction(std::move(action));
             updateDecisionDebugSnapshot(snapshot, "game_over_action", pendingActionDecisionDetail(pendingAction_));
         } else {
@@ -2121,9 +2226,9 @@ void AutoSimulationController::populateCommonDebugSnapshot(
     debug.backpackCanDepart = AutoSimulationBaseTasks::backpackCanDepart(snapshot.inventory);
     debug.warehouseUsedSlots = snapshot.inventory.warehouseUsedSlots;
     debug.warehouseCapacity = snapshot.inventory.warehouseCapacity;
-    debug.enhancementBudgetLimit = baseTasks_.enhancementBudgetLimit();
-    debug.enhancementBudgetSpent = baseTasks_.enhancementBudgetSpent();
-    debug.enhancementBudgetRemaining = baseTasks_.enhancementBudgetRemaining();
+    debug.optionalSpendBudgetLimit = baseTasks_.optionalSpendBudgetLimit();
+    debug.optionalSpendBudgetSpent = baseTasks_.optionalSpendBudgetSpent();
+    debug.optionalSpendBudgetRemaining = baseTasks_.optionalSpendBudgetRemaining();
     debug.actionCooldownSeconds = actionCooldownSeconds_;
     debug.baseIdleSeconds = baseIdleSeconds_;
     debug.pendingAction = pendingAction_.has_value();

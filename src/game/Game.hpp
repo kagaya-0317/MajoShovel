@@ -252,6 +252,9 @@ struct AudioCueEditEntry {
     float pitch = 0.0f;
     bool loop = false;
     float cooldownMs = 0.0f;
+    std::uint64_t loopStartFrame = 0;
+    std::uint64_t loopEndFrame = 0;
+    std::uint64_t loopCrossfadeFrames = 0;
 
     bool operator==(const AudioCueEditEntry&) const = default;
 };
@@ -391,6 +394,7 @@ public:
         float moveSeconds = 0.0f;
         float returnSeconds = 0.0f;
         float holdActionDelaySeconds = 0.0f;
+        std::function<void()> onTargetReached;
         std::function<void()> onHoldAction;
         std::function<void()> onComplete;
         bool allowDuringBossEncounter = false;
@@ -924,6 +928,7 @@ private:
         bool hasBossSpawnPoint = false;
         bool bossSpawned = false;
         bool bossPreviewSpawned = false;
+        bool bossDefeatRematchPending = false;
     };
 
     enum class StorageEntryKind {
@@ -1193,6 +1198,7 @@ private:
         float holdActionDelaySeconds = 0.0f;
         std::string discoveryStoryEventId;
         DialogueSequence discoveryDialogue;
+        std::function<void()> onTargetReached;
         std::function<void()> onHoldAction;
         std::function<void()> onComplete;
         bool allowDuringBossEncounter = false;
@@ -1203,7 +1209,7 @@ private:
         IntroTransition,
         WaitingBeforeDialogue,
         Fighting,
-        DefeatPresentation,
+        DefeatFlash,
         WaitingLevelUpAfterDefeat,
         AfterDialogueTransition,
         WaitingAfterDialogue,
@@ -1807,6 +1813,7 @@ private:
     void clearTemporaryPlayerState(bool fullHeal);
     Vec2 latestWarpPointStartPosition() const;
     Vec2 warpPointStartPositionForCurrentRequest() const;
+    const DungeonState* retainedDungeonStateForCurrentStage() const;
     std::vector<WarpPoint> selectableWarpPointsForCurrentStageStart() const;
     void rebuildUnlockedWarpPointsForStart(Vec2 latestPosition);
     void resetWarpPointRunState();
@@ -2059,6 +2066,8 @@ private:
     bool startFinalBossAfterStoryInPlace();
     void updateBossSpawn();
     void resetBossEncounter();
+    void prepareBossRematchAfterDefeat();
+    bool startBossDefeatRematchPresentation();
     bool spawnBossForCurrentEncounter(EnemySpawnVisualKind spawnVisualKind);
     bool beginBossFightForCurrentEncounter();
     void updateDungeonStoryCommand(const DialogueCommand& command, float dt);
@@ -2073,7 +2082,7 @@ private:
     bool updateBossEncounterFlow(float dt);
     void finishBossEncounterAfterDialogue();
     bool bossEncounterBlocksProgress() const;
-    float bossDefeatPresentationProgress() const;
+    float bossDefeatFlashAlpha() const;
     void captureRetrySnapshotAtWarpPoint();
     void restoreRetrySnapshot();
     void renderDungeonEntrance(Renderer& renderer) const;
@@ -2126,6 +2135,7 @@ private:
     void updateAutoSimulationCheckpointMeasurement(float dt);
     void recordAutoSimulationEnemyEvent(const EnemyEvent& event);
     void recordAutoSimulationPlayerDamage(const PlayerDamageEvent& event);
+    void recordAutoSimulationDeath();
     void recordAutoSimulationRecoveryUse();
     void recordAutoSimulationItemBreak();
     void captureAutoSimulationCheckpoint(int warpIndex);
@@ -2450,7 +2460,7 @@ private:
     void renderGameOverScreen(Renderer& renderer) const;
     void renderStageClearScreen(Renderer& renderer) const;
     void renderAstralResultScreen(Renderer& renderer) const;
-    void renderBossDefeatPresentation(Renderer& renderer) const;
+    void renderBossDefeatFlash(Renderer& renderer) const;
     void renderDungeonHitboxOverlay(Renderer& renderer, const Time& time) const;
     void renderBaseDebugOverlay(Renderer& renderer, const Time& time) const;
     void renderDebugOverlay(Renderer& renderer, const Time& time);
@@ -2984,6 +2994,7 @@ private:
     std::string gameOverStatus_;
     bool bossSpawned_ = false;
     bool bossPreviewSpawned_ = false;
+    bool bossDefeatRematchPending_ = false;
     BossEncounterState bossEncounter_{};
     DungeonStoryPresentationState dungeonStoryPresentation_{};
     int stageClearSelection_ = 0;

@@ -202,6 +202,8 @@ constexpr float RingUiCometCenterYOffset = 104.0f;
 constexpr float RingUiCometArcRotation = Pi * 1.5f;
 constexpr float RingZeroUiPreviewScale = 0.9f;
 constexpr Vec2 RingZeroUiPreviewOffset{0.0f, -36.0f};
+constexpr float RingThirdUiPreviewScale = 1.5f;
+constexpr Vec2 RingThirdUiPreviewOffset{0.0f, 180.0f};
 constexpr float WarpPointSpacing = 320.0f;
 constexpr float WarpPointTouchRadius = 28.0f;
 constexpr float DungeonInspectableInteractionRange = 72.0f;
@@ -1999,12 +2001,51 @@ struct RingUiPreviewStyle {
     bool radialGuides = true;
 };
 
+enum class RingUiItemFrontPriority : int {
+    Normal = 0,
+    Selected = 1,
+    Moving = 2,
+};
+
+struct RingUiItemDrawOrderEntry {
+    int itemIndex = -1;
+    Vec2 position{};
+    RingUiItemFrontPriority frontPriority = RingUiItemFrontPriority::Normal;
+};
+
+void sortRingUiItemsBackToFront(std::vector<RingUiItemDrawOrderEntry>& entries)
+{
+    std::stable_sort(
+        entries.begin(),
+        entries.end(),
+        [](const RingUiItemDrawOrderEntry& left, const RingUiItemDrawOrderEntry& right) {
+            if (left.frontPriority != right.frontPriority) {
+                return left.frontPriority < right.frontPriority;
+            }
+            if (left.position.y != right.position.y) {
+                return left.position.y < right.position.y;
+            }
+            if (left.position.x != right.position.x) {
+                return left.position.x < right.position.x;
+            }
+            return left.itemIndex < right.itemIndex;
+        });
+}
+
 RingUiPreviewStyle ringUiPreviewStyle(int ringIndex)
 {
     if (ringIndex == 0) {
         return {
             RingZeroUiPreviewScale,
             RingZeroUiPreviewOffset,
+            false,
+            false,
+        };
+    }
+    if (ringIndex == 2) {
+        return {
+            RingThirdUiPreviewScale,
+            RingThirdUiPreviewOffset,
             false,
             false,
         };

@@ -19,16 +19,16 @@ public:
     std::optional<GameTestAction> chooseCheckpointPrepAction(const GameTestSnapshot& snapshot) const;
     void recordActionResult(const GameTestAction& action, const GameTestActionResult& result);
 
-    int enhancementBudgetLimit() const { return enhancementBudgetLimit_; }
-    int enhancementBudgetSpent() const { return enhancementBudgetSpent_; }
-    int enhancementBudgetRemaining() const;
+    int optionalSpendBudgetLimit() const { return optionalSpendBudgetLimit_; }
+    int optionalSpendBudgetSpent() const { return optionalSpendBudgetSpent_; }
+    int optionalSpendBudgetRemaining() const;
 
 private:
     void observeMoney(int money) const;
 
     AutoSimulationItemEvaluator itemEvaluator_;
-    mutable int enhancementBudgetLimit_ = 0;
-    int enhancementBudgetSpent_ = 0;
+    mutable int optionalSpendBudgetLimit_ = 0;
+    int optionalSpendBudgetSpent_ = 0;
 };
 
 } // namespace majo::autosim

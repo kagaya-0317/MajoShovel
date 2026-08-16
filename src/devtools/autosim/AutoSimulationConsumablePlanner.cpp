@@ -377,6 +377,7 @@ GameTestAction makeAction(const ConsumableChoice& choice, const GameTestSnapshot
     action.kind = choice.kind == ConsumableUseKind::Stack
         ? GameTestActionKind::UseBackpackStackItem
         : GameTestActionKind::UseBackpackInstanceItem;
+    action.stackRuntimeId = choice.item->stackRuntimeId;
     action.objectId = choice.item->objectId;
     action.instanceId = choice.item->instanceId;
     action.count = 1;

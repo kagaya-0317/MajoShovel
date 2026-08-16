@@ -109,6 +109,7 @@ struct GameTestCheckpointMeasurementTotals {
     int defeatedEnemyHitCount = 0;
     int playerDamagedCount = 0;
     int playerDamageTotal = 0;
+    int deathCount = 0;
     int recoveryUseCount = 0;
     int acquiredItemCount = 0;
     int brokenItemCount = 0;
@@ -365,6 +366,7 @@ struct GameTestObjectEntrySnapshot {
     GameTestObjectEntryKind kind = GameTestObjectEntryKind::Stack;
     std::string objectId;
     std::string instanceId;
+    std::uint64_t stackRuntimeId = 0;
     std::string name;
     std::string category;
     std::string damageType;
@@ -414,6 +416,14 @@ struct GameTestInventorySnapshot {
     std::vector<GameTestObjectEntrySnapshot> warehouseItems;
 };
 
+struct GameTestMerchantProductSnapshot {
+    int index = -1;
+    GameTestObjectEntrySnapshot item;
+    int unitPrice = 0;
+    int stockCount = 0;
+    int purchasableCount = 0;
+};
+
 struct GameTestMaterialSnapshot {
     int oldWoodBuildingMaterial = 0;
     int enhancementOre = 0;
@@ -444,6 +454,8 @@ struct GameTestBaseSnapshot {
     int money = 0;
     GameTestMaterialSnapshot materials;
     bool ringWorkshopUnlocked = false;
+    bool merchantStockPrepared = false;
+    std::vector<GameTestMerchantProductSnapshot> merchantProducts;
     std::vector<GameTestUpgradeSnapshot> upgrades;
 };
 

@@ -88,6 +88,7 @@ GameTestCheckpointMeasurementTotals subtractTotals(
         value.defeatedEnemyHitCount - baseline.defeatedEnemyHitCount);
     result.playerDamagedCount = std::max(0, value.playerDamagedCount - baseline.playerDamagedCount);
     result.playerDamageTotal = std::max(0, value.playerDamageTotal - baseline.playerDamageTotal);
+    result.deathCount = std::max(0, value.deathCount - baseline.deathCount);
     result.recoveryUseCount = std::max(0, value.recoveryUseCount - baseline.recoveryUseCount);
     result.acquiredItemCount = std::max(0, value.acquiredItemCount - baseline.acquiredItemCount);
     result.brokenItemCount = std::max(0, value.brokenItemCount - baseline.brokenItemCount);
@@ -137,6 +138,7 @@ void writeMetricBlock(std::ofstream& file, const GameTestCheckpointMeasurementTo
     file << "敵からの平均被ダメージ回数: " << averageOrZero(totals.playerDamagedCount) << " 回\r\n";
     file << "敵撃破数: " << totals.defeatedEnemies << " / " << perMinute(totals.defeatedEnemies, totals.elapsedSeconds) << "（1分平均）\r\n";
     file << "被ダメージ: " << totals.playerDamageTotal << " / " << perMinute(totals.playerDamageTotal, totals.elapsedSeconds) << "（1分平均）\r\n";
+    file << "死亡回数: " << totals.deathCount << " 回\r\n";
     file << "回復使用回数: " << totals.recoveryUseCount << " / " << perMinute(totals.recoveryUseCount, totals.elapsedSeconds) << "（1分平均）\r\n";
     file << "アイテム入手数: " << totals.acquiredItemCount << " / " << perMinute(totals.acquiredItemCount, totals.elapsedSeconds) << "（1分平均）\r\n";
     file << "アイテム破損回数: " << totals.brokenItemCount << " / " << perMinute(totals.brokenItemCount, totals.elapsedSeconds) << "（1分平均）\r\n";
@@ -392,7 +394,8 @@ std::filesystem::path AutoSimulationLogger::writeCheckpointReport(
     if (!measurement.completed) {
         const GameTestCheckpointMeasurementTotals unfinished = subtractTotals(measurement.totals, previous);
         if (unfinished.elapsedSeconds > 0.0f || unfinished.defeatedEnemyHitCount > 0 ||
-            unfinished.playerDamagedCount > 0 || unfinished.acquiredItemCount > 0) {
+            unfinished.playerDamagedCount > 0 || unfinished.deathCount > 0 ||
+            unfinished.acquiredItemCount > 0) {
             file << "\r\n未到達区間（最後の到達ワープ以降）\r\n";
             file << "----------------------------------------\r\n";
             writeMetricBlock(file, unfinished);

@@ -90,6 +90,29 @@ bool parseFloat(std::string_view text, float& value)
     return true;
 }
 
+bool parseUint64(std::string_view text, std::uint64_t& value)
+{
+    const std::string trimmed = trimAscii(std::string(text));
+    if (trimmed.empty()) {
+        return false;
+    }
+    const char* begin = trimmed.data();
+    const char* end = begin + trimmed.size();
+    std::uint64_t parsed = 0;
+    const std::from_chars_result result = std::from_chars(begin, end, parsed);
+    if (result.ec != std::errc{} || result.ptr != end) {
+        return false;
+    }
+    value = parsed;
+    return true;
+}
+
+std::uint64_t parseUint64Or(std::string_view text, std::uint64_t fallback)
+{
+    std::uint64_t value = fallback;
+    return parseUint64(text, value) ? value : fallback;
+}
+
 float parseFloatOr(std::string_view text, float fallback)
 {
     float value = fallback;
@@ -141,7 +164,14 @@ std::filesystem::path resolveAudioPath(
 
 std::string pathForLog(const std::filesystem::path& path)
 {
-    return path.generic_string();
+    const std::u8string utf8 = path.generic_u8string();
+    return {reinterpret_cast<const char*>(utf8.data()), utf8.size()};
+}
+
+std::string pathForSdl(const std::filesystem::path& path)
+{
+    const std::u8string utf8 = path.u8string();
+    return {reinterpret_cast<const char*>(utf8.data()), utf8.size()};
 }
 
 float clampVolume(float volume)
@@ -294,6 +324,7 @@ public:
         std::string line;
         int lineNumber = 0;
         int loadedCount = 0;
+        int deferredBgmCount = 0;
         while (std::getline(file, line)) {
             ++lineNumber;
             if (!line.empty() && line.back() == '\r') {
@@ -331,11 +362,30 @@ public:
             const float cooldownMs = fields.size() >= 6 ? std::max(0.0f, parseFloatOr(fields[5], 0.0f)) : 0.0f;
             options.cooldownSeconds = cooldownMs / 1000.0f;
             options.pitchScale = pitchOffsetToScale(fields.size() >= 7 ? parseFloatOr(fields[6], 0.0f) : 0.0f);
+            const std::string displayName = fields.size() >= 8 ? trimAscii(fields[7]) : std::string{};
+            options.loopStartFrame = fields.size() >= 9 ? parseUint64Or(fields[8], 0) : 0;
+            options.loopEndFrame = fields.size() >= 10 ? parseUint64Or(fields[9], 0) : 0;
+            options.loopCrossfadeFrames = fields.size() >= 11 ? parseUint64Or(fields[10], 0) : 0;
 
+            const std::filesystem::path audioPath = resolveAudioPath(path, clipPathText);
             Cue cue;
-            if (!loadCueData(id, *type, resolveAudioPath(path, clipPathText), options, cue)) {
+            if (*type == AudioCueType::Bgm) {
+                std::error_code pathError;
+                if (!std::filesystem::is_regular_file(audioPath, pathError)) {
+                    logWarning(
+                        "Audio BGM file unavailable: " + pathForLog(audioPath) +
+                        (pathError ? ": " + pathError.message() : std::string{}));
+                    continue;
+                }
+                cue.id = id;
+                cue.type = *type;
+                cue.path = audioPath;
+                cue.options = options;
+                ++deferredBgmCount;
+            } else if (!loadCueData(id, *type, audioPath, options, cue)) {
                 continue;
             }
+            cue.displayName = displayName.empty() ? id : displayName;
             loadedCues[id] = std::move(cue);
             ++loadedCount;
         }
@@ -345,7 +395,10 @@ public:
             cues_ = std::move(loadedCues);
             missingCueWarnings_.clear();
         }
-        logInfo("Audio manifest loaded: " + pathForLog(path) + " cues=" + std::to_string(loadedCount));
+        logInfo(
+            "Audio manifest loaded: " + pathForLog(path) +
+            " cues=" + std::to_string(loadedCount) +
+            " deferred_bgm=" + std::to_string(deferredBgmCount));
         return true;
     }
 
@@ -370,6 +423,7 @@ public:
         if (!loadCueData(id, type, path, options, cue)) {
             return false;
         }
+        cue.displayName = cue.id;
         std::scoped_lock lock(mutex_);
         cues_[cue.id] = std::move(cue);
         missingCueWarnings_.erase(id);
@@ -379,8 +433,11 @@ public:
     void playBgm(std::string_view id, float fadeSeconds, bool restart)
     {
         const std::string key(id);
+        if (!ensureCueLoaded(key, AudioCueType::Bgm)) {
+            return;
+        }
         std::scoped_lock lock(mutex_);
-        const Cue* cue = findCueLocked(key, AudioCueType::Bgm);
+        Cue* cue = findCueLocked(key, AudioCueType::Bgm);
         if (cue == nullptr) {
             return;
         }
@@ -400,6 +457,9 @@ public:
         voice.type = AudioCueType::Bgm;
         voice.sound = cue->sound;
         voice.loop = cue->options.loop;
+        voice.loopStartFrame = cue->options.loopStartFrame;
+        voice.loopEndFrame = cue->options.loopEndFrame;
+        voice.loopCrossfadeFrames = cue->options.loopCrossfadeFrames;
         voice.pitchScale = 1.0f;
         voice.baseVolume = clampCueVolume(cue->options.volume);
         voice.currentVolume = fadeFrames > 0 ? 0.0f : voice.baseVolume;
@@ -408,6 +468,7 @@ public:
         voice.fadeDeltaPerFrame = fadeFrames > 0 ? voice.targetVolume / static_cast<float>(fadeFrames) : 0.0f;
         voices_.push_back(std::move(voice));
         currentBgmId_ = key;
+        releaseCachedBgmLocked(key);
     }
 
     void stopBgm(float fadeSeconds)
@@ -462,13 +523,37 @@ public:
     float cueDurationSeconds(std::string_view id, AudioCueType type)
     {
         const std::string key(id);
+        if (!ensureCueLoaded(key, type)) {
+            return 0.0f;
+        }
         std::scoped_lock lock(mutex_);
-        const Cue* cue = findCueLocked(key, type);
+        Cue* cue = findCueLocked(key, type);
         if (cue == nullptr || !cue->sound || cue->sound->sampleRate <= 0) {
             return 0.0f;
         }
         return static_cast<float>(
             static_cast<double>(cue->sound->frames) / static_cast<double>(cue->sound->sampleRate));
+    }
+
+    std::string cueDisplayName(std::string_view id, AudioCueType type) const
+    {
+        const std::string key(id);
+        std::scoped_lock lock(mutex_);
+        const auto it = cues_.find(key);
+        if (it == cues_.end() || it->second.type != type) {
+            return {};
+        }
+        return it->second.displayName;
+    }
+
+    std::string currentBgmDisplayName() const
+    {
+        std::scoped_lock lock(mutex_);
+        const auto it = cues_.find(currentBgmId_);
+        if (it == cues_.end() || it->second.type != AudioCueType::Bgm) {
+            return {};
+        }
+        return it->second.displayName;
     }
 
     void stopAll()
@@ -524,6 +609,7 @@ private:
 
     struct Cue {
         std::string id;
+        std::string displayName;
         AudioCueType type = AudioCueType::Se;
         std::filesystem::path path;
         AudioCueOptions options;
@@ -536,6 +622,9 @@ private:
         std::shared_ptr<const SoundData> sound;
         double framePosition = 0.0;
         bool loop = false;
+        std::size_t loopStartFrame = 0;
+        std::size_t loopEndFrame = 0;
+        std::size_t loopCrossfadeFrames = 0;
         bool stoppingAfterFade = false;
         float pitchScale = 1.0f;
         float baseVolume = 1.0f;
@@ -588,11 +677,16 @@ private:
                     continue;
                 }
 
-                if (voice.framePosition >= static_cast<double>(voice.sound->frames)) {
+                const std::size_t playbackEndFrame = voice.loop
+                    ? voice.loopEndFrame
+                    : voice.sound->frames;
+                if (voice.framePosition >= static_cast<double>(playbackEndFrame)) {
                     if (voice.loop) {
-                        voice.framePosition = std::fmod(
-                            voice.framePosition,
-                            static_cast<double>(voice.sound->frames));
+                        const std::size_t restartFrame = voice.loopStartFrame + voice.loopCrossfadeFrames;
+                        const std::size_t loopPlaybackFrames = voice.loopEndFrame - restartFrame;
+                        voice.framePosition = static_cast<double>(restartFrame) + std::fmod(
+                            voice.framePosition - static_cast<double>(voice.loopEndFrame),
+                            static_cast<double>(loopPlaybackFrames));
                     } else {
                         voice.finished = true;
                         continue;
@@ -608,22 +702,51 @@ private:
                     ? (voice.pan < 0.0f ? 1.0f + voice.pan : 1.0f)
                     : 1.0f;
                 const double sourceFramePosition = std::max(0.0, voice.framePosition);
-                const std::size_t sourceFrameA = static_cast<std::size_t>(sourceFramePosition);
-                std::size_t sourceFrameB = sourceFrameA + 1;
-                if (sourceFrameB >= voice.sound->frames) {
-                    sourceFrameB = voice.loop ? 0 : sourceFrameA;
-                }
-                const float blend = static_cast<float>(sourceFramePosition - static_cast<double>(sourceFrameA));
-                const std::size_t sourceBaseA = sourceFrameA * static_cast<std::size_t>(settings_.channels);
-                const std::size_t sourceBaseB = sourceFrameB * static_cast<std::size_t>(settings_.channels);
                 const std::size_t outputBase = static_cast<std::size_t>(frame * settings_.channels);
-                for (int channel = 0; channel < settings_.channels; ++channel) {
+                const auto sampleAt = [&](double position, int channel, bool wrapAtLoopEnd) {
+                    const std::size_t frameA = std::min(
+                        static_cast<std::size_t>(position),
+                        voice.sound->frames - 1);
+                    std::size_t frameB = std::min(frameA + 1, voice.sound->frames - 1);
+                    if (voice.loop && frameB >= voice.loopEndFrame) {
+                        frameB = wrapAtLoopEnd ? voice.loopStartFrame : frameA;
+                    }
+                    const float blend = static_cast<float>(position - static_cast<double>(frameA));
                     const std::size_t channelIndex = static_cast<std::size_t>(channel);
+                    const std::size_t baseA = frameA * static_cast<std::size_t>(settings_.channels);
+                    const std::size_t baseB = frameB * static_cast<std::size_t>(settings_.channels);
+                    const float sampleA = voice.sound->samples[baseA + channelIndex];
+                    const float sampleB = voice.sound->samples[baseB + channelIndex];
+                    return sampleA + (sampleB - sampleA) * blend;
+                };
+
+                float loopCrossfade = 0.0f;
+                double loopHeadFramePosition = 0.0;
+                if (voice.loop && voice.loopCrossfadeFrames > 0) {
+                    const double crossfadeStart = static_cast<double>(
+                        voice.loopEndFrame - voice.loopCrossfadeFrames);
+                    if (sourceFramePosition >= crossfadeStart) {
+                        loopCrossfade = static_cast<float>(std::clamp(
+                            (sourceFramePosition - crossfadeStart) /
+                                static_cast<double>(voice.loopCrossfadeFrames),
+                            0.0,
+                            1.0));
+                        loopHeadFramePosition = static_cast<double>(voice.loopStartFrame) +
+                            (sourceFramePosition - crossfadeStart);
+                    }
+                }
+                for (int channel = 0; channel < settings_.channels; ++channel) {
                     const float panGain = channel == 0 ? leftPanGain : (channel == 1 ? rightPanGain : 1.0f);
-                    const float sampleA = voice.sound->samples[sourceBaseA + channelIndex];
-                    const float sampleB = voice.sound->samples[sourceBaseB + channelIndex];
+                    float sample = sampleAt(
+                        sourceFramePosition,
+                        channel,
+                        voice.loopCrossfadeFrames == 0);
+                    if (loopCrossfade > 0.0f) {
+                        const float loopHeadSample = sampleAt(loopHeadFramePosition, channel, false);
+                        sample += (loopHeadSample - sample) * loopCrossfade;
+                    }
                     out[outputBase + static_cast<std::size_t>(channel)] +=
-                        (sampleA + (sampleB - sampleA) * blend) * voiceVolume * panGain;
+                        sample * voiceVolume * panGain;
                 }
 
                 voice.framePosition += static_cast<double>(sanitizePitchScale(voice.pitchScale));
@@ -678,7 +801,8 @@ private:
         SDL_AudioSpec sourceSpec{};
         Uint8* sourceBytes = nullptr;
         Uint32 sourceLength = 0;
-        if (!SDL_LoadWAV(path.string().c_str(), &sourceSpec, &sourceBytes, &sourceLength)) {
+        const std::string utf8Path = pathForSdl(path);
+        if (!SDL_LoadWAV(utf8Path.c_str(), &sourceSpec, &sourceBytes, &sourceLength)) {
             setLastError(std::string("SDL_LoadWAV failed: ") + pathForLog(path) + ": " + SDL_GetError());
             logWarning(lastError());
             return false;
@@ -736,13 +860,75 @@ private:
         outCue.options.volume = clampCueVolume(outCue.options.volume);
         outCue.options.pitchScale = sanitizePitchScale(outCue.options.pitchScale);
         outCue.options.cooldownSeconds = std::max(0.0f, outCue.options.cooldownSeconds);
+        const std::uint64_t soundFrames = static_cast<std::uint64_t>(sound->frames);
+        if (!outCue.options.loop) {
+            outCue.options.loopStartFrame = 0;
+            outCue.options.loopEndFrame = soundFrames;
+            outCue.options.loopCrossfadeFrames = 0;
+        } else {
+            outCue.options.loopStartFrame = std::min(outCue.options.loopStartFrame, soundFrames - 1);
+            outCue.options.loopEndFrame = outCue.options.loopEndFrame == 0
+                ? soundFrames
+                : std::min(outCue.options.loopEndFrame, soundFrames);
+            if (outCue.options.loopEndFrame <= outCue.options.loopStartFrame) {
+                logWarning(
+                    "Invalid audio loop region; using the full clip: " + id +
+                    " start=" + std::to_string(outCue.options.loopStartFrame) +
+                    " end=" + std::to_string(outCue.options.loopEndFrame));
+                outCue.options.loopStartFrame = 0;
+                outCue.options.loopEndFrame = soundFrames;
+            }
+            const std::uint64_t loopFrames =
+                outCue.options.loopEndFrame - outCue.options.loopStartFrame;
+            const std::uint64_t maxCrossfadeFrames = loopFrames > 1 ? (loopFrames - 1) / 2 : 0;
+            outCue.options.loopCrossfadeFrames = std::min(
+                outCue.options.loopCrossfadeFrames,
+                maxCrossfadeFrames);
+        }
         outCue.sound = std::move(sound);
         return true;
     }
 
-    const Cue* findCueLocked(const std::string& id, AudioCueType expectedType)
+    bool ensureCueLoaded(const std::string& id, AudioCueType expectedType)
     {
+        Cue pending;
+        {
+            std::scoped_lock lock(mutex_);
+            const auto it = cues_.find(id);
+            if (it == cues_.end()) {
+                warnMissingCueLocked(id);
+                return false;
+            }
+            if (it->second.type != expectedType) {
+                warnMissingCueLocked(id + " type mismatch");
+                return false;
+            }
+            if (it->second.sound) {
+                return true;
+            }
+            pending = it->second;
+        }
+
+        Cue loaded;
+        if (!loadCueData(pending.id, pending.type, pending.path, pending.options, loaded)) {
+            return false;
+        }
+
+        std::scoped_lock lock(mutex_);
         const auto it = cues_.find(id);
+        if (it == cues_.end() || it->second.type != expectedType || it->second.path != pending.path) {
+            return false;
+        }
+        if (!it->second.sound) {
+            it->second.options = loaded.options;
+            it->second.sound = std::move(loaded.sound);
+        }
+        return true;
+    }
+
+    Cue* findCueLocked(const std::string& id, AudioCueType expectedType)
+    {
+        auto it = cues_.find(id);
         if (it == cues_.end()) {
             warnMissingCueLocked(id);
             return nullptr;
@@ -800,6 +986,15 @@ private:
             voice.fadeRemainingFrames = std::max(1, fadeFrames);
             voice.fadeDeltaPerFrame = -voice.currentVolume / static_cast<float>(voice.fadeRemainingFrames);
             voice.stoppingAfterFade = true;
+        }
+    }
+
+    void releaseCachedBgmLocked(const std::string& retainedId)
+    {
+        for (auto& [id, cue] : cues_) {
+            if (cue.type == AudioCueType::Bgm && id != retainedId) {
+                cue.sound.reset();
+            }
         }
     }
 
@@ -929,6 +1124,16 @@ void AudioEngine::playSe(std::string_view id, AudioSeParams params)
 float AudioEngine::cueDurationSeconds(std::string_view id, AudioCueType type)
 {
     return impl_->cueDurationSeconds(id, type);
+}
+
+std::string AudioEngine::cueDisplayName(std::string_view id, AudioCueType type) const
+{
+    return impl_->cueDisplayName(id, type);
+}
+
+std::string AudioEngine::currentBgmDisplayName() const
+{
+    return impl_->currentBgmDisplayName();
 }
 
 void AudioEngine::stopAll()

@@ -87,6 +87,13 @@ private:
         }
     };
 
+    enum class CheckpointDeathRecoveryState {
+        None,
+        AwaitingGameOverReturn,
+        ServicingBase,
+        ResumingDungeon,
+    };
+
     void start(const GameTestSnapshot& snapshot);
     void startCheckpointMeasurement(const GameTestSnapshot& snapshot, std::string stageId);
     void finish(const GameTestSnapshot& snapshot, AutoSimulationResult result);
@@ -100,6 +107,8 @@ private:
     void clearCachedPlan();
     void clearPlanLock();
     void resetObjectiveState();
+    void beginCheckpointDeathRecovery();
+    void updateCheckpointDeathRecoveryState(const GameTestSnapshot& snapshot);
     void beginDungeonExcursion(int knownWarpCountAtDeparture);
     void updateDungeonExcursionState(const GameTestSnapshot& snapshot);
     void updateTraversalMemory(const GameTestSnapshot& snapshot);
@@ -198,6 +207,7 @@ private:
     bool resumeFrontierRequested_ = false;
     bool checkpointMeasurementMode_ = false;
     bool checkpointDungeonLogged_ = false;
+    CheckpointDeathRecoveryState checkpointDeathRecoveryState_ = CheckpointDeathRecoveryState::None;
     int simulationStepsLastFrame_ = 0;
 };
 

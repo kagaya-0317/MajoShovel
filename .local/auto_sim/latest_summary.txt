@@ -1,11 +1,11 @@
 ﻿Auto simulation summary
-csv=.local\auto_sim\runs_20260815_161805.csv
+csv=.local\auto_sim\runs_20260815_221630.csv
 runs=1
 last_result=stopped
 last_stage=stage_02_junk_magic
 last_seed=2762338949
-last_elapsed_seconds=23.90
-last_dug_tiles=64
-last_defeated_enemies=5
-last_acquired_items=13
+last_elapsed_seconds=6.38
+last_dug_tiles=0
+last_defeated_enemies=0
+last_acquired_items=0
 last_stuck_count=0

@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -17,6 +18,9 @@ struct AudioCueOptions {
     float pitchScale = 1.0f;
     bool loop = false;
     float cooldownSeconds = 0.0f;
+    std::uint64_t loopStartFrame = 0;
+    std::uint64_t loopEndFrame = 0;
+    std::uint64_t loopCrossfadeFrames = 0;
 };
 
 struct AudioSeParams {
@@ -63,6 +67,8 @@ public:
     void playSe(std::string_view id, float volumeScale = 1.0f, float pitchScale = 1.0f);
     void playSe(std::string_view id, AudioSeParams params);
     float cueDurationSeconds(std::string_view id, AudioCueType type);
+    std::string cueDisplayName(std::string_view id, AudioCueType type) const;
+    std::string currentBgmDisplayName() const;
     void stopAll();
 
     void setMasterVolume(float volume);

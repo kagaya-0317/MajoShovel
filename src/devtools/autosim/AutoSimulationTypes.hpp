@@ -182,9 +182,9 @@ struct AutoSimulationDebugSnapshot {
     bool backpackCanDepart = false;
     int warehouseUsedSlots = 0;
     int warehouseCapacity = 0;
-    int enhancementBudgetLimit = 0;
-    int enhancementBudgetSpent = 0;
-    int enhancementBudgetRemaining = 0;
+    int optionalSpendBudgetLimit = 0;
+    int optionalSpendBudgetSpent = 0;
+    int optionalSpendBudgetRemaining = 0;
     float actionCooldownSeconds = 0.0f;
     float baseIdleSeconds = 0.0f;
     bool pendingAction = false;

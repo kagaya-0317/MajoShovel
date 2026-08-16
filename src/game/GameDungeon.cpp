@@ -129,8 +129,10 @@ constexpr std::string_view AudioSeChestOpen = "se.chest.open";
 constexpr std::string_view AudioSeCaptureFail = "se.capture.fail";
 constexpr std::string_view AudioSeBuriedEnemyWarning = "se.enemy.buried_warning";
 constexpr std::string_view AudioSeDiscovery = "se.discovery";
-constexpr std::string_view AudioSeWarpDiscovery = "se.discovery.warp";
+constexpr std::string_view AudioSeWarpUnlock = "se.warp.unlock";
 constexpr std::string_view AudioSeBossSpawn = "se.boss.spawn";
+constexpr std::string_view AudioSeBossDefeat = "se.boss.defeat";
+constexpr std::string_view AudioSeBossDefeatFlash = "se.boss.defeat_flash";
 constexpr std::string_view AudioSeExplosion = "se.explosion.boom";
 constexpr std::string_view AudioSeExplosionTick = "se.explosion.tick";
 constexpr std::string_view AudioSeFootstepBaseOutdoor = "se.footstep.base_outdoor";
@@ -595,7 +597,9 @@ constexpr float DeathRingDropPickupDelaySeconds = 1.2f;
 constexpr float DeathRingDropFallSeconds = 0.26f;
 constexpr float DeathRingDropLightBounceSeconds = 0.22f;
 constexpr float DeathRingDropHeavyBounceSeconds = 0.17f;
-constexpr float BossDefeatPresentationSeconds = 1.85f;
+constexpr float BossDefeatFlashFadeSeconds = 3.0f;
+constexpr float BossDefeatPostFlashHoldSeconds = 60.0f / 60.0f;
+constexpr float BossDefeatSequenceSeconds = BossDefeatFlashFadeSeconds + BossDefeatPostFlashHoldSeconds;
 constexpr float BossAfterDefeatReplaySeconds = 1.35f;
 constexpr float BossAfterDefeatShakeAmplitude = 6.0f;
 constexpr float BossAfterDefeatShakeSeconds = 0.32f;
@@ -4227,22 +4231,9 @@ Game::RoguelikeCarryOutMergeResult Game::mergeRoguelikeCarryOutDelta(const Rogue
 
     bool warehouseChanged = false;
     const auto addStackToWarehouse = [&](const InventoryObjectStack& source, int count) {
-        if (source.objectId.empty() || count <= 0) {
-            return false;
-        }
-        auto it = std::find_if(warehouseObjectStacks_.begin(), warehouseObjectStacks_.end(), [&](const InventoryObjectStack& stack) {
-            return stack.objectId == source.objectId;
-        });
-        if (it == warehouseObjectStacks_.end()) {
-            if (warehouseUsedSlots() >= warehouseCapacity()) {
-                return false;
-            }
-            warehouseObjectStacks_.push_back(InventoryObjectStack{source.item, 0});
-            it = warehouseObjectStacks_.end() - 1;
-        }
-        it->count += count;
-        warehouseChanged = true;
-        return true;
+        const bool added = addWarehouseObjectStack(source, count);
+        warehouseChanged = warehouseChanged || added;
+        return added;
     };
     const auto addInstanceToWarehouse = [&](const InventoryObjectInstance& source) {
         if (source.instance.instanceId.empty() || source.instance.objectId.empty() ||
@@ -4540,6 +4531,7 @@ void Game::beginPlayerDeathSequence()
         return;
     }
 
+    recordAutoSimulationDeath();
     player_.hp = 0;
     player_.velocity = {};
     mode_ = ScreenMode::Playing;
@@ -4622,11 +4614,14 @@ void Game::retryAfterGameOver()
         return;
     }
 
+    const bool bossDefeatRematchPending = bossDefeatRematchPending_;
     const RetrySnapshot checkpoint = retrySnapshot_;
     if (checkpoint.valid) {
         initializeWorld(false);
         retrySnapshot_ = checkpoint;
         restoreRetrySnapshot();
+        bossDefeatRematchPending_ = bossDefeatRematchPending;
+        prepareBossRematchAfterDefeat();
         clearTemporaryPlayerState(true);
         mode_ = ScreenMode::Playing;
         beginDungeonRingIntro();
@@ -4650,6 +4645,7 @@ void Game::retryAfterGameOver()
     applyPermanentUpgrades();
     clearTemporaryPlayerState(true);
     enemies_.clearTemporaryState();
+    prepareBossRematchAfterDefeat();
     effects_ = EffectSystem{};
     captureAbsorbAnimations_.clear();
     moneyGainFx_.clear();
@@ -4680,6 +4676,7 @@ void Game::returnToBaseAfterGameOver()
         return;
     }
 
+    prepareBossRematchAfterDefeat();
     returnToBaseFromNormalStage(false, true);
 }
 
@@ -4885,6 +4882,7 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
     focusedWarpReturnPointIndex_ = -1;
     bossSpawned_ = false;
     bossPreviewSpawned_ = false;
+    bossDefeatRematchPending_ = false;
     hasBossSpawnPoint_ = false;
     resetBossEncounter();
     resetInPlace(retrySnapshot_);
@@ -5573,6 +5571,7 @@ void Game::resetWarpPointRunState()
     hasBossSpawnPoint_ = false;
     bossSpawned_ = false;
     bossPreviewSpawned_ = false;
+    bossDefeatRematchPending_ = false;
     resetBossEncounter();
     resetInPlace(retrySnapshot_);
     const bool stageIsRoguelike = currentStageDefinition_.type == "ローグライク" ||
@@ -5617,6 +5616,7 @@ void Game::captureDungeonState()
     state.hasBossSpawnPoint = hasBossSpawnPoint_;
     state.bossSpawned = bossSpawned_;
     state.bossPreviewSpawned = bossPreviewSpawned_;
+    state.bossDefeatRematchPending = bossDefeatRematchPending_;
     dungeonStates_[currentStageId_] = std::move(state);
 }
 
@@ -5627,12 +5627,12 @@ bool Game::restoreDungeonState(bool useLatestWarpPoint)
     if (roguelikeDungeon_ || stageIsRoguelike) {
         return false;
     }
-    auto it = dungeonStates_.find(currentStageId_);
-    if (it == dungeonStates_.end() || !it->second.valid) {
+    const DungeonState* retainedState = retainedDungeonStateForCurrentStage();
+    if (retainedState == nullptr) {
         return false;
     }
 
-    const DungeonState& state = it->second;
+    const DungeonState& state = *retainedState;
     currentStage_ = state.currentStage;
     currentStageId_ = state.currentStageId;
     resolveCurrentStageDefinition();
@@ -5663,6 +5663,7 @@ bool Game::restoreDungeonState(bool useLatestWarpPoint)
     hasBossSpawnPoint_ = state.hasBossSpawnPoint;
     bossSpawned_ = state.bossSpawned;
     bossPreviewSpawned_ = state.bossPreviewSpawned;
+    bossDefeatRematchPending_ = state.bossDefeatRematchPending;
     if (!hasBossSpawnPoint_ &&
         !warpPoints_.empty() &&
         discoveredWarpPointCount() >= static_cast<int>(warpPoints_.size())) {
@@ -5700,6 +5701,17 @@ bool Game::restoreDungeonState(bool useLatestWarpPoint)
     return true;
 }
 
+const Game::DungeonState* Game::retainedDungeonStateForCurrentStage() const
+{
+    const auto it = dungeonStates_.find(currentStageId_);
+    if (it == dungeonStates_.end() ||
+        !it->second.valid ||
+        it->second.currentStageId != currentStageId_) {
+        return nullptr;
+    }
+    return &it->second;
+}
+
 bool Game::canRegenerateCurrentStage() const
 {
     const bool stageIsRoguelike = currentStageDefinition_.type == "ローグライク" ||
@@ -5710,13 +5722,16 @@ bool Game::canRegenerateCurrentStage() const
     if (!currentStageCleared()) {
         return false;
     }
-    auto it = dungeonStates_.find(currentStageId_);
-    const std::vector<WarpPoint>& points = it != dungeonStates_.end() && it->second.valid ? it->second.warpPoints : warpPoints_;
+    const DungeonState* state = retainedDungeonStateForCurrentStage();
+    if (state == nullptr) {
+        return false;
+    }
+    const std::vector<WarpPoint>& points = state->warpPoints;
     if (points.empty()) {
         const int requiredWarpPoints = currentStageDefinition_.warpPointCount > 0
             ? std::min(currentStageDefinition_.warpPointCount, MaxWarpPointsPerRun)
             : MaxWarpPointsPerRun;
-        return unlockedWarpPointCount_ >= requiredWarpPoints;
+        return state->unlockedWarpPointCount >= requiredWarpPoints;
     }
     return std::all_of(points.begin(), points.end(), [](const WarpPoint& point) {
         return point.discovered;
@@ -5725,11 +5740,10 @@ bool Game::canRegenerateCurrentStage() const
 
 std::size_t Game::retainedWorldDropCountForCurrentStage() const
 {
-    auto it = dungeonStates_.find(currentStageId_);
-    if (it != dungeonStates_.end() && it->second.valid) {
-        return it->second.worldDrops.size();
+    if (const DungeonState* state = retainedDungeonStateForCurrentStage()) {
+        return state->worldDrops.size();
     }
-    return worldDrops_.size();
+    return 0;
 }
 
 void Game::initializeWarpPointsFromLayout()
@@ -8571,6 +8585,7 @@ bool Game::requestDungeonFocus(DungeonFocusRequest request)
     dungeonFocus_.holdActionDelaySeconds = std::max(0.0f, request.holdActionDelaySeconds);
     dungeonFocus_.discoveryStoryEventId = std::move(storyEventId);
     dungeonFocus_.discoveryDialogue = std::move(focusDialogue);
+    dungeonFocus_.onTargetReached = std::move(request.onTargetReached);
     dungeonFocus_.onHoldAction = std::move(request.onHoldAction);
     dungeonFocus_.onComplete = std::move(request.onComplete);
     dungeonFocus_.allowDuringBossEncounter = request.allowDuringBossEncounter;
@@ -8636,6 +8651,11 @@ bool Game::updateDungeonFocus(float dt)
             return true;
         }
         camera_.setPosition(dungeonFocus_.focusWorldPos);
+        if (dungeonFocus_.onTargetReached) {
+            std::function<void()> action = std::move(dungeonFocus_.onTargetReached);
+            dungeonFocus_.onTargetReached = {};
+            action();
+        }
         if (!dungeonFocus_.discoveryStoryEventId.empty()) {
             const std::string storyEventId = dungeonFocus_.discoveryStoryEventId;
             const bool started = dungeonFocus_.debugStoryReplay
@@ -9467,7 +9487,7 @@ bool Game::unlockAllWarpPointsForCurrentDungeon()
         newlyDiscovered > 0 ? "ワープポイント全開放" : "ワープポイントは全開放済み",
         "warp_point_all");
     if (newlyDiscovered > 0) {
-        playAudioSe(AudioSeWarpDiscovery);
+        playAudioSe(AudioSeWarpUnlock);
     }
     return true;
 }
@@ -9508,7 +9528,11 @@ void Game::updateWarpPoints(float dt)
             point.lightRevealTimer = 0.0f;
             point.lightRevealAnimating = true;
             pushDungeonLog("ワープポイント発見", "warp_point");
-            playAudioSe(AudioSeWarpDiscovery);
+            const Vec2 unlockPosition = point.position;
+            const auto playUnlockPresentation = [this, unlockPosition]() {
+                effects_.spawnPresentationPulseRings(unlockPosition, {104, 226, 255, 220}, 4);
+                playAudioSe(AudioSeWarpUnlock);
+            };
             DungeonFocusRequest request;
             request.eventKind = "tutorial_warp";
             request.focusWorldPos = point.position;
@@ -9516,7 +9540,9 @@ void Game::updateWarpPoints(float dt)
             request.holdSecondsIfNoDialogue = 0.0f;
             request.moveSeconds = 0.55f;
             request.returnSeconds = 0.55f;
+            request.onTargetReached = playUnlockPresentation;
             if (!requestDungeonFocus(std::move(request))) {
+                playUnlockPresentation();
                 queueStoryEventForTrigger("tutorial:warp");
             }
             if (discoveredWarpPointCount() >= static_cast<int>(warpPoints_.size())) {
@@ -12953,6 +12979,14 @@ void Game::finishBossEncounterIntroTransition()
     bossEncounter_.phase = BossEncounterPhase::WaitingBeforeDialogue;
     bossEncounter_.stageId = currentStageId_;
     bossEncounter_.spawnPoint = bossSpawnPoint_;
+    if (bossDefeatRematchPending_) {
+        if (startBossDefeatRematchPresentation()) {
+            return;
+        }
+        bossDefeatRematchPending_ = false;
+        beginBossFightForCurrentEncounter();
+        return;
+    }
     if (!roguelikeGate) {
         const StoryEvent* event = findStoryEventForTrigger(currentStageStoryTrigger("boss_before"));
         if (event != nullptr && startBossBeforeStoryPresentation(event->id, false, {})) {
@@ -12996,6 +13030,60 @@ bool Game::startBossBeforeStoryPresentation(std::string_view id, bool debugRepla
         fallbackCompletion();
     }
     return started;
+}
+
+void Game::prepareBossRematchAfterDefeat()
+{
+    if (!bossDefeatRematchPending_) {
+        return;
+    }
+
+    enemies_.removeBosses(currentStageDefinition().bossEnemyId);
+    enemies_.clearTemporaryState();
+    bossSpawned_ = false;
+    bossPreviewSpawned_ = false;
+    resetBossEncounter();
+}
+
+bool Game::startBossDefeatRematchPresentation()
+{
+    DialogueStep spawnStep;
+    spawnStep.kind = DialogueStepKind::Command;
+    spawnStep.command.name = "dungeon_boss_spawn";
+    spawnStep.command.args = {"default"};
+
+    const std::string trigger = currentStageStoryTrigger("boss_before");
+    const auto eventIt = std::find_if(storyEvents_.begin(), storyEvents_.end(), [&](const StoryEvent& event) {
+        return event.trigger == trigger;
+    });
+    if (eventIt != storyEvents_.end()) {
+        const auto spawnIt = std::find_if(
+            eventIt->dialogue.steps.begin(),
+            eventIt->dialogue.steps.end(),
+            [](const DialogueStep& step) {
+                return step.kind == DialogueStepKind::Command &&
+                    step.command.name == "dungeon_boss_spawn";
+            });
+        if (spawnIt != eventIt->dialogue.steps.end()) {
+            spawnStep.command.args = spawnIt->command.args;
+        }
+    }
+
+    DialogueSequence appearance;
+    appearance.steps.push_back(std::move(spawnStep));
+
+    DungeonFocusRequest request;
+    request.eventKind = "boss_defeat_rematch";
+    request.focusWorldPos = bossSpawnPoint_;
+    request.discoveryDialogue = std::move(appearance);
+    request.moveSeconds = BossBeforeFocusMoveSeconds;
+    request.returnSeconds = BossBeforeFocusReturnSeconds;
+    request.allowDuringBossEncounter = true;
+    request.onComplete = [this]() {
+        bossDefeatRematchPending_ = false;
+        beginBossFightForCurrentEncounter();
+    };
+    return requestDungeonFocus(std::move(request));
 }
 
 bool Game::spawnBossForCurrentEncounter(EnemySpawnVisualKind spawnVisualKind)
@@ -13241,7 +13329,7 @@ void Game::updateDungeonBossAfterDefeatStoryCommand(const DialogueCommand& comma
             storyCommandFloatArg(command, 0, BossAfterDefeatReplaySeconds));
         dungeonStoryPresentation_.started = true;
 
-        playAudioSeAt("se.boss.defeat", position);
+        playAudioSeAt(AudioSeBossDefeat, position);
         addScreenShake(BossAfterDefeatShakeAmplitude, BossAfterDefeatShakeSeconds);
         effects_.spawnAreaPulse(position, 92.0f, {255, 214, 110, 210});
 
@@ -13557,18 +13645,21 @@ bool Game::bossEncounterBlocksProgress() const
 {
     return bossEncounter_.phase == BossEncounterPhase::IntroTransition ||
         bossEncounter_.phase == BossEncounterPhase::WaitingBeforeDialogue ||
-        bossEncounter_.phase == BossEncounterPhase::DefeatPresentation ||
+        bossEncounter_.phase == BossEncounterPhase::DefeatFlash ||
         bossEncounter_.phase == BossEncounterPhase::WaitingLevelUpAfterDefeat ||
         bossEncounter_.phase == BossEncounterPhase::AfterDialogueTransition ||
         bossEncounter_.phase == BossEncounterPhase::WaitingAfterDialogue;
 }
 
-float Game::bossDefeatPresentationProgress() const
+float Game::bossDefeatFlashAlpha() const
 {
-    if (bossEncounter_.phase != BossEncounterPhase::DefeatPresentation) {
+    if (bossEncounter_.phase != BossEncounterPhase::DefeatFlash) {
         return 0.0f;
     }
-    return clamp(bossEncounter_.timer / std::max(0.001f, BossDefeatPresentationSeconds), 0.0f, 1.0f);
+    return 1.0f - clamp(
+        bossEncounter_.timer / std::max(0.001f, BossDefeatFlashFadeSeconds),
+        0.0f,
+        1.0f);
 }
 
 bool Game::beginBossFightForCurrentEncounter()
@@ -13595,7 +13686,7 @@ void Game::beginBossDefeatSequence(Vec2 position)
 {
     pendingStoryTriggers_.clear();
     const BossEncounterPurpose purpose = bossEncounter_.purpose;
-    bossEncounter_.phase = BossEncounterPhase::DefeatPresentation;
+    bossEncounter_.phase = BossEncounterPhase::DefeatFlash;
     bossEncounter_.purpose = purpose;
     bossEncounter_.stageId = currentStageId_;
     bossEncounter_.defeatPosition = position;
@@ -13611,7 +13702,7 @@ void Game::beginBossDefeatSequence(Vec2 position)
         playAudioBgm("bgm.dungeon", 0.70f);
         return;
     }
-    playAudioSe("se.boss.defeat");
+    playAudioSe(AudioSeBossDefeatFlash);
     playAudioBgm("bgm.dungeon", 0.70f);
     effects_.spawnAreaPulse(position, 92.0f, {255, 214, 110, 210});
 }
@@ -13666,11 +13757,11 @@ bool Game::updateBossEncounterFlow(float dt)
         }
         beginBossFightForCurrentEncounter();
         return true;
-    case BossEncounterPhase::DefeatPresentation:
+    case BossEncounterPhase::DefeatFlash:
         bossEncounter_.timer += std::max(0.0f, dt);
         effects_.update(std::max(0.0f, dt));
         magicFx_.update(std::max(0.0f, dt));
-        if (bossEncounter_.timer < BossDefeatPresentationSeconds) {
+        if (bossEncounter_.timer < BossDefeatSequenceSeconds) {
             return true;
         }
         bossEncounter_.phase = BossEncounterPhase::WaitingLevelUpAfterDefeat;

@@ -2233,7 +2233,7 @@ MagicFxEmitterHandle MagicFxSystem::startEarthAura(Vec2 position, float radius)
     rocks.endColor = {138, 96, 62, 170};
     rocks.alphaScale = {0.62f, 1.0f};
     rocks.speed = {0.2f, 1.6f};
-    rocks.lifetime = {10.0f, 15.0f};
+    rocks.lifetime = {0.70f, 1.20f};
     rocks.startSize = {4.0f, 8.8f};
     rocks.endSize = {3.8f, 8.4f};
     rocks.rotation = {0.0f, Pi * 2.0f};
@@ -2245,7 +2245,7 @@ MagicFxEmitterHandle MagicFxSystem::startEarthAura(Vec2 position, float radius)
     rocks.spawnRadius = std::max(4.0f, radius * 0.62f);
     rocks.spreadRadians = Pi * 2.0f;
     rocks.fadeInFraction = 0.03f;
-    rocks.fadeOutFraction = 0.06f;
+    rocks.fadeOutFraction = 0.52f;
     rocks.emissionRate = 0.45f;
     rocks.burstCount = 10;
     rocks.loop = true;
@@ -2261,7 +2261,7 @@ MagicFxEmitterHandle MagicFxSystem::startEarthAura(Vec2 position, float radius)
     dustCloud.endColor = {104, 82, 62, 0};
     dustCloud.alphaScale = {0.50f, 0.92f};
     dustCloud.speed = {0.6f, 4.8f};
-    dustCloud.lifetime = {1.35f, 2.50f};
+    dustCloud.lifetime = {0.55f, 1.10f};
     dustCloud.startSize = {radius * 0.14f, radius * 0.32f};
     dustCloud.endSize = {radius * 0.36f, radius * 0.76f};
     dustCloud.height = {0.0f, 7.0f};
@@ -2286,7 +2286,7 @@ MagicFxEmitterHandle MagicFxSystem::startEarthAura(Vec2 position, float radius)
     sand.endColor = {84, 64, 48, 0};
     sand.alphaScale = {0.35f, 0.86f};
     sand.speed = {0.4f, 4.0f};
-    sand.lifetime = {0.82f, 1.42f};
+    sand.lifetime = {0.45f, 0.85f};
     sand.startSize = {0.8f, 2.2f};
     sand.endSize = {0.0f, 0.6f};
     sand.height = {0.0f, 5.0f};

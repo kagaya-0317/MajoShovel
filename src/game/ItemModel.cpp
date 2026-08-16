@@ -2,9 +2,16 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <utility>
 
 namespace majo {
+
+ObjectStackRuntimeId allocateObjectStackRuntimeId()
+{
+    static std::atomic<ObjectStackRuntimeId> nextId{1};
+    return nextId.fetch_add(1, std::memory_order_relaxed);
+}
 
 ItemInstance makeItemInstanceFromDefinition(std::string instanceId, const ObjectDefinition& object)
 {

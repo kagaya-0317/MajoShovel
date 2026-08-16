@@ -1,8 +1,28 @@
-﻿id	type	path	volume	loop	cooldown_ms	pitch	display_name
+﻿id	type	path	volume	loop	cooldown_ms	pitch	display_name	loop_start_frame	loop_end_frame	loop_crossfade_frames
 bgm.title	bgm	bgm/title_placeholder.wav	0.44	true	0	0	タイトルBGM
 bgm.base	bgm	bgm/base_placeholder.wav	0.38	true	0	0	拠点BGM
 bgm.dungeon	bgm	bgm/dungeon_placeholder.wav	0.42	true	0	0	ダンジョンBGM
 bgm.boss	bgm	bgm/boss_placeholder.wav	0.48	true	0	0	ボス戦BGM
+bgm.asset.first_village	bgm	bgm/first_village.wav	0.42	true	0	0	First village	0	2424000	1440
+bgm.asset.a_letter	bgm	bgm/a_letter.wav	0.42	true	0	0	A letter	0	0	0
+bgm.asset.cunning_monsters	bgm	bgm/cunning_monsters.wav	0.42	true	0	0	Cunning Monsters	360000	4768200	960
+bgm.asset.dot_snow	bgm	bgm/dot_snow.wav	0.42	true	0	0	Dot Snow	0	0	0
+bgm.asset.god_only_knows	bgm	bgm/god_only_knows.wav	0.42	true	0	0	God only knows	0	0	0
+bgm.asset.grumpy_witch	bgm	bgm/grumpy_witch.wav	0.42	true	0	0	Grumpy Witch	0	5703744	0
+bgm.asset.immortal_hotel	bgm	bgm/immortal_hotel.wav	0.42	true	0	0	Immortal Hotel	138720	9333840	24000
+bgm.asset.in_the_ruins	bgm	bgm/in_the_ruins.wav	0.42	true	0	0	In the Ruins	0	0	0
+bgm.asset.legacy_battle	bgm	bgm/legacy_battle.wav	0.42	true	0	0	Legacy Battle	0	3054528	0
+bgm.asset.old_blood	bgm	bgm/old_blood.wav	0.42	true	0	0	Old Blood	762720	6583584	0
+bgm.asset.pleasurable_grave	bgm	bgm/pleasurable_grave.wav	0.42	true	0	0	Pleasurable Grave	1559040	4779408	0
+bgm.asset.puppet_skeleton	bgm	bgm/puppet_skeleton.wav	0.42	true	0	0	Puppet Skeleton	0	5020320	960
+bgm.asset.small_cave	bgm	bgm/small_cave.wav	0.42	true	0	0	Small Cave	0	0	0
+bgm.asset.vivid_spooky	bgm	bgm/vivid_spooky.wav	0.42	true	0	0	Vivid Spooky	0	5724000	960
+bgm.asset.wave_scope	bgm	bgm/wave_scope.wav	0.42	true	0	0	WaveScope	0	5463840	4800
+bgm.asset.devil_ghost_celesta	bgm	bgm/devil_ghost_celesta.wav	0.42	true	0	0	あくまおばけのチェレスタ	0	5036976	0
+bgm.asset.devil_organ	bgm	bgm/devil_organ.wav	0.42	true	0	0	あくまのオルガン	0	5481984	0
+bgm.asset.devil_march	bgm	bgm/devil_march.wav	0.42	true	0	0	あくまの行進	0	5233536	0
+bgm.asset.moonlight_butterfly	bgm	bgm/moonlight_butterfly.wav	0.42	true	0	0	月光蝶	0	0	0
+bgm.asset.purgatory_road	bgm	bgm/purgatory_road.wav	0.42	true	0	0	煉獄道	0	4289328	0
 se.ui.confirm	se	se/0_Confirm1.wav	1	false	60	32.193	UI 決定
 se.ui.cancel	se	se/0_Cancel1.wav	1	false	60	32.193	UI キャンセル
 se.ui.error	se	se/0_Beep.wav	1	false	80	26.303	UI エラー
@@ -78,6 +98,7 @@ se.money.drop	se	se/coin.wav	0.78	false	40	0	お金 落下
 se.money.arrive	se	se/coin2.wav	0.7	false	20	0	お金 吸収
 se.boss.spawn	se	se/earth.wav	0.82	false	350	0	ボス出現
 se.boss.defeat	se	se/0_RobotHeavy3.wav	0.88	false	400	0	ボス撃破
+se.boss.defeat_flash	se	se/0_Holy.wav	0.9	false	400	100	ボス撃破フラッシュ
 se.player.damage	se	se/0_Strike1.wav	0.82	false	150	-32.193	プレイヤー被弾
 se.player.pinch	se	se/alert.wav	0.97	false	900	0	ピンチ警告
 se.ring.throw	se	se/wind10.wav	0.69	false	120	17	リング投げ
@@ -135,7 +156,7 @@ se.capture.fail	se	se/0_KickWhoosh1.wav	0.68	false	160	0	捕獲失敗
 se.discovery	se	se/zz_tmp_discovery_placeholder.wav	0.76	false	220	0	発見
 se.discovery.monster	se	se/sound12.wav	0.88	false	220	7.039	モンスター発見
 se.discovery.effect	se	se/zz_tmp_discovery_effect_placeholder.wav	0.86	false	220	0	効果発見
-se.discovery.warp	se	se/warp.wav	0.82	false	360	0	ワープ発見
+se.warp.unlock	se	se/0_Holy.wav	0.72	false	360	100	ワープポイント解放
 se.chest.open	se	se/zz_tmp_chest_open_placeholder.wav	0.78	false	180	0	宝箱開封
 se.crate.break	se	se/0_FallThud.wav	0.9	false	120	58.496	木箱破壊
 se.item.break	se	se/crash3.wav	0.8	false	160	29	アイテム破損

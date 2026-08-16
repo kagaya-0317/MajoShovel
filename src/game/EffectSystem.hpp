@@ -210,6 +210,7 @@ public:
     void spawnDamagePopup(Vec2 position, int amount, DamagePopupStyle style = DamagePopupStyle::Enemy);
     void spawnStatusPopup(Vec2 position, std::string_view stateId, StatusPopupTarget target);
     void spawnLevelUpPopup(Vec2 position);
+    void spawnPresentationPulseRings(Vec2 position, Color color, int pulseCount);
     void spawnLevelUpEffects(Vec2 position);
     void spawnDigHit(Vec2 position, Vec2 direction = {1.0f, 0.0f}, Color colorOverride = {0, 0, 0, 0}, bool playSound = true);
     void spawnTileBreak(

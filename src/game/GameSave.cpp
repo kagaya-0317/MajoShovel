@@ -251,6 +251,7 @@ struct LoadedDungeonStateSave {
     std::vector<LoadedEnemyNodeSave> enemyNodes;
     std::vector<LoadedDungeonEventInstanceSave> dungeonEventInstances;
     std::vector<WorldDropItem> worldDrops;
+    bool bossDefeatRematchPending = false;
 };
 
 bool isRoguelikeSaveStage(const StageDefinition& stage)
@@ -436,7 +437,8 @@ bool dungeonStateHasSavedProgress(const LoadedDungeonStateSave& state)
         !state.crateNodes.empty() ||
         !state.enemyNodes.empty() ||
         !state.dungeonEventInstances.empty() ||
-        !state.worldDrops.empty();
+        !state.worldDrops.empty() ||
+        state.bossDefeatRematchPending;
 }
 
 std::string serializedDungeonEventParams(const Game::DungeonEventInstance& event)
@@ -1215,6 +1217,27 @@ bool Game::loadSaveData(const std::filesystem::path& path)
     RingPresetSystem loadedRingPresets;
     std::vector<InventoryObjectStack> loadedWarehouseStacks;
     std::vector<InventoryObjectInstance> loadedWarehouseInstances;
+    const auto restoreWarehouseStack = [&loadedWarehouseStacks](const ItemData& item, std::string_view objectId, int count) {
+        int remaining = std::max(0, count);
+        for (InventoryObjectStack& stack : loadedWarehouseStacks) {
+            if (stack.objectId != objectId || stack.count >= ObjectStackMaxCount) {
+                continue;
+            }
+            const int added = std::min(remaining, ObjectStackMaxCount - stack.count);
+            stack.count += added;
+            remaining -= added;
+            if (remaining <= 0) {
+                return;
+            }
+        }
+        while (remaining > 0) {
+            const int added = std::min(remaining, ObjectStackMaxCount);
+            loadedWarehouseStacks.push_back(InventoryObjectStack{item, added});
+            loadedWarehouseStacks.back().objectId = std::string(objectId);
+            loadedWarehouseStacks.back().item.id = std::string(objectId);
+            remaining -= added;
+        }
+    };
     int loadedMoney = 0;
     double loadedPlayTimeSeconds = 0.0;
     int loadedAstralHighScore = 0;
@@ -1502,6 +1525,15 @@ bool Game::loadSaveData(const std::filesystem::path& path)
                 loadedDungeonState.currentStage = std::max(0, currentStage);
                 loadedDungeonState.seed = seed;
             }
+        } else if (key == "dungeon_boss_defeat_rematch") {
+            std::string stageId;
+            bool pending = false;
+            stream >> stageId >> pending;
+            if (!stream.fail() && !stageId.empty() && pending &&
+                (!loadedDungeonState.hasSeed || loadedDungeonState.stageId.empty() || loadedDungeonState.stageId == stageId)) {
+                loadedDungeonState.stageId = std::move(stageId);
+                loadedDungeonState.bossDefeatRematchPending = true;
+            }
         } else if (key == "dungeon_warp_point") {
             std::string stageId;
             LoadedDungeonWarpPointSave point;
@@ -1749,7 +1781,7 @@ bool Game::loadSaveData(const std::filesystem::path& path)
             std::string objectId;
             int count = 0;
             stream >> objectId >> count;
-            loadedInventory.setObjectItemCount(objectCatalog_, objectId, count);
+            loadedInventory.restoreObjectItemCount(objectCatalog_, objectId, count);
             if (!stream.fail() && objectCatalog_.registry.findById(objectId) == nullptr) {
                 ++warningCount;
             }
@@ -1784,11 +1816,11 @@ bool Game::loadSaveData(const std::filesystem::path& path)
             const ItemData* item = objectCatalog_.registry.findById(objectId);
             if (!stream.fail() && count > 0) {
                 if (item != nullptr) {
-                    loadedWarehouseStacks.push_back(InventoryObjectStack{*item, count});
+                    restoreWarehouseStack(*item, objectId, count);
                 } else {
                     ++warningCount;
                     logError("[warning] SaveData: warehouse_object object_id=\"" + objectId + "\" is missing from Objects DB; restored as missing stack item");
-                    loadedWarehouseStacks.push_back(InventoryObjectStack{makeMissingItemData(objectId), count});
+                    restoreWarehouseStack(makeMissingItemData(objectId), objectId, count);
                 }
             }
         } else if (key == "warehouse_object_instance") {
@@ -2142,8 +2174,10 @@ bool Game::loadSaveData(const std::filesystem::path& path)
         bossSpawnPoint_ = {};
         hasBossSpawnPoint_ = false;
         bossSpawned_ = false;
+        bossPreviewSpawned_ = false;
 
         resetWarpPointRunState();
+        bossDefeatRematchPending_ = loadedDungeonState.bossDefeatRematchPending;
         if (!loadedDungeonState.warpPoints.empty()) {
             for (WarpPoint& point : warpPoints_) {
                 point.discovered = false;
@@ -2532,6 +2566,7 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
     const std::vector<EnemyNode>* saveEnemyNodes = nullptr;
     const std::vector<DungeonEventInstance>* saveDungeonEventInstances = nullptr;
     const WorldDropSystem* saveWorldDrops = nullptr;
+    bool saveDungeonBossDefeatRematchPending = bossDefeatRematchPending_;
     std::string saveDungeonStageId = currentStageId_;
     int saveDungeonCurrentStage = currentStage_;
     if (mode_ == ScreenMode::Playing &&
@@ -2571,6 +2606,7 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
             saveEnemyNodes = &retainedStage->second.enemyNodes;
             saveDungeonEventInstances = &retainedStage->second.dungeonEventInstances;
             saveWorldDrops = &retainedStage->second.worldDrops;
+            saveDungeonBossDefeatRematchPending = retainedStage->second.bossDefeatRematchPending;
             saveDungeonStageId = retainedStage->second.currentStageId;
             saveDungeonCurrentStage = retainedStage->second.currentStage;
         }
@@ -2580,6 +2616,9 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
             << saveDungeonStageId << " "
             << saveDungeonCurrentStage << " "
             << saveDungeonLayout->seed << "\n";
+        if (saveDungeonBossDefeatRematchPending) {
+            file << "dungeon_boss_defeat_rematch " << saveDungeonStageId << " 1\n";
+        }
         for (const WarpPoint& point : *saveDungeonWarpPoints) {
             file << "dungeon_warp_point "
                 << saveDungeonStageId << " "

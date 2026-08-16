@@ -38,6 +38,7 @@ struct RingEquipFxRequest {
 };
 
 struct InventoryObjectStack : StackItem {
+    ObjectStackRuntimeId runtimeId = allocateObjectStackRuntimeId();
     ItemData item;
 
     InventoryObjectStack() = default;
@@ -161,7 +162,7 @@ public:
     std::vector<InventoryUseEvent> consumeUseEvents();
     std::vector<StatusPopupEvent> consumeStatusPopupEvents();
     void clearObjectStacks();
-    bool setObjectItemCount(const ObjectCatalog& catalog, std::string_view objectId, int count);
+    bool restoreObjectItemCount(const ObjectCatalog& catalog, std::string_view objectId, int count);
     bool addObjectInstance(const ObjectCatalog& catalog, ItemInstance instance);
     bool addRuntimeObjectInstance(const ItemData& item, ItemInstance instance);
     ItemInstance createDetachedObjectInstance(const ItemData& item);
@@ -169,6 +170,7 @@ public:
     std::optional<bool> objectInstanceProtectionEnabled(std::string_view instanceId) const;
     bool setObjectInstanceProtection(std::string_view instanceId, bool enabled);
     bool removeObjectItemCount(std::string_view objectId, int count);
+    bool removeObjectStackCount(ObjectStackRuntimeId runtimeId, int count);
     bool removeObjectInstance(std::string_view instanceId);
     bool discardObjectStackById(
         std::string_view objectId,
@@ -212,7 +214,7 @@ public:
         int durabilityLevelDelta,
         int maxEnhanceLevel);
     bool enhanceObjectStackItem(
-        std::string_view objectId,
+        ObjectStackRuntimeId runtimeId,
         int attackBonus,
         int digBonus,
         int durabilityBonus,
@@ -221,7 +223,7 @@ public:
         int durabilityLevelDelta,
         int maxEnhanceLevel);
     bool modifyObjectInstanceShape(std::string_view instanceId, double weightMultiplier, double sizeMultiplier);
-    bool modifyObjectStackItemShape(std::string_view objectId, double weightMultiplier, double sizeMultiplier);
+    bool modifyObjectStackItemShape(ObjectStackRuntimeId runtimeId, double weightMultiplier, double sizeMultiplier);
     bool enhanceSelectedObjectInstance(int attackBonus, int digBonus, int durabilityBonus);
     void addMaterial(MaterialType type, int count);
     void setMaterialCount(MaterialType type, int count);
@@ -254,7 +256,7 @@ public:
         std::string_view instanceId,
         const SpellRingSystem& spellRing,
         std::string* outStatus = nullptr);
-    bool moveObjectStackToScreenSlot(std::string_view objectId, int slotIndex);
+    bool moveObjectStackToScreenSlot(ObjectStackRuntimeId runtimeId, int slotIndex);
     bool moveObjectInstanceToScreenSlot(std::string_view instanceId, int slotIndex);
 
 private:

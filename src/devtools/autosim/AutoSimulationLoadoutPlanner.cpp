@@ -619,6 +619,7 @@ GameTestAction makeDiscardAction(
     action.kind = item.kind == GameTestObjectEntryKind::Instance
         ? GameTestActionKind::DiscardBackpackInstance
         : GameTestActionKind::DiscardBackpackStack;
+    action.stackRuntimeId = item.stackRuntimeId;
     action.objectId = item.objectId;
     action.instanceId = item.instanceId;
     action.count = item.kind == GameTestObjectEntryKind::Stack ? std::max(1, item.count) : 1;
@@ -678,6 +679,7 @@ GameTestAction makeEquipAction(
 {
     GameTestAction action;
     action.kind = GameTestActionKind::EquipBackpackItemToRing;
+    action.stackRuntimeId = item.stackRuntimeId;
     action.objectId = item.objectId;
     action.instanceId = item.instanceId;
     action.ringIndex = ringIndex;

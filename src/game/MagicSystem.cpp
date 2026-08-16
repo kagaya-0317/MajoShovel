@@ -25,6 +25,8 @@ constexpr float ThunderStrongLightSeconds = 1.28f;
 constexpr float ThunderWeakLightSeconds = 1.04f;
 constexpr float EarthDebrisLightSeconds = 0.72f;
 constexpr float WindWaveFxFadeStart = 0.68f;
+constexpr float MagicAuraCooldownFraction = 0.65f;
+constexpr float MinimumMagicAuraSeconds = 0.08f;
 
 std::mt19937& magicSystemRng()
 {
@@ -69,9 +71,9 @@ float magicCooldownSeconds(MagicElement element)
     return 0.35f;
 }
 
-float magicAuraSeconds(MagicElement element)
+float magicAuraSeconds(float castCooldownSeconds)
 {
-    return element == MagicElement::Thunder ? 1.2f : 1.0f;
+    return std::max(MinimumMagicAuraSeconds, castCooldownSeconds * MagicAuraCooldownFraction);
 }
 
 float angleOf(Vec2 v)
@@ -264,11 +266,14 @@ bool MagicSystem::cast(
         if (sourceItem->magicCastCooldownTimer > 0.0f) {
             return false;
         }
-        sourceItem->magicAuraDamageType = std::string(magicElementDamageType(element));
-        sourceItem->magicAuraTimer = std::max(sourceItem->magicAuraTimer, magicAuraSeconds(element));
-        sourceItem->magicCastCooldownTimer = cooldownOverrideSeconds > 0.0f
+        const float castCooldownSeconds = cooldownOverrideSeconds > 0.0f
             ? cooldownOverrideSeconds
             : magicCooldownSeconds(element);
+        sourceItem->magicAuraDamageType = std::string(magicElementDamageType(element));
+        sourceItem->magicAuraTimer = std::max(
+            sourceItem->magicAuraTimer,
+            magicAuraSeconds(castCooldownSeconds));
+        sourceItem->magicCastCooldownTimer = castCooldownSeconds;
         if (magicFx_ != nullptr && sourceItem->magicAuraFxEmitterId == 0) {
             sourceItem->magicAuraFxEmitterId = startAuraFxEmitter(
                 element,
@@ -351,6 +356,12 @@ void MagicSystem::appendLightSources(std::vector<LightSource>& outLights) const
 
 void MagicSystem::clear()
 {
+    if (magicFx_ != nullptr) {
+        for (const std::uint32_t emitterId : auraFxEmitterIds_) {
+            magicFx_->stopEmitter({emitterId});
+        }
+    }
+    auraFxEmitterIds_.clear();
     for (MagicProjectile& projectile : projectiles_) {
         stopProjectileFx(projectile);
     }
@@ -713,6 +724,7 @@ void MagicSystem::updateTransientLights(float dt)
 void MagicSystem::updateItemAuras(SpellRingSystem& spellRing, float dt)
 {
     std::vector<SpellRingItem*> runtimeItems = spellRing.runtimeItemsMutable();
+    stopOrphanedAuraFxEmitters(runtimeItems);
     for (SpellRingItem* itemPtr : runtimeItems) {
         if (itemPtr == nullptr) {
             continue;
@@ -721,35 +733,45 @@ void MagicSystem::updateItemAuras(SpellRingSystem& spellRing, float dt)
         item.magicCastCooldownTimer = std::max(0.0f, item.magicCastCooldownTimer - dt);
         MagicElement auraElement = MagicElement::Fire;
         const bool knownAura = magicElementFromDamageType(item.magicAuraDamageType, auraElement);
-        if ((!knownAura || item.broken()) && item.magicAuraFxEmitterId != 0) {
-            if (magicFx_ != nullptr) {
-                magicFx_->stopEmitter({item.magicAuraFxEmitterId});
-            }
-            item.magicAuraFxEmitterId = 0;
+        if (!knownAura || item.broken()) {
+            stopAuraFxEmitter(item.magicAuraFxEmitterId);
+            item.magicAuraTimer = 0.0f;
+            item.magicAuraDamageType.clear();
+            continue;
         }
         if (item.magicAuraTimer > 0.0f) {
             item.magicAuraTimer = std::max(0.0f, item.magicAuraTimer - dt);
-            if (knownAura && magicFx_ != nullptr) {
+            if (magicFx_ != nullptr) {
                 if (item.magicAuraFxEmitterId == 0) {
                     item.magicAuraFxEmitterId = startAuraFxEmitter(auraElement, item.worldPosition, std::max(8.0f, item.hitRadius));
                 } else if (!magicFx_->setEmitterPosition({item.magicAuraFxEmitterId}, item.worldPosition)) {
+                    stopAuraFxEmitter(item.magicAuraFxEmitterId);
                     item.magicAuraFxEmitterId = startAuraFxEmitter(auraElement, item.worldPosition, std::max(8.0f, item.hitRadius));
                 }
             }
             if (item.magicAuraTimer <= 0.0f) {
-                if (item.magicAuraFxEmitterId != 0 && magicFx_ != nullptr) {
-                    magicFx_->stopEmitter({item.magicAuraFxEmitterId});
-                }
-                item.magicAuraFxEmitterId = 0;
+                stopAuraFxEmitter(item.magicAuraFxEmitterId);
                 item.magicAuraDamageType.clear();
             }
         } else if (item.magicAuraFxEmitterId != 0) {
-            if (magicFx_ != nullptr) {
-                magicFx_->stopEmitter({item.magicAuraFxEmitterId});
-            }
-            item.magicAuraFxEmitterId = 0;
+            stopAuraFxEmitter(item.magicAuraFxEmitterId);
         }
     }
+}
+
+void MagicSystem::stopOrphanedAuraFxEmitters(const std::vector<SpellRingItem*>& runtimeItems)
+{
+    auraFxEmitterIds_.erase(
+        std::remove_if(auraFxEmitterIds_.begin(), auraFxEmitterIds_.end(), [&](std::uint32_t emitterId) {
+            const bool hasOwner = std::any_of(runtimeItems.begin(), runtimeItems.end(), [emitterId](const SpellRingItem* item) {
+                return item != nullptr && item->magicAuraFxEmitterId == emitterId;
+            });
+            if (!hasOwner && magicFx_ != nullptr) {
+                magicFx_->stopEmitter({emitterId});
+            }
+            return !hasOwner;
+        }),
+        auraFxEmitterIds_.end());
 }
 
 std::uint32_t MagicSystem::startAuraFxEmitter(MagicElement element, Vec2 position, float radius)
@@ -757,19 +779,40 @@ std::uint32_t MagicSystem::startAuraFxEmitter(MagicElement element, Vec2 positio
     if (magicFx_ == nullptr) {
         return 0;
     }
+    std::uint32_t emitterId = 0;
     switch (element) {
     case MagicElement::Fire:
-        return magicFx_->startFireAura(position, radius).id;
+        emitterId = magicFx_->startFireAura(position, radius).id;
+        break;
     case MagicElement::Ice:
-        return magicFx_->startIceAura(position, radius).id;
+        emitterId = magicFx_->startIceAura(position, radius).id;
+        break;
     case MagicElement::Thunder:
-        return magicFx_->startThunderAura(position, radius).id;
+        emitterId = magicFx_->startThunderAura(position, radius).id;
+        break;
     case MagicElement::Wind:
-        return magicFx_->startWindAura(position, radius).id;
+        emitterId = magicFx_->startWindAura(position, radius).id;
+        break;
     case MagicElement::Earth:
-        return magicFx_->startEarthAura(position, radius).id;
+        emitterId = magicFx_->startEarthAura(position, radius).id;
+        break;
     }
-    return 0;
+    if (emitterId != 0) {
+        auraFxEmitterIds_.push_back(emitterId);
+    }
+    return emitterId;
+}
+
+void MagicSystem::stopAuraFxEmitter(std::uint32_t& emitterId)
+{
+    if (emitterId == 0) {
+        return;
+    }
+    if (magicFx_ != nullptr) {
+        magicFx_->stopEmitter({emitterId});
+    }
+    std::erase(auraFxEmitterIds_, emitterId);
+    emitterId = 0;
 }
 
 std::uint32_t MagicSystem::startProjectileFxEmitter(const MagicProjectile& projectile)
@@ -912,6 +955,7 @@ void MagicSystem::addTransientLight(Vec2 position, float radius, float lifetime)
 void MagicSystem::addProjectile(MagicProjectile projectile)
 {
     if (projectiles_.size() >= MaxMagicProjectiles) {
+        stopProjectileFx(projectiles_.front());
         projectiles_.erase(projectiles_.begin());
     }
     projectiles_.push_back(projectile);

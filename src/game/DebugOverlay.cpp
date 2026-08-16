@@ -76,7 +76,7 @@ void DebugOverlay::appendAutoSimulationText(
         "\nAutoDecision: phase=%s detail=%s"
         "\nAutoLastAction: %s"
         "\nAutoObjective: mission=%s(%s) task=%s(%s) noProgress=%.1f opportunity=%d suspend=%.1f"
-        "\nAutoBase: screen=%s backpack=%d/%d free=%d desired=%d ready=%s canDepart=%s warehouse=%d/%d enhanceBudget=%d/%d remain=%d idle=%.2f cooldown=%.2f pending=%s",
+        "\nAutoBase: screen=%s backpack=%d/%d free=%d desired=%d ready=%s canDepart=%s warehouse=%d/%d optionalBudget=%d/%d remain=%d idle=%.2f cooldown=%.2f pending=%s",
         autosim::autoSimulationStateName(debug.state),
         debug.speedMultiplier,
         debug.simulationStepsLastFrame,
@@ -104,9 +104,9 @@ void DebugOverlay::appendAutoSimulationText(
         yesNo(debug.backpackCanDepart),
         debug.warehouseUsedSlots,
         debug.warehouseCapacity,
-        debug.enhancementBudgetSpent,
-        debug.enhancementBudgetLimit,
-        debug.enhancementBudgetRemaining,
+        debug.optionalSpendBudgetSpent,
+        debug.optionalSpendBudgetLimit,
+        debug.optionalSpendBudgetRemaining,
         debug.baseIdleSeconds,
         debug.actionCooldownSeconds,
         yesNo(debug.pendingAction));

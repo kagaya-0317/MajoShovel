@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <limits>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace majo {
@@ -3571,6 +3572,7 @@ void drawBaseRingPreview(
     Vec2 weightTextPos,
     int ringIndex,
     int selectedIndex,
+    int movingItemIndex,
     float previewScale,
     float totalSeconds,
     bool showProtectionIcon = true,
@@ -3599,7 +3601,44 @@ void drawBaseRingPreview(
     orbitOptions.centerDecoration = previewStyle.centerDecoration;
     drawMagicOrbitPath(renderer, orbitPath, center, orbitOptions);
 
+    std::vector<RingUiItemDrawOrderEntry> drawOrder;
+    drawOrder.reserve(items.size());
     for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+        const SpellRingItem& item = items[static_cast<std::size_t>(i)];
+        const UiRect navigationRect = baseRingPreviewItemNavigationRect(
+            center,
+            item,
+            spellRing,
+            balance,
+            ringIndex,
+            i,
+            static_cast<int>(items.size()),
+            previewScale);
+        registerUiNavigationTarget(
+            navigationRect,
+            UiNavigationRole::Grid,
+            i == selectedIndex);
+        const bool selected = uiControlVisualState(navigationRect).selected;
+        drawOrder.push_back({
+            i,
+            baseRingPreviewItemAnchor(
+                center,
+                item,
+                spellRing,
+                balance,
+                ringIndex,
+                i,
+                static_cast<int>(items.size()),
+                previewScale),
+            i == movingItemIndex
+                ? RingUiItemFrontPriority::Moving
+                : (selected ? RingUiItemFrontPriority::Selected : RingUiItemFrontPriority::Normal),
+        });
+    }
+    sortRingUiItemsBackToFront(drawOrder);
+
+    for (const RingUiItemDrawOrderEntry& drawEntry : drawOrder) {
+        const int i = drawEntry.itemIndex;
         const SpellRingItem& item = items[static_cast<std::size_t>(i)];
         const Vec2 itemAnchor = baseRingPreviewItemAnchor(center, item, spellRing, balance, ringIndex, i, static_cast<int>(items.size()), previewScale);
         const Vec2 itemCenter = baseRingPreviewItemDrawCenter(center, item, spellRing, balance, ringIndex, i, static_cast<int>(items.size()), previewScale, totalSeconds);
@@ -3630,10 +3669,6 @@ void drawBaseRingPreview(
             i,
             static_cast<int>(items.size()),
             previewScale);
-        registerUiNavigationTarget(
-            navigationRect,
-            UiNavigationRole::Grid,
-            i == selectedIndex);
         const bool selected = uiControlVisualState(navigationRect).selected;
         const ItemData* object = objectForRingItem(objectCatalog, item);
         const float contentAlpha = baseRingPreviewItemDisabled(disabledMode, item, object)
@@ -3677,6 +3712,7 @@ void drawBaseProcessingRingPreview(
     const RuntimeBalance& balance,
     int ringIndex,
     int selectedIndex,
+    int movingItemIndex,
     float totalSeconds)
 {
     drawBaseRingPreview(
@@ -3689,6 +3725,7 @@ void drawBaseProcessingRingPreview(
         baseProcessingRingPreviewWeightTextPos(),
         ringIndex,
         selectedIndex,
+        movingItemIndex,
         BaseRingPreviewScale,
         totalSeconds);
 }
@@ -3701,6 +3738,7 @@ void drawMerchantSellRingPreview(
     const RuntimeBalance& balance,
     int ringIndex,
     int selectedIndex,
+    int movingItemIndex,
     float totalSeconds)
 {
     drawBaseRingPreview(
@@ -3713,6 +3751,7 @@ void drawMerchantSellRingPreview(
         merchantSellRingPreviewWeightTextPos(),
         ringIndex,
         selectedIndex,
+        movingItemIndex,
         MerchantSellRingPreviewScale,
         totalSeconds,
         true,
@@ -3749,6 +3788,7 @@ void drawStorageRingPreview(
     const RuntimeBalance& balance,
     int ringIndex,
     int selectedIndex,
+    int movingItemIndex,
     float totalSeconds)
 {
     drawBaseRingPreview(
@@ -3761,6 +3801,7 @@ void drawStorageRingPreview(
         storageRingPreviewWeightTextPos(),
         ringIndex,
         selectedIndex,
+        movingItemIndex,
         StorageRingPreviewScale,
         totalSeconds,
         true,
@@ -4653,7 +4694,7 @@ void Game::sellMerchantEntry(int index, int count)
         }
         const InventoryObjectStack& stack = stacks[static_cast<std::size_t>(entry.index)];
         soldCount = count <= 0 ? stack.count : std::min(count, stack.count);
-        sold = inventory_.removeObjectItemCount(stack.objectId, soldCount);
+        sold = inventory_.removeObjectStackCount(stack.runtimeId, soldCount);
     } else {
         const auto& instances = inventory_.objectInstances();
         if (entry.index < 0 || entry.index >= static_cast<int>(instances.size())) {
@@ -4875,6 +4916,7 @@ std::optional<ItemKey> Game::itemKeyForBaseItemTarget(BaseItemTarget target) con
         if (const InventoryObjectStack* stack = inventory_.screenObjectStackAt(target.slotIndex)) {
             key.stack = true;
             key.stableId = stack->objectId;
+            key.stackRuntimeId = stack->runtimeId;
         } else if (const InventoryObjectInstance* instance = inventory_.screenObjectInstanceAt(target.slotIndex)) {
             key.stableId = instance->instance.instanceId;
         }
@@ -4885,6 +4927,7 @@ std::optional<ItemKey> Game::itemKeyForBaseItemTarget(BaseItemTarget target) con
             target.storageEntry.index < static_cast<int>(warehouseObjectStacks_.size())) {
             key.stack = true;
             key.stableId = warehouseObjectStacks_[static_cast<std::size_t>(target.storageEntry.index)].objectId;
+            key.stackRuntimeId = warehouseObjectStacks_[static_cast<std::size_t>(target.storageEntry.index)].runtimeId;
         } else if (target.storageEntry.kind == StorageEntryKind::Instance &&
             target.storageEntry.index >= 0 &&
             target.storageEntry.index < static_cast<int>(warehouseObjectInstances_.size())) {
@@ -4908,7 +4951,7 @@ Game::BaseItemTarget Game::baseItemTargetForItemKey(const ItemKey& key) const
         for (int slot = 0; slot < inventory_.screenSlotCount(); ++slot) {
             if (key.stack) {
                 const InventoryObjectStack* stack = inventory_.screenObjectStackAt(slot);
-                if (stack != nullptr && stack->objectId == key.stableId) {
+                if (stack != nullptr && stack->runtimeId == key.stackRuntimeId) {
                     BaseItemTarget target{};
                     target.source = BaseItemSource::Backpack;
                     target.slotIndex = slot;
@@ -4932,7 +4975,7 @@ Game::BaseItemTarget Game::baseItemTargetForItemKey(const ItemKey& key) const
     if (key.container.kind == ItemContainerKind::Warehouse) {
         if (key.stack) {
             for (int index = 0; index < static_cast<int>(warehouseObjectStacks_.size()); ++index) {
-                if (warehouseObjectStacks_[static_cast<std::size_t>(index)].objectId == key.stableId) {
+                if (warehouseObjectStacks_[static_cast<std::size_t>(index)].runtimeId == key.stackRuntimeId) {
                     BaseItemTarget target{};
                     target.source = BaseItemSource::Warehouse;
                     target.storageEntry = {StorageEntryKind::Stack, index};
@@ -5011,7 +5054,7 @@ bool Game::moveItemKeyToGridPlacement(const ItemKey& key, int placement)
     }
     if (key.container.kind == ItemContainerKind::Backpack) {
         return key.stack
-            ? inventory_.moveObjectStackToScreenSlot(key.stableId, placement)
+            ? inventory_.moveObjectStackToScreenSlot(key.stackRuntimeId, placement)
             : inventory_.moveObjectInstanceToScreenSlot(key.stableId, placement);
     }
     if (key.container.kind != ItemContainerKind::Warehouse) {
@@ -5615,7 +5658,7 @@ bool Game::sellMerchantBulkSelection()
         }
         const int quantity = merchantSellTargetQuantity(target);
         const bool removed = key.stack
-            ? inventory_.removeObjectItemCount(key.stableId, quantity)
+            ? inventory_.removeObjectStackCount(key.stackRuntimeId, quantity)
             : inventory_.removeObjectInstance(key.stableId);
         if (!removed) {
             baseStatus_ = "まとめ売りに失敗したよ";
@@ -5719,7 +5762,7 @@ bool Game::sellMerchantTarget(MerchantSellTarget target, int count)
             const int soldCount = count <= 0 ? stack->count : std::min(count, stack->count);
             const std::string objectId = stack->objectId;
             const int price = sellPrice(stack->item) * std::max(1, soldCount);
-            if (inventory_.removeObjectItemCount(objectId, soldCount)) {
+            if (inventory_.removeObjectStackCount(stack->runtimeId, soldCount)) {
                 money_ += price;
                 completeSale();
                 return true;
@@ -6908,7 +6951,7 @@ void Game::applyProcessingEntry(StorageEntry entry, ProcessingMode mode, bool wa
         if (entry.kind == StorageEntryKind::Stack) {
             const InventoryObjectStack& stack = inventory_.objectStacks()[static_cast<std::size_t>(entry.index)];
             processed = inventory_.modifyObjectStackItemShape(
-                stack.objectId,
+                stack.runtimeId,
                 mode == ProcessingMode::Lighten ? LightenWeightMultiplier : EnlargeWeightMultiplier,
                 mode == ProcessingMode::Lighten ? 1.0 : EnlargeSizeMultiplier);
         } else {
@@ -6922,7 +6965,7 @@ void Game::applyProcessingEntry(StorageEntry entry, ProcessingMode mode, bool wa
         if (entry.kind == StorageEntryKind::Stack) {
             const InventoryObjectStack& stack = inventory_.objectStacks()[static_cast<std::size_t>(entry.index)];
             processed = inventory_.enhanceObjectStackItem(
-                stack.objectId,
+                stack.runtimeId,
                 enhanceBonuses.attack,
                 enhanceBonuses.dig,
                 enhanceBonuses.durability,
@@ -7319,16 +7362,13 @@ bool Game::canAddWarehouseObjectStack(std::string_view objectId, int count) cons
     if (objectId.empty() || count <= 0) {
         return false;
     }
-    const auto existing = std::find_if(
-        warehouseObjectStacks_.begin(),
-        warehouseObjectStacks_.end(),
-        [objectId](const InventoryObjectStack& stack) {
-            return stack.objectId == objectId;
-        });
-    if (existing != warehouseObjectStacks_.end()) {
-        return existing->count <= std::numeric_limits<int>::max() - count;
+    int available = std::max(0, warehouseCapacity() - warehouseUsedSlots()) * ObjectStackMaxCount;
+    for (const InventoryObjectStack& stack : warehouseObjectStacks_) {
+        if (stack.objectId == objectId) {
+            available += std::max(0, ObjectStackMaxCount - stack.count);
+        }
     }
-    return warehouseUsedSlots() < warehouseCapacity();
+    return count <= available;
 }
 
 bool Game::addWarehouseObjectStack(const InventoryObjectStack& stack, int count)
@@ -7337,27 +7377,32 @@ bool Game::addWarehouseObjectStack(const InventoryObjectStack& stack, int count)
         return false;
     }
 
-    const auto existing = std::find_if(
-        warehouseObjectStacks_.begin(),
-        warehouseObjectStacks_.end(),
-        [&stack](const InventoryObjectStack& stored) {
-            return stored.objectId == stack.objectId;
-        });
-    if (existing != warehouseObjectStacks_.end()) {
-        existing->count += count;
-        existing->item = stack.item;
-        existing->item.id = stack.objectId;
-        existing->objectId = stack.objectId;
-        return true;
+    int remaining = count;
+    for (InventoryObjectStack& stored : warehouseObjectStacks_) {
+        if (stored.objectId != stack.objectId || stored.count >= ObjectStackMaxCount) {
+            continue;
+        }
+        const int added = std::min(remaining, ObjectStackMaxCount - stored.count);
+        stored.count += added;
+        stored.item = stack.item;
+        stored.item.id = stack.objectId;
+        stored.objectId = stack.objectId;
+        remaining -= added;
+        if (remaining <= 0) {
+            break;
+        }
     }
-
-    InventoryObjectStack added = stack;
-    added.objectId = stack.objectId;
-    added.item.id = stack.objectId;
-    added.count = count;
-    syncWarehouseDisplaySlots();
-    warehouseItemLayout_.insertEntry(static_cast<int>(warehouseObjectStacks_.size()));
-    warehouseObjectStacks_.push_back(std::move(added));
+    while (remaining > 0) {
+        InventoryObjectStack added = stack;
+        added.runtimeId = allocateObjectStackRuntimeId();
+        added.objectId = stack.objectId;
+        added.item.id = stack.objectId;
+        added.count = std::min(remaining, ObjectStackMaxCount);
+        syncWarehouseDisplaySlots();
+        warehouseItemLayout_.insertEntry(static_cast<int>(warehouseObjectStacks_.size()));
+        warehouseObjectStacks_.push_back(std::move(added));
+        remaining -= warehouseObjectStacks_.back().count;
+    }
     return true;
 }
 
@@ -7635,14 +7680,25 @@ Game::StorageBatchTransferSummary Game::storageBulkDepositSummary() const
     StorageBatchTransferSummary summary{};
     summary.freeSlots = std::max(0, warehouseCapacity() - warehouseUsedSlots());
 
-    std::unordered_set<std::string> storedStackIds;
-    storedStackIds.reserve(
-        warehouseObjectStacks_.size() + baseStorageBatchSelection_.selectedKeys.size());
+    std::unordered_map<std::string, int> stackFreeCounts;
     for (const InventoryObjectStack& stack : warehouseObjectStacks_) {
         if (!stack.objectId.empty() && stack.count > 0) {
-            storedStackIds.insert(stack.objectId);
+            stackFreeCounts[stack.objectId] += std::max(0, ObjectStackMaxCount - stack.count);
         }
     }
+
+    const auto addStack = [&summary, &stackFreeCounts](std::string_view objectId, int count) {
+        int& mergeCapacity = stackFreeCounts[std::string(objectId)];
+        const int merged = std::min(std::max(0, count), mergeCapacity);
+        mergeCapacity -= merged;
+        int remaining = std::max(0, count - merged);
+        while (remaining > 0) {
+            const int added = std::min(remaining, ObjectStackMaxCount);
+            ++summary.requiredSlots;
+            mergeCapacity += ObjectStackMaxCount - added;
+            remaining -= added;
+        }
+    };
 
     for (const ItemKey& key : baseStorageBatchSelection_.selectedKeys) {
         const StorageTransferTarget target = baseItemTargetForItemKey(key);
@@ -7652,9 +7708,7 @@ Game::StorageBatchTransferSummary Game::storageBulkDepositSummary() const
         }
         ++summary.selectedCount;
         if (storageTransferTargetIsStack(target)) {
-            if (storedStackIds.insert(key.stableId).second) {
-                ++summary.requiredSlots;
-            }
+            addStack(key.stableId, storageTransferTargetStackCount(target));
         } else {
             ++summary.requiredSlots;
         }
@@ -7756,7 +7810,7 @@ bool Game::depositStorageTarget(StorageTransferTarget target, int count)
                 baseStatus_ = "収納箱がいっぱいだよ";
                 return false;
             }
-            if (!inventory_.removeObjectItemCount(moved.objectId, moveCount)) {
+            if (!inventory_.removeObjectStackCount(source->runtimeId, moveCount)) {
                 baseStatus_ = "しまえなかったよ";
                 return false;
             }
@@ -7929,14 +7983,25 @@ Game::StorageBatchTransferSummary Game::storageBulkWithdrawSummary() const
     StorageBatchTransferSummary summary{};
     summary.freeSlots = std::max(0, inventory_.screenSlotCount() - backpackUsedSlots());
 
-    std::unordered_set<std::string> backpackStackIds;
-    backpackStackIds.reserve(
-        inventory_.objectStacks().size() + baseStorageBatchSelection_.selectedKeys.size());
+    std::unordered_map<std::string, int> stackFreeCounts;
     for (const InventoryObjectStack& stack : inventory_.objectStacks()) {
         if (!stack.objectId.empty() && stack.count > 0) {
-            backpackStackIds.insert(stack.objectId);
+            stackFreeCounts[stack.objectId] += std::max(0, ObjectStackMaxCount - stack.count);
         }
     }
+
+    const auto addStack = [&summary, &stackFreeCounts](std::string_view objectId, int count) {
+        int& mergeCapacity = stackFreeCounts[std::string(objectId)];
+        const int merged = std::min(std::max(0, count), mergeCapacity);
+        mergeCapacity -= merged;
+        int remaining = std::max(0, count - merged);
+        while (remaining > 0) {
+            const int added = std::min(remaining, ObjectStackMaxCount);
+            ++summary.requiredSlots;
+            mergeCapacity += ObjectStackMaxCount - added;
+            remaining -= added;
+        }
+    };
 
     for (const ItemKey& key : baseStorageBatchSelection_.selectedKeys) {
         const StorageTransferTarget target = baseItemTargetForItemKey(key);
@@ -7946,9 +8011,7 @@ Game::StorageBatchTransferSummary Game::storageBulkWithdrawSummary() const
         }
         ++summary.selectedCount;
         if (storageTransferTargetIsStack(target)) {
-            if (backpackStackIds.insert(key.stableId).second) {
-                ++summary.requiredSlots;
-            }
+            addStack(key.stableId, storageTransferTargetStackCount(target));
         } else {
             ++summary.requiredSlots;
         }
@@ -8085,7 +8148,7 @@ void Game::depositAllBackpackItems()
             continue;
         }
 
-        if (!inventory_.removeObjectItemCount(stack.objectId, moveCount)) {
+        if (!inventory_.removeObjectStackCount(stack.runtimeId, moveCount)) {
             continue;
         }
         if (!addWarehouseObjectStack(stack, moveCount)) {
@@ -8752,30 +8815,40 @@ void Game::renderBaseStoryRingDemo(Renderer& renderer) const
         return item;
     };
 
+    const int itemRingIndex = std::clamp(baseStoryRingDemo_.itemRingIndex, 0, SpellRingCount - 1);
+    const bool demoItemAvailable =
+        visibleRingCount > itemRingIndex &&
+        !baseStoryRingDemo_.itemObjectId.empty() &&
+        objectCatalog_.registry.findById(baseStoryRingDemo_.itemObjectId) != nullptr;
+
     std::vector<DemoRingItem> demoItems;
-    if (visibleRingCount >= 1) {
-        const auto& equippedRingItems = spellRing_.itemsForRing(0);
+    for (int ringIndex = 0; ringIndex < visibleRingCount; ++ringIndex) {
+        const auto& equippedRingItems = spellRing_.itemsForRing(ringIndex);
         const int equippedItemCount = static_cast<int>(equippedRingItems.size());
-        demoItems.reserve(equippedRingItems.size() + 1);
-        for (int index = 0; index < equippedItemCount; ++index) {
+        const bool addDemoItem = demoItemAvailable && ringIndex == itemRingIndex;
+        const int displayedItemCount = equippedItemCount + (addDemoItem ? 1 : 0);
+        demoItems.reserve(demoItems.size() + static_cast<std::size_t>(displayedItemCount));
+
+        for (int itemIndex = 0; itemIndex < equippedItemCount; ++itemIndex) {
             demoItems.push_back({
-                preparedDemoRingItem(equippedRingItems[static_cast<std::size_t>(index)], 0, index, equippedItemCount),
-                equippedItemCount,
+                preparedDemoRingItem(
+                    equippedRingItems[static_cast<std::size_t>(itemIndex)],
+                    ringIndex,
+                    itemIndex,
+                    displayedItemCount),
+                displayedItemCount,
             });
         }
-    }
 
-    const int itemRingIndex = std::clamp(baseStoryRingDemo_.itemRingIndex, 0, SpellRingCount - 1);
-    if (visibleRingCount > itemRingIndex && !baseStoryRingDemo_.itemObjectId.empty()) {
-        if (objectCatalog_.registry.findById(baseStoryRingDemo_.itemObjectId) != nullptr) {
+        if (addDemoItem) {
             SpellRingItem item = makeObjectRingItem(baseStoryRingDemo_.itemObjectId);
             const RingShape itemRingShape = spellRing_.ringShapeForIndex(itemRingIndex);
             item.localAngle = itemRingShape == RingShape::Comet
                 ? normalizeLocalParam(itemRingShape, Pi, makeRingOrbitTuning(balance_))
                 : normalizeAngle(baseActorIdleAnimationTime_ * 1.35f);
             demoItems.push_back({
-                preparedDemoRingItem(item, itemRingIndex, 0, 1),
-                1,
+                preparedDemoRingItem(item, itemRingIndex, equippedItemCount, displayedItemCount),
+                displayedItemCount,
             });
         }
     }
@@ -11151,35 +11224,13 @@ void Game::placeBasePlayerAtMineExitReturnPoint()
 std::vector<Game::WarpPoint> Game::selectableWarpPointsForCurrentStageStart() const
 {
     std::vector<WarpPoint> points;
-    const std::vector<WarpPoint>* source = nullptr;
-    const auto retainedStage = dungeonStates_.find(currentStageId_);
-    if (retainedStage != dungeonStates_.end() && retainedStage->second.valid) {
-        source = &retainedStage->second.warpPoints;
-    } else if (!warpPoints_.empty()) {
-        source = &warpPoints_;
-    }
-
-    if (source != nullptr) {
-        for (const WarpPoint& point : *source) {
+    if (const DungeonState* state = retainedDungeonStateForCurrentStage()) {
+        points.reserve(state->warpPoints.size());
+        for (const WarpPoint& point : state->warpPoints) {
             if (point.discovered) {
                 points.push_back(point);
             }
         }
-    }
-
-    if (points.empty() && unlockedWarpPointCount_ > 0 && hasLatestWarpPointPosition_) {
-        WarpPoint fallback;
-        fallback.stageId = currentStage_ + 1;
-        fallback.index = std::max(0, unlockedWarpPointCount_ - 1);
-        fallback.position = latestWarpPointPosition_;
-        fallback.tilePosition = {
-            tileMap_.worldToTile(latestWarpPointPosition_.x),
-            tileMap_.worldToTile(latestWarpPointPosition_.y),
-        };
-        fallback.discovered = true;
-        fallback.unlocked = true;
-        fallback.snapshotCaptured = true;
-        points.push_back(fallback);
     }
 
     std::sort(points.begin(), points.end(), [](const WarpPoint& left, const WarpPoint& right) {
@@ -15299,6 +15350,15 @@ void Game::renderBaseScreen(Renderer& renderer) const
     renderer.setScreenSpace();
     std::optional<BaseFacility> interactionFacility;
     const float ringPreviewSeconds = baseRingPreviewAnimationTime_;
+    const auto movingRingItemIndex = [this](int ringIndex) {
+        if (!baseRingItemInteraction_.active()) {
+            return -1;
+        }
+        const BaseItemTarget target = baseItemTargetForItemKey(baseRingItemInteraction_.item);
+        return target.valid && target.ringIndex == ringIndex
+            ? target.ringItemIndex
+            : -1;
+    };
     const auto drawGrabbedGridItem = [this, &renderer, ringPreviewSeconds](
                                          UiRect destination,
                                          float imageMaxSize) {
@@ -15677,6 +15737,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                         balance_,
                         ringIndex,
                         selectedRingIndex,
+                        movingRingItemIndex(ringIndex),
                         ringPreviewSeconds);
                     for (int i = 0; i < static_cast<int>(ringItems.size()); ++i) {
                         const SpellRingItem& item = ringItems[static_cast<std::size_t>(i)];
@@ -16270,6 +16331,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 balance_,
                 ringIndex,
                 selectedRingItem,
+                movingRingItemIndex(ringIndex),
                 ringPreviewSeconds);
         } else if (warehouseSource) {
             const int warehousePageCount = std::max(1, (warehouseCapacity() + StoragePaneSlotCount - 1) / StoragePaneSlotCount);
@@ -16610,6 +16672,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                         balance_,
                         ringIndex,
                         selectedRingIndex,
+                        movingRingItemIndex(ringIndex),
                         ringPreviewSeconds);
                     for (int i = 0; i < static_cast<int>(ringItems.size()); ++i) {
                         const MerchantSellTarget target = merchantSellTargetForSourceSlot(baseMerchantSellSource_, i);
@@ -17068,16 +17131,18 @@ void Game::renderBaseScreen(Renderer& renderer) const
         const std::string stageName = currentStageDefinition().name.empty()
             ? currentStageId_
             : currentStageDefinition().name;
-        const auto retainedStage = dungeonStates_.find(currentStageId_);
-        const bool hasRetainedDungeon = retainedStage != dungeonStates_.end() && retainedStage->second.valid;
+        const DungeonState* retainedStage = retainedDungeonStateForCurrentStage();
+        const bool hasRetainedDungeon = retainedStage != nullptr;
+        const std::vector<WarpPoint> selectableWarpPoints = selectableWarpPointsForCurrentStageStart();
         int totalWarpPoints = std::max(0, currentStageDefinition().warpPointCount);
-        if (hasRetainedDungeon && !retainedStage->second.warpPoints.empty()) {
-            totalWarpPoints = static_cast<int>(retainedStage->second.warpPoints.size());
-        } else if (!warpPoints_.empty()) {
-            totalWarpPoints = static_cast<int>(warpPoints_.size());
+        if (hasRetainedDungeon && !retainedStage->warpPoints.empty()) {
+            totalWarpPoints = static_cast<int>(retainedStage->warpPoints.size());
         }
         totalWarpPoints = std::max(0, totalWarpPoints);
-        const int discoveredWarpPoints = std::clamp(unlockedWarpPointCount_, 0, totalWarpPoints);
+        const int discoveredWarpPoints = std::clamp(
+            static_cast<int>(selectableWarpPoints.size()),
+            0,
+            totalWarpPoints);
 
         const auto drawCenteredTextInRect = [&](UiRect rect, std::string_view text, Color color, int scale) {
             const Vec2 textSize = renderer.measureText(text, scale);
@@ -17095,7 +17160,6 @@ void Game::renderBaseScreen(Renderer& renderer) const
         const int selectableStageCount = static_cast<int>(selectableStages.size());
         const bool canSelectDestination = selectableStageCount > 1;
         const UiPageSelectorRects stageSelector = baseMiningStageSelectorRects();
-        const std::vector<WarpPoint> selectableWarpPoints = selectableWarpPointsForCurrentStageStart();
         const bool selectedStageRoguelike = stageLooksRoguelike(currentStageDefinition());
 
         renderer.drawText({contentLeft, body.pos.y}, "行き先", {198, 198, 206, 255}, 2);
@@ -17225,8 +17289,8 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 renderer.drawText(warpPanel.pos + Vec2{48.0f, 142.0f}, "解放済みワープポイントがないよ", ui::TextDisabled, 2);
             }
             const DungeonLayout* warpPointDepthLayout = &dungeonLayout_;
-            if (retainedStage != dungeonStates_.end() && retainedStage->second.valid) {
-                warpPointDepthLayout = &retainedStage->second.dungeonLayout;
+            if (retainedStage != nullptr) {
+                warpPointDepthLayout = &retainedStage->dungeonLayout;
             }
             const auto warpPointDepthTilePosition = [](const WarpPoint& point) {
                 if (lengthSquared(point.position) > 0.0001f) {

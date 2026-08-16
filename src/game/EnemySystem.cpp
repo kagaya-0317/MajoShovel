@@ -3987,7 +3987,7 @@ void drawEnemyVisual(
         renderConfuseStatusOverlay(renderer, drawPosition, uiVisualRadius * 2.0f, enemy.behaviorTimer);
     }
     drawEnemyHpBar(renderer, enemy, drawPosition, uiVisualRadius, detailsKnown);
-    if (enemy.isBoss && !isAstragnaBossAction(enemy)) {
+    if (enemy.isBoss && detailsKnown && !isAstragnaBossAction(enemy)) {
         const float hpRatio = enemy.maxHp > 0 ? clamp(static_cast<float>(enemy.hp) / static_cast<float>(enemy.maxHp), 0.0f, 1.0f) : 0.0f;
         const Vec2 barPos = drawPosition + Vec2{-28.0f, -uiVisualRadius - 14.0f};
         UiGaugeStyle bossHpGaugeStyle;
@@ -8596,6 +8596,24 @@ bool EnemySystem::spawnBossPreviewAt(
     return false;
 }
 
+int EnemySystem::removeBosses(std::string_view bossEnemyId)
+{
+    int removed = 0;
+    const auto removeMatchingBosses = [&](auto& enemies) {
+        for (Enemy& enemy : enemies) {
+            if (!enemy.active || !enemy.isBoss ||
+                (!bossEnemyId.empty() && enemy.enemyId != bossEnemyId)) {
+                continue;
+            }
+            enemy = Enemy{};
+            ++removed;
+        }
+    };
+    removeMatchingBosses(enemies_.items());
+    removeMatchingBosses(dormantEnemies_);
+    return removed;
+}
+
 bool EnemySystem::activateBossPreview(std::string_view bossEnemyId)
 {
     for (Enemy& enemy : enemies_.items()) {
@@ -11286,8 +11304,7 @@ void EnemySystem::appendRenderEntries(
             continue;
         }
         const bool captureHighlighted = highlightedEnemyId != 0 && enemy.id == highlightedEnemyId;
-        const bool detailsKnown = !enemy.isBoss &&
-            encyclopedia != nullptr &&
+        const bool detailsKnown = encyclopedia != nullptr &&
             encyclopedia->enemyStage(enemy.enemyId) == EncyclopediaStage::Complete;
         entries.push_back(DepthRenderEntry{
             enemy.position.y,

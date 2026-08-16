@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include <cstdint>
 #include <string>
 
 namespace majo {
@@ -19,6 +20,9 @@ enum class GameTestActionKind {
     RemoveRingItemToBackpack,
     DiscardBackpackStack,
     DiscardBackpackInstance,
+    PrepareMerchantStock,
+    WithdrawWarehouseStack,
+    BuyMerchantProduct,
     DepositBackpackStack,
     DepositBackpackInstance,
     SellBackpackStack,
@@ -45,9 +49,11 @@ struct GameTestAction {
     GameTestActionKind kind = GameTestActionKind::None;
     std::string objectId;
     std::string instanceId;
+    std::uint64_t stackRuntimeId = 0;
     std::string stageId;
     int count = 1;
     int upgradeIndex = -1;
+    int merchantProductIndex = -1;
     int ringIndex = -1;
     int ringItemIndex = -1;
     int estimatedMoneyCost = 0;
@@ -76,6 +82,9 @@ inline const char* gameTestActionKindName(GameTestActionKind kind)
     case GameTestActionKind::RemoveRingItemToBackpack: return "remove_ring_item_to_backpack";
     case GameTestActionKind::DiscardBackpackStack: return "discard_backpack_stack";
     case GameTestActionKind::DiscardBackpackInstance: return "discard_backpack_instance";
+    case GameTestActionKind::PrepareMerchantStock: return "prepare_merchant_stock";
+    case GameTestActionKind::WithdrawWarehouseStack: return "withdraw_warehouse_stack";
+    case GameTestActionKind::BuyMerchantProduct: return "buy_merchant_product";
     case GameTestActionKind::DepositBackpackStack: return "deposit_backpack_stack";
     case GameTestActionKind::DepositBackpackInstance: return "deposit_backpack_instance";
     case GameTestActionKind::SellBackpackStack: return "sell_backpack_stack";

@@ -238,6 +238,7 @@ public:
         const RuntimeBalance& balance,
         const EnemyCatalog& enemyCatalog,
         std::string_view bossEnemyId = {});
+    int removeBosses(std::string_view bossEnemyId = {});
     bool activateBossPreview(std::string_view bossEnemyId = {});
     bool advanceBossSpawnPresentation(float dt);
     bool configureActiveBossWalkInPresentation(Vec2 startPosition, float durationSeconds);

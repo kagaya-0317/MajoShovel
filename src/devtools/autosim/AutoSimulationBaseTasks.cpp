@@ -1,9 +1,14 @@
 ﻿#include "devtools/autosim/AutoSimulationBaseTasks.hpp"
 
+#include "devtools/autosim/AutoSimulationConsumablePlanner.hpp"
+#include "game/ItemModel.hpp"
+
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -13,7 +18,9 @@ namespace {
 
 constexpr float ProtectThreshold = 86.0f;
 constexpr float EnhanceThreshold = 92.0f;
-constexpr int EnhancementBudgetDivisor = 4;
+constexpr int OptionalSpendBudgetDivisor = 4;
+constexpr int RecoverySupplyTargetCount = 10;
+constexpr int MaxRecoveryStackSlots = 3;
 constexpr int MinDepartureFreeSlots = 8;
 constexpr int MaxDepartureFreeSlots = 12;
 constexpr int MinWarehouseFreeSlots = 2;
@@ -114,10 +121,161 @@ bool warehouseHasRoomFor(const GameTestInventorySnapshot& inventory, const GameT
 {
     if (item.kind == GameTestObjectEntryKind::Stack) {
         return std::any_of(inventory.warehouseItems.begin(), inventory.warehouseItems.end(), [&item](const GameTestObjectEntrySnapshot& stored) {
-            return stored.kind == GameTestObjectEntryKind::Stack && stored.objectId == item.objectId;
+            return stored.kind == GameTestObjectEntryKind::Stack &&
+                stored.objectId == item.objectId &&
+                stored.count < ObjectStackMaxCount;
         }) || inventory.warehouseUsedSlots < inventory.warehouseCapacity;
     }
     return inventory.warehouseUsedSlots < inventory.warehouseCapacity;
+}
+
+bool recoverySupplyItem(const GameTestObjectEntrySnapshot& item)
+{
+    if (item.kind != GameTestObjectEntryKind::Stack ||
+        item.objectId.empty() ||
+        item.category != "回復" ||
+        item.broken ||
+        item.important) {
+        return false;
+    }
+    const AutoSimulationConsumableProfile profile = autoSimulationConsumableProfile(item);
+    return profile.heal > 0.0 && !profile.unsafeSelfEffect;
+}
+
+int preferredRecoveryPriority(std::string_view objectId)
+{
+    constexpr std::array<std::string_view, 3> PreferredRecoveryIds{
+        "item_luxury_apple",
+        "item_good_apple",
+        "item_apple",
+    };
+    const auto it = std::find(PreferredRecoveryIds.begin(), PreferredRecoveryIds.end(), objectId);
+    return it == PreferredRecoveryIds.end()
+        ? 0
+        : static_cast<int>(PreferredRecoveryIds.end() - it);
+}
+
+struct RecoverySupplyCandidate {
+    std::string objectId;
+    int backpackCount = 0;
+    int warehouseCount = 0;
+    int merchantCount = 0;
+    double heal = 0.0;
+};
+
+std::vector<std::string> selectedRecoveryObjectIds(const GameTestSnapshot& snapshot)
+{
+    std::vector<RecoverySupplyCandidate> candidates;
+    const auto add = [&candidates](const GameTestObjectEntrySnapshot& item, int backpack, int warehouse, int merchant) {
+        if (!recoverySupplyItem(item)) {
+            return;
+        }
+        auto it = std::find_if(candidates.begin(), candidates.end(), [&item](const RecoverySupplyCandidate& candidate) {
+            return candidate.objectId == item.objectId;
+        });
+        if (it == candidates.end()) {
+            candidates.push_back(RecoverySupplyCandidate{
+                .objectId = item.objectId,
+                .backpackCount = backpack,
+                .warehouseCount = warehouse,
+                .merchantCount = merchant,
+                .heal = autoSimulationConsumableProfile(item).heal,
+            });
+            return;
+        }
+        it->backpackCount += backpack;
+        it->warehouseCount += warehouse;
+        it->merchantCount += merchant;
+        it->heal = std::max(it->heal, autoSimulationConsumableProfile(item).heal);
+    };
+
+    for (const GameTestObjectEntrySnapshot& item : snapshot.inventory.backpackItems) {
+        add(item, std::max(0, item.count), 0, 0);
+    }
+    for (const GameTestObjectEntrySnapshot& item : snapshot.inventory.warehouseItems) {
+        add(item, 0, std::max(0, item.count), 0);
+    }
+    if (snapshot.base.merchantStockPrepared) {
+        for (const GameTestMerchantProductSnapshot& product : snapshot.base.merchantProducts) {
+            add(product.item, 0, 0, std::max(0, product.stockCount));
+        }
+    }
+
+    std::stable_sort(candidates.begin(), candidates.end(), [](const RecoverySupplyCandidate& left, const RecoverySupplyCandidate& right) {
+        const bool leftCarried = left.backpackCount > 0;
+        const bool rightCarried = right.backpackCount > 0;
+        if (leftCarried != rightCarried) {
+            return leftCarried;
+        }
+        const int leftPreferred = preferredRecoveryPriority(left.objectId);
+        const int rightPreferred = preferredRecoveryPriority(right.objectId);
+        if (leftPreferred != rightPreferred) {
+            return leftPreferred > rightPreferred;
+        }
+        if (left.warehouseCount != right.warehouseCount) {
+            return left.warehouseCount > right.warehouseCount;
+        }
+        if (left.heal != right.heal) {
+            return left.heal > right.heal;
+        }
+        return left.objectId < right.objectId;
+    });
+
+    std::vector<std::string> selected;
+    const int count = std::min(MaxRecoveryStackSlots, static_cast<int>(candidates.size()));
+    selected.reserve(static_cast<std::size_t>(count));
+    for (int i = 0; i < count; ++i) {
+        selected.push_back(candidates[static_cast<std::size_t>(i)].objectId);
+    }
+    return selected;
+}
+
+bool recoveryObjectSelected(const std::vector<std::string>& selected, std::string_view objectId)
+{
+    return std::find(selected.begin(), selected.end(), objectId) != selected.end();
+}
+
+const GameTestObjectEntrySnapshot* recoveryStack(
+    const std::vector<GameTestObjectEntrySnapshot>& items,
+    std::string_view objectId)
+{
+    const auto it = std::max_element(items.begin(), items.end(), [objectId](
+        const GameTestObjectEntrySnapshot& left,
+        const GameTestObjectEntrySnapshot& right) {
+        const int leftCount = left.kind == GameTestObjectEntryKind::Stack && left.objectId == objectId
+            ? std::max(0, left.count)
+            : -1;
+        const int rightCount = right.kind == GameTestObjectEntryKind::Stack && right.objectId == objectId
+            ? std::max(0, right.count)
+            : -1;
+        return leftCount < rightCount;
+    });
+    if (it == items.end() || it->kind != GameTestObjectEntryKind::Stack || it->objectId != objectId) {
+        return nullptr;
+    }
+    return &*it;
+}
+
+bool recoveryStackReserved(
+    const GameTestObjectEntrySnapshot& item,
+    const std::vector<std::string>& selected,
+    const GameTestInventorySnapshot& inventory)
+{
+    if (!recoveryObjectSelected(selected, item.objectId)) {
+        return false;
+    }
+    const GameTestObjectEntrySnapshot* keeper = recoveryStack(inventory.backpackItems, item.objectId);
+    return keeper != nullptr && keeper->stackRuntimeId == item.stackRuntimeId;
+}
+
+int safeMoneyProduct(int unitPrice, int count)
+{
+    if (unitPrice <= 0 || count <= 0) {
+        return 0;
+    }
+    return count > std::numeric_limits<int>::max() / unitPrice
+        ? std::numeric_limits<int>::max()
+        : unitPrice * count;
 }
 
 float equippedStaffScore(const GameTestInventorySnapshot& inventory)
@@ -192,6 +350,7 @@ GameTestAction itemAction(
 {
     GameTestAction action;
     action.kind = kind;
+    action.stackRuntimeId = item.stackRuntimeId;
     action.objectId = item.objectId;
     action.instanceId = item.instanceId;
     action.count = count;
@@ -249,6 +408,11 @@ bool isItemEnhancementAction(GameTestActionKind kind)
     default:
         return false;
     }
+}
+
+bool isOptionalSpendAction(GameTestActionKind kind)
+{
+    return isItemEnhancementAction(kind) || kind == GameTestActionKind::BuyMerchantProduct;
 }
 
 int enhancementMoneyCost(
@@ -343,6 +507,113 @@ std::optional<GameTestAction> chooseCodexAction(const GameTestSnapshot& snapshot
     return action;
 }
 
+std::optional<GameTestAction> chooseRecoverySupplyAction(
+    const GameTestSnapshot& snapshot,
+    int optionalSpendBudgetRemaining)
+{
+    const std::vector<std::string> selected = selectedRecoveryObjectIds(snapshot);
+
+    for (const GameTestObjectEntrySnapshot& item : snapshot.inventory.backpackItems) {
+        if (!recoverySupplyItem(item)) {
+            continue;
+        }
+        const GameTestObjectEntrySnapshot* keeper = recoveryStack(
+            snapshot.inventory.backpackItems,
+            item.objectId);
+        const bool selectedKeeper = recoveryObjectSelected(selected, item.objectId) &&
+            keeper != nullptr &&
+            keeper->stackRuntimeId == item.stackRuntimeId;
+        if (!selectedKeeper) {
+            if (warehouseHasRoomFor(snapshot.inventory, item)) {
+                return itemAction(
+                    GameTestActionKind::DepositBackpackStack,
+                    item,
+                    std::max(1, item.count),
+                    "recovery_stack_slot_limit");
+            }
+            continue;
+        }
+    }
+
+    for (const std::string& objectId : selected) {
+        const GameTestObjectEntrySnapshot* backpack = recoveryStack(snapshot.inventory.backpackItems, objectId);
+        const GameTestObjectEntrySnapshot* warehouse = recoveryStack(snapshot.inventory.warehouseItems, objectId);
+        const int backpackCount = backpack == nullptr ? 0 : std::max(0, backpack->count);
+        const int warehouseCount = warehouse == nullptr ? 0 : std::max(0, warehouse->count);
+        const int moveCount = std::min(warehouseCount, std::max(0, ObjectStackMaxCount - backpackCount));
+        if (warehouse != nullptr && moveCount > 0) {
+            return itemAction(
+                GameTestActionKind::WithdrawWarehouseStack,
+                *warehouse,
+                moveCount,
+                "carry_recovery_from_warehouse");
+        }
+    }
+
+    int carriedRecoveryCount = 0;
+    for (const std::string& objectId : selected) {
+        if (const GameTestObjectEntrySnapshot* item = recoveryStack(snapshot.inventory.backpackItems, objectId)) {
+            carriedRecoveryCount += std::min(ObjectStackMaxCount, std::max(0, item->count));
+        }
+    }
+    if (carriedRecoveryCount >= RecoverySupplyTargetCount) {
+        return std::nullopt;
+    }
+    if (!snapshot.base.merchantStockPrepared) {
+        GameTestAction action;
+        action.kind = GameTestActionKind::PrepareMerchantStock;
+        action.reason = "recovery_supply_shortage";
+        return action;
+    }
+
+    const int shortage = RecoverySupplyTargetCount - carriedRecoveryCount;
+    const GameTestMerchantProductSnapshot* bestProduct = nullptr;
+    int bestCount = 0;
+    for (const GameTestMerchantProductSnapshot& product : snapshot.base.merchantProducts) {
+        if (!recoveryObjectSelected(selected, product.item.objectId) ||
+            !recoverySupplyItem(product.item) ||
+            product.unitPrice <= 0) {
+            continue;
+        }
+        const GameTestObjectEntrySnapshot* backpack =
+            recoveryStack(snapshot.inventory.backpackItems, product.item.objectId);
+        const int backpackCount = backpack == nullptr ? 0 : std::max(0, backpack->count);
+        const int budgetCount = optionalSpendBudgetRemaining / product.unitPrice;
+        const int purchaseCount = std::min({
+            shortage,
+            std::max(0, product.stockCount),
+            std::max(0, product.purchasableCount),
+            std::max(0, ObjectStackMaxCount - backpackCount),
+            std::max(0, budgetCount),
+        });
+        if (purchaseCount <= 0) {
+            continue;
+        }
+        const bool productMerges = backpackCount > 0;
+        const bool bestMerges = bestProduct != nullptr &&
+            recoveryStack(snapshot.inventory.backpackItems, bestProduct->item.objectId) != nullptr;
+        if (bestProduct == nullptr ||
+            (productMerges != bestMerges && productMerges) ||
+            (productMerges == bestMerges && product.unitPrice < bestProduct->unitPrice) ||
+            (productMerges == bestMerges && product.unitPrice == bestProduct->unitPrice && purchaseCount > bestCount)) {
+            bestProduct = &product;
+            bestCount = purchaseCount;
+        }
+    }
+    if (bestProduct == nullptr) {
+        return std::nullopt;
+    }
+
+    GameTestAction action;
+    action.kind = GameTestActionKind::BuyMerchantProduct;
+    action.objectId = bestProduct->item.objectId;
+    action.merchantProductIndex = bestProduct->index;
+    action.count = bestCount;
+    action.estimatedMoneyCost = safeMoneyProduct(bestProduct->unitPrice, bestCount);
+    action.reason = "buy_recovery_to_target";
+    return action;
+}
+
 float upgradePriority(const GameTestSnapshot& snapshot, const GameTestUpgradeSnapshot& upgrade)
 {
     if (!upgrade.affordable) {
@@ -384,28 +655,28 @@ bool AutoSimulationBaseTasks::backpackCanDepart(const GameTestInventorySnapshot&
     return inventory.backpackCapacity <= 0 || backpackFreeSlots(inventory) > 0;
 }
 
-int AutoSimulationBaseTasks::enhancementBudgetRemaining() const
+int AutoSimulationBaseTasks::optionalSpendBudgetRemaining() const
 {
-    return std::max(0, enhancementBudgetLimit_ - enhancementBudgetSpent_);
+    return std::max(0, optionalSpendBudgetLimit_ - optionalSpendBudgetSpent_);
 }
 
 void AutoSimulationBaseTasks::observeMoney(int money) const
 {
-    const int candidateLimit = std::max(0, money) / EnhancementBudgetDivisor;
-    enhancementBudgetLimit_ = std::max(enhancementBudgetLimit_, candidateLimit);
+    const int candidateLimit = std::max(0, money) / OptionalSpendBudgetDivisor;
+    optionalSpendBudgetLimit_ = std::max(optionalSpendBudgetLimit_, candidateLimit);
 }
 
 void AutoSimulationBaseTasks::recordActionResult(
     const GameTestAction& action,
     const GameTestActionResult& result)
 {
-    if (!result.applied || !isItemEnhancementAction(action.kind)) {
+    if (!result.applied || !isOptionalSpendAction(action.kind)) {
         return;
     }
     const int cost = std::max(0, action.estimatedMoneyCost);
-    enhancementBudgetSpent_ = cost > std::numeric_limits<int>::max() - enhancementBudgetSpent_
+    optionalSpendBudgetSpent_ = cost > std::numeric_limits<int>::max() - optionalSpendBudgetSpent_
         ? std::numeric_limits<int>::max()
-        : enhancementBudgetSpent_ + cost;
+        : optionalSpendBudgetSpent_ + cost;
 }
 
 std::optional<GameTestAction> AutoSimulationBaseTasks::choosePreparationAction(const GameTestSnapshot& snapshot) const
@@ -420,6 +691,11 @@ std::optional<GameTestAction> AutoSimulationBaseTasks::choosePreparationAction(c
     }
     if (!backpackReadyForDeparture(snapshot.inventory)) {
         return std::nullopt;
+    }
+    if (std::optional<GameTestAction> action = chooseRecoverySupplyAction(
+            snapshot,
+            optionalSpendBudgetRemaining())) {
+        return action;
     }
     return chooseCheckpointPrepAction(snapshot);
 }
@@ -445,7 +721,7 @@ std::optional<GameTestAction> AutoSimulationBaseTasks::chooseCheckpointPrepActio
     std::optional<GameTestAction> bestEnhance;
     float bestProtectScore = ProtectThreshold;
     float bestEnhanceScore = EnhanceThreshold;
-    const int remainingEnhancementBudget = enhancementBudgetRemaining();
+    const int remainingEnhancementBudget = optionalSpendBudgetRemaining();
     const AutoSimulationItemEvaluationContext itemContext =
         autoSimulationItemEvaluationContextForSnapshot(snapshot);
 
@@ -535,12 +811,15 @@ std::optional<GameTestAction> AutoSimulationBaseTasks::chooseAction(const GameTe
     float fallbackUnprotectScore = std::numeric_limits<float>::max();
     const AutoSimulationItemEvaluationContext itemContext =
         autoSimulationItemEvaluationContextForSnapshot(snapshot);
+    const std::vector<std::string> selectedRecovery = selectedRecoveryObjectIds(snapshot);
 
     for (const GameTestObjectEntrySnapshot& item : snapshot.inventory.backpackItems) {
         const AutoSimulationItemScore score = itemEvaluator_.evaluate(item, itemContext);
         const bool loadoutReserved = reservedForGearLoadout(item, score, currentStaffScore);
-        const bool depositReserved = loadoutReserved && !item.protectionEnabled && !backpackCleanup;
-        const bool sellReserved = loadoutReserved && !backpackCleanup;
+        const bool recoveryReserved = recoveryStackReserved(item, selectedRecovery, snapshot.inventory);
+        const bool depositReserved = recoveryReserved ||
+            (loadoutReserved && !item.protectionEnabled && !backpackCleanup);
+        const bool sellReserved = recoveryReserved || (loadoutReserved && !backpackCleanup);
         if (warehouseHasRoomFor(snapshot.inventory, item) &&
             !depositReserved &&
             !item.equipped &&
@@ -589,11 +868,12 @@ std::optional<GameTestAction> AutoSimulationBaseTasks::chooseAction(const GameTe
             : CleanupUnprotectKeepThreshold;
         for (const GameTestObjectEntrySnapshot& item : snapshot.inventory.warehouseItems) {
             const AutoSimulationItemScore score = itemEvaluator_.evaluate(item, itemContext);
-            if (canSell(item) && score.keep < sellLimit && score.keep < bestSellScore) {
+            const bool recoveryReserved = recoverySupplyItem(item);
+            if (!recoveryReserved && canSell(item) && score.keep < sellLimit && score.keep < bestSellScore) {
                 bestSell = &item;
                 bestSellScore = score.keep;
             }
-            if (canSell(item) && score.keep < fallbackSellScore) {
+            if (!recoveryReserved && canSell(item) && score.keep < fallbackSellScore) {
                 fallbackSell = &item;
                 fallbackSellScore = score.keep;
             }

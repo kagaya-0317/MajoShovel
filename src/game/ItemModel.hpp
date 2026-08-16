@@ -4,12 +4,19 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace majo {
+
+constexpr int ObjectStackMaxCount = 19;
+
+using ObjectStackRuntimeId = std::uint64_t;
+
+[[nodiscard]] ObjectStackRuntimeId allocateObjectStackRuntimeId();
 
 constexpr int DurabilityUnitsPerPoint = 3;
 constexpr int TerrainHitDurabilityCostUnits = 1;

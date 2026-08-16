@@ -1334,12 +1334,15 @@ void EffectSystem::spawnLevelUpPopup(Vec2 position)
     popup->duration = 1.14f;
 }
 
-void EffectSystem::spawnLevelUpEffects(Vec2 position)
+void EffectSystem::spawnPresentationPulseRings(Vec2 position, Color color, int pulseCount)
 {
     constexpr float FramesPerSecond = 60.0f;
     constexpr float PulseDuration = 75.0f / FramesPerSecond;
-    constexpr float SecondPulseDelay = 15.0f / FramesPerSecond;
-    for (int pulseIndex = 0; pulseIndex < 2; ++pulseIndex) {
+    constexpr float PulseInterval = 15.0f / FramesPerSecond;
+    constexpr float PulseStartRadius = 8.0f;
+    constexpr float PulseEndRadius = 72.0f;
+
+    for (int pulseIndex = 0; pulseIndex < std::max(0, pulseCount); ++pulseIndex) {
         Effect* pulse = effects_.acquire();
         if (pulse == nullptr) {
             break;
@@ -1347,12 +1350,18 @@ void EffectSystem::spawnLevelUpEffects(Vec2 position)
         pulse->type = EffectType::LevelUpPulseRing;
         pulse->layer = EffectLayer::Foreground;
         pulse->position = position;
-        pulse->color = {255, 232, 126, 210};
+        pulse->color = color;
         pulse->duration = PulseDuration;
-        pulse->startRadius = 8.0f;
-        pulse->endRadius = 72.0f;
-        pulse->age = pulseIndex == 0 ? 0.0f : -SecondPulseDelay;
+        pulse->startRadius = PulseStartRadius;
+        pulse->endRadius = PulseEndRadius;
+        pulse->age = -PulseInterval * static_cast<float>(pulseIndex);
     }
+}
+
+void EffectSystem::spawnLevelUpEffects(Vec2 position)
+{
+    constexpr float FramesPerSecond = 60.0f;
+    spawnPresentationPulseRings(position, {255, 232, 126, 210}, 2);
 
     constexpr int TwinkleCount = 20;
     for (int i = 0; i < TwinkleCount; ++i) {

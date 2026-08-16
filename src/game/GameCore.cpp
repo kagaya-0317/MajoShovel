@@ -1643,6 +1643,7 @@ void Game::resetWorldRunState()
     gameOverStatus_.clear();
     bossSpawned_ = false;
     bossPreviewSpawned_ = false;
+    bossDefeatRematchPending_ = false;
     hasBossSpawnPoint_ = false;
     resetBossEncounter();
     clearRoguelikeBigHoleState();
@@ -3606,8 +3607,8 @@ void Game::clampCurrentStageToSelectableStages()
 
 void Game::syncWarpStateForCurrentStage()
 {
-    auto stateIt = dungeonStates_.find(currentStageId_);
-    if (stateIt == dungeonStates_.end() || !stateIt->second.valid) {
+    const DungeonState* state = retainedDungeonStateForCurrentStage();
+    if (state == nullptr) {
         unlockedWarpPointCount_ = 0;
         hasLatestWarpPointPosition_ = false;
         latestWarpPointPosition_ = {};
@@ -3617,7 +3618,7 @@ void Game::syncWarpStateForCurrentStage()
     int discoveredCount = 0;
     Vec2 latestPosition{};
     bool hasLatest = false;
-    for (const WarpPoint& point : stateIt->second.warpPoints) {
+    for (const WarpPoint& point : state->warpPoints) {
         if (!point.discovered) {
             continue;
         }
@@ -3626,11 +3627,10 @@ void Game::syncWarpStateForCurrentStage()
         hasLatest = true;
     }
 
-    const DungeonState& state = stateIt->second;
-    unlockedWarpPointCount_ = std::max(std::max(0, state.unlockedWarpPointCount), discoveredCount);
-    hasLatestWarpPointPosition_ = state.hasLatestWarpPointPosition || hasLatest;
-    latestWarpPointPosition_ = state.hasLatestWarpPointPosition
-        ? state.latestWarpPointPosition
+    unlockedWarpPointCount_ = std::max(std::max(0, state->unlockedWarpPointCount), discoveredCount);
+    hasLatestWarpPointPosition_ = state->hasLatestWarpPointPosition || hasLatest;
+    latestWarpPointPosition_ = state->hasLatestWarpPointPosition
+        ? state->latestWarpPointPosition
         : (hasLatest ? latestPosition : Vec2{});
 }
 
@@ -3951,6 +3951,10 @@ void Game::enterGameOver()
     }
 
     recordAstralEchoStar(true);
+    bossDefeatRematchPending_ = bossDefeatRematchPending_ ||
+        (bossSpawned_ &&
+            bossEncounter_.phase == BossEncounterPhase::Fighting &&
+            bossEncounter_.purpose == BossEncounterPurpose::StageClear);
     resetBossEncounter();
     player_.hp = 0;
     inventory_.setOpen(false);

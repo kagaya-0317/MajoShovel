@@ -539,7 +539,7 @@ int InventorySystem::materialCount(MaterialType type) const
     return materials_.count(type);
 }
 
-bool InventorySystem::setObjectItemCount(const ObjectCatalog& catalog, std::string_view objectId, int count)
+bool InventorySystem::restoreObjectItemCount(const ObjectCatalog& catalog, std::string_view objectId, int count)
 {
     if (objectId.empty() || count <= 0) {
         return false;
@@ -551,18 +551,7 @@ bool InventorySystem::setObjectItemCount(const ObjectCatalog& catalog, std::stri
         logError("[warning] SaveData: object_id=\"" + std::string(objectId) + "\" is missing from Objects DB; restored as missing stack item");
     }
 
-    for (InventoryObjectStack& stack : objectStacks_) {
-        if (stack.objectId == resolvedItem.id) {
-            stack.count = count;
-            stack.item = resolvedItem;
-            return true;
-        }
-    }
-
-    syncPackedItemSlots();
-    packedItemLayout_.insertEntry(static_cast<int>(objectStacks_.size()));
-    objectStacks_.push_back(InventoryObjectStack{resolvedItem, count});
-    return true;
+    return addObjectStack(resolvedItem, count);
 }
 
 bool InventorySystem::addObjectInstance(const ObjectCatalog& catalog, ItemInstance instance)
@@ -670,22 +659,56 @@ bool InventorySystem::removeObjectItemCount(std::string_view objectId, int count
         return false;
     }
 
-    for (auto it = objectStacks_.begin(); it != objectStacks_.end(); ++it) {
-        if (it->objectId != objectId || it->count < count) {
-            continue;
+    int available = 0;
+    for (const InventoryObjectStack& stack : objectStacks_) {
+        if (stack.objectId == objectId && stack.count > 0) {
+            available += stack.count;
         }
-
-        it->count -= count;
-        if (it->count <= 0) {
-            const int stackIndex = static_cast<int>(std::distance(objectStacks_.begin(), it));
-            removePackedSlotAtPackedIndex(stackIndex);
-            objectStacks_.erase(it);
-        }
-        status_ = "売却したよ";
-        return true;
+    }
+    if (available < count) {
+        return false;
     }
 
-    return false;
+    int remaining = count;
+    for (int index = 0; index < static_cast<int>(objectStacks_.size()) && remaining > 0;) {
+        InventoryObjectStack& stack = objectStacks_[static_cast<std::size_t>(index)];
+        if (stack.objectId != objectId || stack.count <= 0) {
+            ++index;
+            continue;
+        }
+        const int removed = std::min(remaining, stack.count);
+        stack.count -= removed;
+        remaining -= removed;
+        if (stack.count <= 0) {
+            removePackedSlotAtPackedIndex(index);
+            objectStacks_.erase(objectStacks_.begin() + index);
+        } else {
+            ++index;
+        }
+    }
+    status_ = "売却したよ";
+    return true;
+}
+
+bool InventorySystem::removeObjectStackCount(ObjectStackRuntimeId runtimeId, int count)
+{
+    if (runtimeId == 0 || count <= 0) {
+        return false;
+    }
+    const auto it = std::find_if(objectStacks_.begin(), objectStacks_.end(), [runtimeId](const InventoryObjectStack& stack) {
+        return stack.runtimeId == runtimeId;
+    });
+    if (it == objectStacks_.end() || it->count < count) {
+        return false;
+    }
+    it->count -= count;
+    if (it->count <= 0) {
+        const int stackIndex = static_cast<int>(std::distance(objectStacks_.begin(), it));
+        removePackedSlotAtPackedIndex(stackIndex);
+        objectStacks_.erase(it);
+    }
+    status_ = "売却したよ";
+    return true;
 }
 
 bool InventorySystem::useObjectStackById(
@@ -1000,7 +1023,7 @@ bool InventorySystem::enhanceObjectInstance(
 }
 
 bool InventorySystem::enhanceObjectStackItem(
-    std::string_view objectId,
+    ObjectStackRuntimeId runtimeId,
     int attackBonus,
     int digBonus,
     int durabilityBonus,
@@ -1009,11 +1032,11 @@ bool InventorySystem::enhanceObjectStackItem(
     int durabilityLevelDelta,
     int maxEnhanceLevel)
 {
-    if (objectId.empty()) {
+    if (runtimeId == 0) {
         return false;
     }
-    const auto it = std::find_if(objectStacks_.begin(), objectStacks_.end(), [objectId](const InventoryObjectStack& stack) {
-        return stack.objectId == objectId && stack.count > 0;
+    const auto it = std::find_if(objectStacks_.begin(), objectStacks_.end(), [runtimeId](const InventoryObjectStack& stack) {
+        return stack.runtimeId == runtimeId && stack.count > 0;
     });
     if (it == objectStacks_.end()) {
         return false;
@@ -1075,13 +1098,13 @@ bool InventorySystem::modifyObjectInstanceShape(std::string_view instanceId, dou
     return true;
 }
 
-bool InventorySystem::modifyObjectStackItemShape(std::string_view objectId, double weightMultiplier, double sizeMultiplier)
+bool InventorySystem::modifyObjectStackItemShape(ObjectStackRuntimeId runtimeId, double weightMultiplier, double sizeMultiplier)
 {
-    if (objectId.empty() || weightMultiplier <= 0.0 || sizeMultiplier <= 0.0) {
+    if (runtimeId == 0 || weightMultiplier <= 0.0 || sizeMultiplier <= 0.0) {
         return false;
     }
-    const auto it = std::find_if(objectStacks_.begin(), objectStacks_.end(), [objectId](const InventoryObjectStack& stack) {
-        return stack.objectId == objectId && stack.count > 0;
+    const auto it = std::find_if(objectStacks_.begin(), objectStacks_.end(), [runtimeId](const InventoryObjectStack& stack) {
+        return stack.runtimeId == runtimeId && stack.count > 0;
     });
     if (it == objectStacks_.end()) {
         return false;
@@ -1300,16 +1323,16 @@ bool InventorySystem::canAddObjectStack(std::string_view objectId, int count) co
     if (objectId.empty() || count <= 0) {
         return false;
     }
-    const auto existingStack = std::find_if(
-        objectStacks_.begin(),
-        objectStacks_.end(),
-        [objectId](const InventoryObjectStack& stack) {
-            return stack.objectId == objectId;
-        });
-    if (existingStack != objectStacks_.end()) {
-        return existingStack->count <= std::numeric_limits<int>::max() - count;
+    int available = std::max(
+        0,
+        ShortcutSlotCount - static_cast<int>(objectStacks_.size() + objectInstances_.size())) *
+        ObjectStackMaxCount;
+    for (const InventoryObjectStack& stack : objectStacks_) {
+        if (stack.objectId == objectId) {
+            available += std::max(0, ObjectStackMaxCount - stack.count);
+        }
     }
-    return static_cast<int>(objectStacks_.size() + objectInstances_.size()) < ShortcutSlotCount;
+    return count <= available;
 }
 
 bool InventorySystem::addObjectStack(const ItemData& item, int count, InventoryAddResult* outResult)
@@ -1323,24 +1346,27 @@ bool InventorySystem::addObjectStack(const ItemData& item, int count, InventoryA
         return false;
     }
 
-    const auto stackIt = std::find_if(
-        objectStacks_.begin(),
-        objectStacks_.end(),
-        [&item](const InventoryObjectStack& stack) {
-            return stack.objectId == item.id;
-        });
-    if (stackIt != objectStacks_.end()) {
-        stackIt->count += count;
-        stackIt->item = item;
-        stackIt->objectId = item.id;
-        status_ = "Picked up: " + item.name;
-        setInventoryAddResult(outResult, InventoryAddKind::Stack, item.id, {}, count);
-        return true;
+    int remaining = count;
+    for (InventoryObjectStack& stack : objectStacks_) {
+        if (stack.objectId != item.id || stack.count >= ObjectStackMaxCount) {
+            continue;
+        }
+        const int added = std::min(remaining, ObjectStackMaxCount - stack.count);
+        stack.count += added;
+        stack.item = item;
+        stack.objectId = item.id;
+        remaining -= added;
+        if (remaining <= 0) {
+            break;
+        }
     }
-
-    syncPackedItemSlots();
-    packedItemLayout_.insertEntry(static_cast<int>(objectStacks_.size()));
-    objectStacks_.push_back(InventoryObjectStack{item, count});
+    while (remaining > 0) {
+        const int added = std::min(remaining, ObjectStackMaxCount);
+        syncPackedItemSlots();
+        packedItemLayout_.insertEntry(static_cast<int>(objectStacks_.size()));
+        objectStacks_.push_back(InventoryObjectStack{item, added});
+        remaining -= added;
+    }
     status_ = "Picked up: " + item.name;
     setInventoryAddResult(outResult, InventoryAddKind::Stack, item.id, {}, count);
     return true;
@@ -1899,14 +1925,14 @@ bool InventorySystem::moveScreenItem(int fromIndex, int toIndex)
     return packedItemLayout_.moveEntryToSlot(fromPacked, toIndex, ShortcutSlotCount);
 }
 
-bool InventorySystem::moveObjectStackToScreenSlot(std::string_view objectId, int slotIndex)
+bool InventorySystem::moveObjectStackToScreenSlot(ObjectStackRuntimeId runtimeId, int slotIndex)
 {
-    if (objectId.empty() || slotIndex < 0 || slotIndex >= ShortcutSlotCount) {
+    if (runtimeId == 0 || slotIndex < 0 || slotIndex >= ShortcutSlotCount) {
         return false;
     }
     syncPackedItemSlots();
     for (int i = 0; i < static_cast<int>(objectStacks_.size()); ++i) {
-        if (objectStacks_[static_cast<std::size_t>(i)].objectId == objectId) {
+        if (objectStacks_[static_cast<std::size_t>(i)].runtimeId == runtimeId) {
             return moveScreenItem(packedItemLayout_.slotForEntry(i), slotIndex);
         }
     }
@@ -1947,6 +1973,7 @@ ItemKey InventorySystem::itemKeyAtScreenIndex(int index) const
     if (const InventoryObjectStack* stack = objectStackAtScreenIndex(index)) {
         key.stack = true;
         key.stableId = stack->objectId;
+        key.stackRuntimeId = stack->runtimeId;
     } else if (const InventoryObjectInstance* instance = objectInstanceAtScreenIndex(index)) {
         key.stableId = instance->instance.instanceId;
     }
@@ -1959,7 +1986,7 @@ bool InventorySystem::moveItemKeyToScreenSlot(const ItemKey& key, int slotIndex)
         return false;
     }
     return key.stack
-        ? moveObjectStackToScreenSlot(key.stableId, slotIndex)
+        ? moveObjectStackToScreenSlot(key.stackRuntimeId, slotIndex)
         : moveObjectInstanceToScreenSlot(key.stableId, slotIndex);
 }
 

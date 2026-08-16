@@ -6089,6 +6089,7 @@ void Game::renderFinalScreenOverlays(Renderer& renderer)
 {
     renderScreenTransitionOverlay(renderer);
     renderDevBuildNotice(renderer);
+    renderBossDefeatFlash(renderer);
 }
 
 void Game::renderPlayerDamageVignette(Renderer& renderer, double totalSeconds) const
@@ -7683,6 +7684,9 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     };
     orbitOptions.centerDecoration = previewStyle.centerDecoration;
     drawMagicOrbitPath(renderer, orbitPath, orbitCenter, orbitOptions);
+
+    std::vector<RingUiItemDrawOrderEntry> drawOrder;
+    drawOrder.reserve(items.size());
     for (int i = 0; i < static_cast<int>(items.size()); ++i) {
         const SpellRingItem& item = items[static_cast<std::size_t>(i)];
         const UiRect itemRect = ringItemUiRect(
@@ -7695,6 +7699,39 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
             itemRect,
             UiNavigationRole::Control,
             i == ringSlotSelection_);
+        float displayAngle = item.localAngle;
+        const bool pointerMoving =
+            i == ringDragItemIndex_ && (ringDragActive_ || ringSnapActive_);
+        if (pointerMoving) {
+            displayAngle = ringDragDisplayAngle_;
+        }
+        const Vec2 itemAnchor = ringItemUiCenterAtAngle(
+            displayAngle,
+            spellRing_,
+            balance_,
+            i,
+            static_cast<int>(items.size()));
+        const bool selected = uiControlVisualState(itemRect).selected;
+        const bool keyboardMoving = ringItemMoveModeActive_ && i == ringItemMoveIndex_;
+        drawOrder.push_back({
+            i,
+            itemAnchor,
+            pointerMoving || keyboardMoving
+                ? RingUiItemFrontPriority::Moving
+                : (selected ? RingUiItemFrontPriority::Selected : RingUiItemFrontPriority::Normal),
+        });
+    }
+    sortRingUiItemsBackToFront(drawOrder);
+
+    for (const RingUiItemDrawOrderEntry& drawEntry : drawOrder) {
+        const int i = drawEntry.itemIndex;
+        const SpellRingItem& item = items[static_cast<std::size_t>(i)];
+        const UiRect itemRect = ringItemUiRect(
+            item,
+            spellRing_,
+            balance_,
+            i,
+            static_cast<int>(items.size()));
         float displayAngle = item.localAngle;
         if (i == ringDragItemIndex_ && (ringDragActive_ || ringSnapActive_)) {
             displayAngle = ringDragDisplayAngle_;
@@ -8711,16 +8748,13 @@ void Game::renderAstralResultScreen(Renderer& renderer) const
     drawUiButton(renderer, stageClearItemRect(0), "拠点へ戻る", false, uiActionButtonStyle());
 }
 
-void Game::renderBossDefeatPresentation(Renderer& renderer) const
+void Game::renderBossDefeatFlash(Renderer& renderer) const
 {
-    if (bossEncounter_.phase != BossEncounterPhase::DefeatPresentation) {
+    if (bossEncounter_.phase != BossEncounterPhase::DefeatFlash) {
         return;
     }
 
-    const float progress = bossDefeatPresentationProgress();
-    const float reveal = smoothStep01(std::min(progress / 0.35f, 1.0f));
-    const float fade = progress > 0.78f ? 1.0f - smoothStep01((progress - 0.78f) / 0.22f) : 1.0f;
-    const float alpha = reveal * fade;
+    const float alpha = bossDefeatFlashAlpha();
     if (alpha <= 0.001f) {
         return;
     }
@@ -8728,14 +8762,7 @@ void Game::renderBossDefeatPresentation(Renderer& renderer) const
     renderer.setScreenSpace();
     const float width = static_cast<float>(camera_.width());
     const float height = static_cast<float>(camera_.height());
-    renderer.fillRect({0.0f, 0.0f}, {width, height}, {0, 0, 0, alphaByte(118.0f * alpha)});
-
-    const Vec2 center{width * 0.5f, height * 0.43f};
-    const float ringPulse = 1.0f + std::sin(progress * Pi * 3.0f) * 0.08f;
-    renderer.drawCircle(center, 92.0f * ringPulse, {255, 220, 118, alphaByte(170.0f * alpha)});
-    renderer.drawCircle(center, 122.0f * ringPulse, {255, 156, 94, alphaByte(88.0f * alpha)});
-    renderer.drawText(center + Vec2{-174.0f, -20.0f}, "BOSS DEFEATED", {255, 235, 150, alphaByte(255.0f * alpha)}, 4);
-    renderer.drawText(center + Vec2{-110.0f, 42.0f}, "深部の主を退けた", {238, 242, 236, alphaByte(230.0f * alpha)}, 2);
+    renderer.fillRect({0.0f, 0.0f}, {width, height}, {255, 255, 255, alphaByte(255.0f * alpha)});
 }
 
 bool drawStoryBossEnemyImage(
@@ -9848,7 +9875,6 @@ void Game::render(Renderer& renderer, const Time& time)
                 }
                 renderPauseMenu(renderer);
                 renderRingScreen(renderer, time.totalSeconds());
-                renderBossDefeatPresentation(renderer);
                 renderGameOverScreen(renderer);
                 renderStageClearScreen(renderer);
                 renderAstralResultScreen(renderer);

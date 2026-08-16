@@ -2169,6 +2169,27 @@ bool parseBoolOrDefault(std::string_view text, bool fallback)
     return fallback;
 }
 
+std::uint64_t parseAudioFrameOrDefault(std::string_view text, std::uint64_t fallback)
+{
+    const std::string trimmed = trimAscii(std::string(text));
+    if (trimmed.empty()) {
+        return fallback;
+    }
+    std::uint64_t parsed = 0;
+    for (const unsigned char c : trimmed) {
+        if (c < '0' || c > '9') {
+            return fallback;
+        }
+        constexpr std::uint64_t Base = 10;
+        const std::uint64_t digit = static_cast<std::uint64_t>(c - '0');
+        if (parsed > (std::numeric_limits<std::uint64_t>::max() - digit) / Base) {
+            return fallback;
+        }
+        parsed = parsed * Base + digit;
+    }
+    return parsed;
+}
+
 std::string_view fieldOrEmpty(const std::vector<std::string>& fields, std::size_t index)
 {
     return index < fields.size() ? std::string_view(fields[index]) : std::string_view{};
@@ -2240,6 +2261,9 @@ void copyAudioCueSettings(const AudioCueEditEntry& source, AudioCueEditEntry& ta
     target.pitch = source.pitch;
     target.loop = source.loop;
     target.cooldownMs = source.cooldownMs;
+    target.loopStartFrame = source.loopStartFrame;
+    target.loopEndFrame = source.loopEndFrame;
+    target.loopCrossfadeFrames = source.loopCrossfadeFrames;
 }
 
 AudioCueType audioCueEngineType(AudioCueEditMode mode)
@@ -2413,6 +2437,9 @@ AudioCueEditEntry parseAudioCueManifestEntry(const std::vector<std::string>& fie
     } else if (fields.size() >= 7 && !hasPitchColumn) {
         entry.displayName = trimAscii(fields[6]);
     }
+    entry.loopStartFrame = parseAudioFrameOrDefault(fieldOrEmpty(fields, 8), 0);
+    entry.loopEndFrame = parseAudioFrameOrDefault(fieldOrEmpty(fields, 9), 0);
+    entry.loopCrossfadeFrames = parseAudioFrameOrDefault(fieldOrEmpty(fields, 10), 0);
     return entry;
 }
 
@@ -2470,7 +2497,7 @@ bool writeAudioCueManifestRows(const std::vector<AudioCueManifestRow>& rows, std
     }
 
     file << "\xEF\xBB\xBF";
-    file << "id\ttype\tpath\tvolume\tloop\tcooldown_ms\tpitch\tdisplay_name\n";
+    file << "id\ttype\tpath\tvolume\tloop\tcooldown_ms\tpitch\tdisplay_name\tloop_start_frame\tloop_end_frame\tloop_crossfade_frames\n";
     for (const AudioCueManifestRow& row : rows) {
         if (!row.valid || row.entry.id.empty()) {
             continue;
@@ -2483,7 +2510,10 @@ bool writeAudioCueManifestRows(const std::vector<AudioCueManifestRow>& rows, std
             << (row.entry.loop ? "true" : "false") << '\t'
             << formatAudioFloat(row.entry.cooldownMs) << '\t'
             << formatAudioFloat(row.entry.pitch) << '\t'
-            << row.entry.displayName << '\n';
+            << row.entry.displayName << '\t'
+            << row.entry.loopStartFrame << '\t'
+            << row.entry.loopEndFrame << '\t'
+            << row.entry.loopCrossfadeFrames << '\n';
     }
 
     if (!file) {
@@ -7777,6 +7807,9 @@ void Game::previewSelectedAudioCueFile()
         options.pitchScale = audioCueEditPitchScale(audioCueEditDraft_.pitch);
         options.loop = audioCueEditDraft_.loop;
         options.cooldownSeconds = audioCueEditDraft_.cooldownMs / 1000.0f;
+        options.loopStartFrame = audioCueEditDraft_.loopStartFrame;
+        options.loopEndFrame = audioCueEditDraft_.loopEndFrame;
+        options.loopCrossfadeFrames = audioCueEditDraft_.loopCrossfadeFrames;
     } else if (audioCueEditCueIndex_ >= 0 &&
                audioCueEditCueIndex_ < static_cast<int>(audioCueEditEntries_.size())) {
         const AudioCueEditEntry& cue = audioCueEditEntries_[static_cast<std::size_t>(audioCueEditCueIndex_)];
@@ -7784,6 +7817,9 @@ void Game::previewSelectedAudioCueFile()
         options.pitchScale = audioCueEditPitchScale(cue.pitch);
         options.loop = cue.loop;
         options.cooldownSeconds = cue.cooldownMs / 1000.0f;
+        options.loopStartFrame = cue.loopStartFrame;
+        options.loopEndFrame = cue.loopEndFrame;
+        options.loopCrossfadeFrames = cue.loopCrossfadeFrames;
     } else {
         options.loop = audioCueEditMode_ == AudioCueEditMode::Bgm;
     }
@@ -7838,6 +7874,9 @@ void Game::applySelectedAudioCueFile()
     options.pitchScale = audioCueEditPitchScale(cue.pitch);
     options.loop = cue.loop;
     options.cooldownSeconds = cue.cooldownMs / 1000.0f;
+    options.loopStartFrame = cue.loopStartFrame;
+    options.loopEndFrame = cue.loopEndFrame;
+    options.loopCrossfadeFrames = cue.loopCrossfadeFrames;
     const std::filesystem::path clipPath = std::filesystem::path(std::string(AudioCueEditAudioRoot)) / std::filesystem::path(file.relativePath);
     if (audio_ != nullptr) {
         if (audio_->loadCue(cue.id, audioCueEngineType(audioCueEditMode_), clipPath, options)) {
@@ -11571,6 +11610,16 @@ void Game::recordAutoSimulationPlayerDamage(const PlayerDamageEvent& event)
     }
 }
 
+void Game::recordAutoSimulationDeath()
+{
+    AutoSimulationCheckpointMeasurementState& measurement = autoSimulationCheckpointMeasurement_;
+    if (!measurement.active || measurement.completed) {
+        return;
+    }
+    ++measurement.totals.deathCount;
+    measurement.encounters.clear();
+}
+
 void Game::recordAutoSimulationRecoveryUse()
 {
     if (autoSimulationCheckpointMeasurement_.active && !autoSimulationCheckpointMeasurement_.completed) {
@@ -11787,6 +11836,7 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
         GameTestObjectEntrySnapshot entry;
         entry.location = location;
         entry.kind = GameTestObjectEntryKind::Stack;
+        entry.stackRuntimeId = stack.runtimeId;
         entry.objectId = stack.objectId;
         entry.name = stack.item.name;
         entry.category = stack.item.category;
@@ -11891,6 +11941,12 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
     } else if (snapshot.transitionActive) {
         snapshot.automationUiDirective = GameTestAutomationUiDirective::Wait;
         snapshot.automationUiReason = "画面遷移の完了待ち";
+    } else if (mode_ == ScreenMode::Playing && playerDeathSequenceActive()) {
+        snapshot.automationUiDirective = GameTestAutomationUiDirective::Wait;
+        snapshot.automationUiReason = "死亡演出の完了待ち";
+    } else if (mode_ == ScreenMode::GameOver && deathResultPrelude_.active) {
+        snapshot.automationUiDirective = GameTestAutomationUiDirective::Wait;
+        snapshot.automationUiReason = "ゲームオーバー演出の完了待ち";
     } else if (snapshot.pendingStoryDelayActive) {
         snapshot.automationUiDirective = GameTestAutomationUiDirective::Wait;
         snapshot.automationUiReason = "予約イベントの開始待ち（遅延中）";
@@ -12431,6 +12487,42 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
     snapshot.base.materials.moonFragment = inventory_.materialCount(MaterialType::MoonFragment);
     snapshot.base.materials.manaDrop = inventory_.materialCount(MaterialType::ManaDrop);
     snapshot.base.ringWorkshopUnlocked = ringWorkshopUnlocked_;
+    snapshot.base.merchantStockPrepared = !merchantRefreshPending_ && !merchantStock_.empty();
+    if (snapshot.base.merchantStockPrepared) {
+        snapshot.base.merchantProducts.reserve(merchantStock_.size());
+        for (int index = 0; index < static_cast<int>(merchantStock_.size()); ++index) {
+            const MerchantProduct& product = merchantStock_[static_cast<std::size_t>(index)];
+            const ItemData* item = objectCatalog_.registry.findById(product.objectId);
+            if (item == nullptr || product.quantity <= 0) {
+                continue;
+            }
+            GameTestObjectEntrySnapshot productItem;
+            productItem.location = GameTestInventoryLocation::Backpack;
+            productItem.kind = GameTestObjectEntryKind::Stack;
+            productItem.objectId = item->id;
+            productItem.name = item->name;
+            productItem.category = item->category;
+            productItem.damageType = item->damageType;
+            productItem.tags = item->tags;
+            appendUseEffects(productItem.useEffects, *item);
+            productItem.count = product.quantity;
+            productItem.rarity = item->rarity;
+            productItem.price = product.price;
+            productItem.durability = item->durability;
+            productItem.currentDurability = item->durability;
+            productItem.maxDurability = item->durability;
+            productItem.broken = item->durability == 0;
+            productItem.important = isImportantItem(*item);
+            productItem.sellable = isSellableObject(*item);
+            snapshot.base.merchantProducts.push_back(GameTestMerchantProductSnapshot{
+                .index = index,
+                .item = std::move(productItem),
+                .unitPrice = product.price,
+                .stockCount = product.quantity,
+                .purchasableCount = merchantProductPurchasableQuantity(product),
+            });
+        }
+    }
     snapshot.base.upgrades.reserve(BaseUpgradeItemCount);
     for (int index = 0; index < BaseUpgradeItemCount; ++index) {
         const MaterialType materialType = upgradeMaterialType(index);
@@ -12463,10 +12555,11 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
     const auto result = [](bool applied, std::string message) {
         return GameTestActionResult{applied, std::move(message)};
     };
-    const auto screenSlotForStack = [this](std::string_view objectId) {
+    const auto screenSlotForStack = [this](std::uint64_t runtimeId, std::string_view objectId) {
         for (int slot = 0; slot < inventory_.screenSlotCount(); ++slot) {
             const InventoryObjectStack* stack = inventory_.screenObjectStackAt(slot);
-            if (stack != nullptr && stack->objectId == objectId) {
+            if (stack != nullptr &&
+                (runtimeId != 0 ? stack->runtimeId == runtimeId : stack->objectId == objectId)) {
                 return slot;
             }
         }
@@ -12481,10 +12574,10 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
         }
         return -1;
     };
-    const auto backpackStackCount = [this](std::string_view objectId) {
+    const auto backpackStackCount = [this](std::uint64_t runtimeId, std::string_view objectId) {
         const auto& stacks = inventory_.objectStacks();
-        const auto it = std::find_if(stacks.begin(), stacks.end(), [objectId](const InventoryObjectStack& stack) {
-            return stack.objectId == objectId;
+        const auto it = std::find_if(stacks.begin(), stacks.end(), [runtimeId, objectId](const InventoryObjectStack& stack) {
+            return runtimeId != 0 ? stack.runtimeId == runtimeId : stack.objectId == objectId;
         });
         return it == stacks.end() ? 0 : it->count;
     };
@@ -12501,15 +12594,16 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
         });
         return it == instances.end() ? -1 : it->instance.enhanceLevel;
     };
-    const auto warehouseStackCount = [this](std::string_view objectId) {
-        const auto it = std::find_if(warehouseObjectStacks_.begin(), warehouseObjectStacks_.end(), [objectId](const InventoryObjectStack& stack) {
-            return stack.objectId == objectId;
+    const auto warehouseStackCount = [this](std::uint64_t runtimeId, std::string_view objectId) {
+        const auto it = std::find_if(warehouseObjectStacks_.begin(), warehouseObjectStacks_.end(), [runtimeId, objectId](const InventoryObjectStack& stack) {
+            return runtimeId != 0 ? stack.runtimeId == runtimeId : stack.objectId == objectId;
         });
         return it == warehouseObjectStacks_.end() ? 0 : it->count;
     };
-    const auto warehouseEntryForStack = [this](std::string_view objectId) -> std::optional<StorageEntry> {
+    const auto warehouseEntryForStack = [this](std::uint64_t runtimeId, std::string_view objectId) -> std::optional<StorageEntry> {
         for (int i = 0; i < static_cast<int>(warehouseObjectStacks_.size()); ++i) {
-            if (warehouseObjectStacks_[static_cast<std::size_t>(i)].objectId == objectId) {
+            const InventoryObjectStack& stack = warehouseObjectStacks_[static_cast<std::size_t>(i)];
+            if (runtimeId != 0 ? stack.runtimeId == runtimeId : stack.objectId == objectId) {
                 return StorageEntry{StorageEntryKind::Stack, i};
             }
         }
@@ -12536,10 +12630,19 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
         target.valid = true;
         return target;
     };
-    const auto processingEntryForStack = [this](std::string_view objectId) -> std::optional<StorageEntry> {
+    const auto warehouseWithdrawTargetForEntry = [](StorageEntry entry) {
+        StorageTransferTarget target;
+        target.source = BaseItemSource::Warehouse;
+        target.storageEntry = entry;
+        target.warehouseEntry = true;
+        target.valid = true;
+        return target;
+    };
+    const auto processingEntryForStack = [this](std::uint64_t runtimeId, std::string_view objectId) -> std::optional<StorageEntry> {
         const auto& stacks = inventory_.objectStacks();
         for (int i = 0; i < static_cast<int>(stacks.size()); ++i) {
-            if (stacks[static_cast<std::size_t>(i)].objectId == objectId) {
+            const InventoryObjectStack& stack = stacks[static_cast<std::size_t>(i)];
+            if (runtimeId != 0 ? stack.runtimeId == runtimeId : stack.objectId == objectId) {
                 return StorageEntry{StorageEntryKind::Stack, i};
             }
         }
@@ -12646,8 +12749,11 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
         if (mode_ != ScreenMode::GameOver || worldBuildActive() || screenTransition_.active()) {
             return result(false, "cannot return from game over now");
         }
-        returnToBaseAfterGameOver();
-        return result(mode_ != ScreenMode::GameOver || screenTransition_.active(), "game over return requested");
+        if (deathResultPrelude_.active) {
+            return result(false, "game over prelude active");
+        }
+        requestDeathResultExitTransition(ScreenTransitionTarget::GameOverReturnToBase);
+        return result(screenTransition_.active(), "game over return requested");
 
     case GameTestActionKind::StartMiningFromBase:
         if (mode_ != ScreenMode::Base || worldBuildActive() || screenTransition_.active()) {
@@ -12800,7 +12906,9 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
 
         const InventoryObjectStack* targetStack = nullptr;
         for (const InventoryObjectStack& stack : inventory_.objectStacks()) {
-            if (stack.objectId == action.objectId) {
+            if (action.stackRuntimeId != 0
+                    ? stack.runtimeId == action.stackRuntimeId
+                    : stack.objectId == action.objectId) {
                 targetStack = &stack;
                 break;
             }
@@ -12816,7 +12924,10 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
         const int discardCount = action.count <= 0
             ? targetStack->count
             : std::min(action.count, targetStack->count);
-        if (discardCount <= 0 || !inventory_.removeObjectItemCount(action.objectId, discardCount)) {
+        const bool removed = action.stackRuntimeId != 0
+            ? inventory_.removeObjectStackCount(action.stackRuntimeId, discardCount)
+            : inventory_.removeObjectItemCount(action.objectId, discardCount);
+        if (discardCount <= 0 || !removed) {
             return result(false, "discard failed");
         }
 
@@ -12872,9 +12983,55 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
         return result(true, "discarded backpack instance");
     }
 
+    case GameTestActionKind::PrepareMerchantStock:
+    {
+        if (mode_ != ScreenMode::Base || worldBuildActive() || screenTransition_.active()) {
+            return result(false, "merchant stock unavailable");
+        }
+        const bool forceRefresh = merchantRefreshPending_;
+        refreshMerchantStock(forceRefresh);
+        merchantRefreshPending_ = false;
+        return result(!merchantStock_.empty(), merchantStock_.empty() ? "merchant stock empty" : "merchant stock prepared");
+    }
+
+    case GameTestActionKind::WithdrawWarehouseStack:
+    {
+        if (mode_ != ScreenMode::Base) {
+            return result(false, "not in base");
+        }
+        const std::optional<StorageEntry> entry = warehouseEntryForStack(action.stackRuntimeId, action.objectId);
+        if (!entry) {
+            return result(false, "warehouse stack not found");
+        }
+        const int beforeCount = warehouseStackCount(action.stackRuntimeId, action.objectId);
+        const int moveCount = action.count <= 0 ? beforeCount : std::min(action.count, beforeCount);
+        withdrawStorageTarget(warehouseWithdrawTargetForEntry(*entry), moveCount);
+        const int afterCount = warehouseStackCount(action.stackRuntimeId, action.objectId);
+        return result(afterCount < beforeCount, baseStatus_.empty() ? "withdrew warehouse stack" : baseStatus_);
+    }
+
+    case GameTestActionKind::BuyMerchantProduct:
+    {
+        if (mode_ != ScreenMode::Base || merchantRefreshPending_) {
+            return result(false, "merchant stock not prepared");
+        }
+        if (action.merchantProductIndex < 0 ||
+            action.merchantProductIndex >= static_cast<int>(merchantStock_.size())) {
+            return result(false, "merchant product not found");
+        }
+        const MerchantProduct& product = merchantStock_[static_cast<std::size_t>(action.merchantProductIndex)];
+        if (!action.objectId.empty() && product.objectId != action.objectId) {
+            return result(false, "merchant product changed");
+        }
+        const int beforeQuantity = product.quantity;
+        buyMerchantProduct(action.merchantProductIndex, std::max(1, action.count));
+        const int afterQuantity = merchantStock_[static_cast<std::size_t>(action.merchantProductIndex)].quantity;
+        return result(afterQuantity < beforeQuantity, baseStatus_.empty() ? "bought merchant product" : baseStatus_);
+    }
+
     case GameTestActionKind::DepositBackpackStack:
     {
-        const int slot = screenSlotForStack(action.objectId);
+        const int slot = screenSlotForStack(action.stackRuntimeId, action.objectId);
         if (slot < 0) {
             return result(false, "stack not found");
         }
@@ -12882,10 +13039,12 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
         if (!storageTransferTargetAvailable(target)) {
             return result(false, "deposit unavailable");
         }
-        const int beforeCount = backpackStackCount(action.objectId);
+        const int beforeCount = backpackStackCount(action.stackRuntimeId, action.objectId);
         const int moveCount = action.count <= 0 ? beforeCount : std::min(action.count, beforeCount);
         depositStorageTarget(target, moveCount);
-        return result(backpackStackCount(action.objectId) < beforeCount, baseStatus_.empty() ? "deposited stack" : baseStatus_);
+        return result(
+            backpackStackCount(action.stackRuntimeId, action.objectId) < beforeCount,
+            baseStatus_.empty() ? "deposited stack" : baseStatus_);
     }
 
     case GameTestActionKind::DepositBackpackInstance:
@@ -12904,7 +13063,7 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
 
     case GameTestActionKind::SellBackpackStack:
     {
-        const int slot = screenSlotForStack(action.objectId);
+        const int slot = screenSlotForStack(action.stackRuntimeId, action.objectId);
         if (slot < 0) {
             return result(false, "stack not found");
         }
@@ -12912,10 +13071,12 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
         if (!merchantSellTargetAvailable(target)) {
             return result(false, "sell unavailable");
         }
-        const int beforeCount = backpackStackCount(action.objectId);
+        const int beforeCount = backpackStackCount(action.stackRuntimeId, action.objectId);
         const int sellCount = action.count <= 0 ? beforeCount : std::min(action.count, beforeCount);
         sellMerchantTarget(target, sellCount);
-        return result(backpackStackCount(action.objectId) < beforeCount, baseStatus_.empty() ? "sold stack" : baseStatus_);
+        return result(
+            backpackStackCount(action.stackRuntimeId, action.objectId) < beforeCount,
+            baseStatus_.empty() ? "sold stack" : baseStatus_);
     }
 
     case GameTestActionKind::SellBackpackInstance:
@@ -12934,7 +13095,7 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
 
     case GameTestActionKind::SellWarehouseStack:
     {
-        const std::optional<StorageEntry> entry = warehouseEntryForStack(action.objectId);
+        const std::optional<StorageEntry> entry = warehouseEntryForStack(action.stackRuntimeId, action.objectId);
         if (!entry) {
             return result(false, "warehouse stack not found");
         }
@@ -12942,10 +13103,12 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
         if (!merchantSellTargetAvailable(target)) {
             return result(false, "warehouse sell unavailable");
         }
-        const int beforeCount = warehouseStackCount(action.objectId);
+        const int beforeCount = warehouseStackCount(action.stackRuntimeId, action.objectId);
         const int sellCount = action.count <= 0 ? beforeCount : std::min(action.count, beforeCount);
         sellMerchantTarget(target, sellCount);
-        return result(warehouseStackCount(action.objectId) < beforeCount, baseStatus_.empty() ? "sold warehouse stack" : baseStatus_);
+        return result(
+            warehouseStackCount(action.stackRuntimeId, action.objectId) < beforeCount,
+            baseStatus_.empty() ? "sold warehouse stack" : baseStatus_);
     }
 
     case GameTestActionKind::SellWarehouseInstance:
@@ -13045,11 +13208,11 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
     case GameTestActionKind::EnhanceBackpackStackAttack:
     case GameTestActionKind::EnhanceBackpackStackDig:
     {
-        const std::optional<StorageEntry> entry = processingEntryForStack(action.objectId);
+        const std::optional<StorageEntry> entry = processingEntryForStack(action.stackRuntimeId, action.objectId);
         if (!entry) {
             return result(false, "stack not found");
         }
-        const int beforeCount = backpackStackCount(action.objectId);
+        const int beforeCount = backpackStackCount(action.stackRuntimeId, action.objectId);
         const int beforeInstances = static_cast<int>(inventory_.objectInstances().size());
         const ProcessingMode mode = action.kind == GameTestActionKind::EnhanceBackpackStackAttack
             ? ProcessingMode::Attack
@@ -13057,7 +13220,7 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
         applyProcessingEntry(*entry, mode, false);
         baseResultDialog_ = {};
         const bool changed =
-            backpackStackCount(action.objectId) < beforeCount ||
+            backpackStackCount(action.stackRuntimeId, action.objectId) < beforeCount ||
             static_cast<int>(inventory_.objectInstances().size()) > beforeInstances;
         return result(changed, baseStatus_.empty() ? "enhanced stack item" : baseStatus_);
     }
