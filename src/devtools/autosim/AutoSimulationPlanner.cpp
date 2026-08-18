@@ -786,7 +786,7 @@ AutoSimulationPlan AutoSimulationPlanner::makePlan(
 
     std::optional<ScoredPlan> bestPlan;
     const bool shouldConsiderReturn = scope == AutoSimulationPlanScope::All &&
-        (backpackFull(snapshot) || hpRatio(snapshot) <= 0.34f);
+        (backpackFull(snapshot) || autoSimulationNeedsLowHpReturn(snapshot));
     if (shouldConsiderReturn) {
         const GameTestWarpPointSnapshot* discoveredWarp = bestAcceptedByRoute(
             snapshot.dungeon.warpPoints,
@@ -805,7 +805,7 @@ AutoSimulationPlan AutoSimulationPlanner::makePlan(
                     pathField,
                     AutoSimulationGoal::ReturnToBase,
                     discoveredWarp->position,
-                    backpackFull(snapshot) ? "backpack_full_warp" : "low_hp_warp",
+                    backpackFull(snapshot) ? "backpack_full_warp" : "low_hp_no_recovery_warp",
                     false,
                     true,
                     AutoSimulationRingRole::None),
@@ -819,7 +819,7 @@ AutoSimulationPlan AutoSimulationPlanner::makePlan(
                     pathField,
                     AutoSimulationGoal::ReturnToBase,
                     snapshot.dungeon.startWorld,
-                    backpackFull(snapshot) ? "backpack_full_entrance" : "low_hp_entrance",
+                    backpackFull(snapshot) ? "backpack_full_entrance" : "low_hp_no_recovery_entrance",
                     false,
                     true,
                     AutoSimulationRingRole::None),

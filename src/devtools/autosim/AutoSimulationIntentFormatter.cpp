@@ -175,7 +175,7 @@ AutoSimulationIntent AutoSimulationIntentFormatter::format(
         if (reasonContains(plan, "backpack_full")) {
             intent = makeIntent(plan.goal, "", "リュックがいっぱいなので拠点へ戻りたい", "", AutoSimulationIntentIconKind::Base);
         } else if (reasonContains(plan, "low_hp")) {
-            intent = makeIntent(plan.goal, "", "HPが少ないので拠点へ戻りたい", "", AutoSimulationIntentIconKind::Base);
+            intent = makeIntent(plan.goal, "", "HPが少なく回復手段もないので拠点へ戻りたい", "", AutoSimulationIntentIconKind::Base);
         } else if (reasonContains(plan, "checkpoint")) {
             intent = makeIntent(plan.goal, "", "拠点で準備したい", "", AutoSimulationIntentIconKind::Base);
         } else {

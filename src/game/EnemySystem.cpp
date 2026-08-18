@@ -362,10 +362,18 @@ constexpr float MudZoneOutlineMinJitter = 0.78f;
 constexpr float MudZoneOutlineMaxJitter = 1.18f;
 constexpr float MudZoneOuterFadeSeconds = 0.85f;
 constexpr float MagnetDisturbMaxRadius = 320.0f;
-constexpr float ColdExposureFreezeThreshold = 1.0f;
-constexpr float ColdExposureRatePerSecond = 0.55f;
-constexpr float ColdExposureDecayPerSecond = 0.45f;
-constexpr double FrozenDefaultDurationSeconds = 8.0;
+constexpr double CoolingFreezeThreshold = 1.0;
+constexpr double CoolingPerIceHit = 0.25;
+constexpr double CoolingPerColdAuraSecond = 0.35;
+constexpr double WetCoolingMultiplier = 4.0;
+constexpr double CoolingDurationSeconds = 15.0;
+constexpr double FrozenDefaultDurationSeconds = 3.0;
+constexpr double FireCoolingReduction = 0.50;
+constexpr double SleepingDamageMultiplier = 2.0;
+constexpr double FrozenBluntDamageMultiplier = 1.75;
+constexpr double FrozenFireDamageMultiplier = 1.50;
+constexpr double BleedNormalMaxHpPerSecond = 0.02;
+constexpr double BleedBossMaxHpPerSecond = 0.002;
 constexpr float BlindProjectileMaxSpreadDegrees = 70.0f;
 constexpr int SwarmSpawnCountMax = 8;
 constexpr int BossWeakPointHintMinParticles = 7;
@@ -437,6 +445,8 @@ struct BounceGroundedHitSpec {
     double strength = 1.0;
     bool fallDamageActive = false;
     double fallDamageMultiplier = 1.0;
+    bool giantFallDamageActive = false;
+    double giantFallDamageMultiplier = 1.0;
 };
 
 struct ShockWetHitSpec {
@@ -2591,6 +2601,31 @@ double contactDamageMultiplierFor(
     return multiplier;
 }
 
+double contactEffectValueFor(
+    const ObjectDefinition* hitObject,
+    std::string_view effectKey,
+    double defaultValue,
+    double maxValue)
+{
+    double value = defaultValue;
+    if (hitObject == nullptr) {
+        return value;
+    }
+    for (const EffectSpec& spec : hitObject->orbitEffects) {
+        if (!contactEnemyEffectTargetMatches(spec.target)) {
+            continue;
+        }
+        for (std::size_t index = 0; index < spec.effects.size(); ++index) {
+            if (spec.effects[index] != effectKey) {
+                continue;
+            }
+            const double candidate = index < spec.values.size() ? spec.values[index] : defaultValue;
+            value = std::max(value, std::clamp(candidate, 0.0, maxValue));
+        }
+    }
+    return value;
+}
+
 bool nonlethalHitApplies(const ObjectDefinition* hitObject)
 {
     if (hitObject == nullptr) {
@@ -2641,11 +2676,20 @@ BounceGroundedHitSpec collectBounceGroundedHitSpec(const ObjectDefinition* hitOb
                 result.fallDamageMultiplier = std::max(
                     result.fallDamageMultiplier,
                     value > 0.0 ? value : 1.0);
+            } else if (spec.effects[index] == "giant_fall_damage") {
+                result.giantFallDamageActive = true;
+                result.giantFallDamageMultiplier = std::max(
+                    result.giantFallDamageMultiplier,
+                    value > 0.0 ? value : 1.0);
             }
         }
     }
     result.strength = std::clamp(result.strength, 0.0, ExternalBounceMaxStrength);
     result.fallDamageMultiplier = std::clamp(result.fallDamageMultiplier, 1.0, FallDamageSynergyMaxMultiplier);
+    result.giantFallDamageMultiplier = std::clamp(
+        result.giantFallDamageMultiplier,
+        1.0,
+        FallDamageSynergyMaxMultiplier);
     return result;
 }
 
@@ -3020,17 +3064,7 @@ void revealEnemyHpBar(Enemy& enemy, int damage)
     enemy.hpBarTimer = EnemyHpBarDisplaySeconds;
 }
 
-void applyEnemyDamage(Enemy& enemy, int damage)
-{
-    if (damage <= 0) {
-        return;
-    }
-    enemy.hp -= damage;
-    enemy.dungeonEventSleeping = false;
-    enemy.status.removeState("status_sleep");
-}
-
-bool fireDamageRemovesFrozen(std::string_view damageType)
+bool isFireDamage(std::string_view damageType)
 {
     return damageType == "fire" ||
         damageType == "flame" ||
@@ -3042,14 +3076,166 @@ bool fireDamageRemovesFrozen(std::string_view damageType)
         damageType == "dry_wet_bonus_damage";
 }
 
-void applyEnemyDamageTyped(Enemy& enemy, int damage, std::string_view damageType)
+bool isIceDamage(std::string_view damageType)
 {
-    if (damage > 0 && fireDamageRemovesFrozen(damageType)) {
-        enemy.status.removeState("status_frozen");
-        enemy.coldExposure = 0.0f;
-        enemy.coldExposureTouched = false;
+    return damageType == "ice" || damageType == "frost" || damageType == "cold_air";
+}
+
+bool isThunderDamage(std::string_view damageType)
+{
+    return damageType == "thunder" || damageType == "lightning" || damageType == "shock_wet";
+}
+
+bool isBluntDamage(std::string_view damageType)
+{
+    return damageType == "blunt";
+}
+
+bool applyCooling(
+    Enemy& enemy,
+    double amount,
+    std::string_view source,
+    std::vector<StatusPopupEvent>* statusPopupEvents)
+{
+    if (amount <= 0.0 || enemy.hp <= 0 || enemy.status.hasState("status_frozen")) {
+        return false;
     }
-    applyEnemyDamage(enemy, damage);
+
+    const EntityState* current = enemy.status.state("status_cooling");
+    const double currentValue = current != nullptr ? current->value : 0.0;
+    const double wetMultiplier = enemy.status.hasState("status_wet") ? WetCoolingMultiplier : 1.0;
+    const double nextValue = currentValue + amount * wetMultiplier;
+    if (nextValue >= CoolingFreezeThreshold) {
+        enemy.status.removeState("status_cooling");
+        const EntityStateApplyResult frozen = enemy.status.applyState(
+            "status_frozen",
+            1.0,
+            FrozenDefaultDurationSeconds,
+            std::string(source),
+            StateApplyMode::Overwrite);
+        if (statusPopupEvents != nullptr) {
+            queueStatusPopupEvent(
+                *statusPopupEvents,
+                enemy.position,
+                "status_frozen",
+                StatusPopupTarget::Enemy,
+                frozen);
+        }
+        return true;
+    }
+
+    const EntityStateApplyResult cooling = enemy.status.applyState(
+        "status_cooling",
+        nextValue,
+        CoolingDurationSeconds,
+        std::string(source),
+        StateApplyMode::Overwrite);
+    if (statusPopupEvents != nullptr) {
+        queueStatusPopupEvent(
+            *statusPopupEvents,
+            enemy.position,
+            "status_cooling",
+            StatusPopupTarget::Enemy,
+            cooling);
+    }
+    return false;
+}
+
+void reduceCooling(Enemy& enemy, double amount)
+{
+    const EntityState* cooling = enemy.status.state("status_cooling");
+    if (cooling == nullptr || amount <= 0.0) {
+        return;
+    }
+    const double nextValue = cooling->value - amount;
+    if (nextValue <= 0.0) {
+        enemy.status.removeState("status_cooling");
+    } else {
+        enemy.status.setStateValue("status_cooling", nextValue);
+    }
+}
+
+struct EnemyDamageOptions {
+    double sleepingMultiplier = SleepingDamageMultiplier;
+    double conditionalMultiplier = 1.0;
+    bool nonlethal = false;
+};
+
+struct EnemyDamageResult {
+    int damageDealt = 0;
+    bool sleepingBonusApplied = false;
+    bool iceShatterApplied = false;
+    bool frostbiteApplied = false;
+    bool frozenApplied = false;
+    bool shockedApplied = false;
+};
+
+EnemyDamageResult applyEnemyDamageTyped(
+    Enemy& enemy,
+    int damage,
+    std::string_view damageType,
+    const EnemyDamageOptions& options = {},
+    std::vector<StatusPopupEvent>* statusPopupEvents = nullptr)
+{
+    EnemyDamageResult result;
+    if (damage <= 0) {
+        return result;
+    }
+
+    double multiplier = std::max(0.0, options.conditionalMultiplier);
+    const bool frozen = enemy.status.hasState("status_frozen");
+    if (frozen && isBluntDamage(damageType)) {
+        multiplier *= FrozenBluntDamageMultiplier;
+        result.iceShatterApplied = true;
+    } else if (frozen && isFireDamage(damageType)) {
+        multiplier *= FrozenFireDamageMultiplier;
+        result.frostbiteApplied = true;
+    }
+
+    result.sleepingBonusApplied = enemy.status.hasState("status_sleep") && options.sleepingMultiplier > 1.0;
+    if (result.sleepingBonusApplied) {
+        multiplier *= options.sleepingMultiplier;
+    }
+
+    result.damageDealt = std::max(0, static_cast<int>(std::ceil(static_cast<double>(damage) * multiplier)));
+    if (options.nonlethal) {
+        result.damageDealt = clampNonlethalDamage(enemy, result.damageDealt);
+    }
+    if (result.damageDealt <= 0) {
+        return result;
+    }
+
+    if (result.iceShatterApplied || result.frostbiteApplied) {
+        enemy.status.removeState("status_frozen");
+    } else if (isFireDamage(damageType)) {
+        reduceCooling(enemy, FireCoolingReduction);
+    }
+
+    enemy.hp -= result.damageDealt;
+    enemy.dungeonEventSleeping = false;
+    enemy.status.removeState("status_sleep");
+
+    if (enemy.hp > 0 && isIceDamage(damageType)) {
+        result.frozenApplied = applyCooling(enemy, CoolingPerIceHit, damageType, statusPopupEvents);
+    }
+    if (enemy.hp > 0 && !enemy.isBoss && isThunderDamage(damageType) && enemy.status.hasState("status_wet")) {
+        const EntityStateApplyResult shocked = enemy.status.applyState(
+            "status_shocked",
+            1.0,
+            2.0,
+            std::string(damageType),
+            StateApplyMode::KeepLonger);
+        if (statusPopupEvents != nullptr) {
+            queueStatusPopupEvent(
+                *statusPopupEvents,
+                enemy.position,
+                "status_shocked",
+                StatusPopupTarget::Enemy,
+                shocked);
+        }
+        result.shockedApplied = shocked.applied;
+    }
+    return result;
 }
 
 float stunWakeHopOffset(float stunWakeTimer)
@@ -3250,6 +3436,12 @@ struct RingContactDamageResult {
     bool criticalHit = false;
     bool sleepingBonusApplied = false;
     bool dryWetBonusApplied = false;
+    bool paralyzedBonusApplied = false;
+    bool gluedBonusApplied = false;
+    bool statusCountBonusApplied = false;
+    bool stunnedBonusApplied = false;
+    bool iceShatterApplied = false;
+    bool frostbiteApplied = false;
     bool nonlethalHit = false;
     bool frontGuarded = false;
     bool weakPointHit = false;
@@ -3474,18 +3666,6 @@ RingContactDamageResult computeRingContactDamageAgainstEnemy(
         recordCriticalEffectDiscoveries(discoveryEvents, encyclopedia, criticalSpec.sources, enemy.position);
     }
 
-    const double sleepingBonusMultiplier = contactDamageMultiplierFor(
-        hitObject,
-        "sleeping_bonus_damage",
-        MaxSleepingBonusDamageMultiplier);
-    result.sleepingBonusApplied = adjustedDamage > 0 &&
-        sleepingBonusMultiplier > 1.0 &&
-        enemy.status.hasState("status_sleep");
-    if (result.sleepingBonusApplied) {
-        adjustedDamage = static_cast<int>(
-            std::ceil(static_cast<double>(adjustedDamage) * sleepingBonusMultiplier));
-    }
-
     const double dryWetMultiplier = contactDamageMultiplierFor(
         hitObject,
         "dry_wet_bonus_damage",
@@ -3528,9 +3708,6 @@ RingContactDamageResult computeRingContactDamageAgainstEnemy(
 
     result.nonlethalHit = applyNonlethalCap && nonlethalHitApplies(hitObject);
     result.damageDealt = applyDefenseModifier(enemy.status, adjustedDamage);
-    if (result.nonlethalHit) {
-        result.damageDealt = clampNonlethalDamage(enemy, result.damageDealt);
-    }
     return result;
 }
 
@@ -9851,24 +10028,21 @@ void EnemySystem::update(
         if (wasStunned && !enemy.status.hasState("status_stun")) {
             enemy.stunWakeTimer = StunWakeHopSeconds;
         }
-        if (enemy.status.hasState("status_frozen")) {
-            enemy.coldExposure = 0.0f;
-            enemy.coldExposureTouched = false;
-        } else if (enemy.coldExposureTouched) {
-            enemy.coldExposureTouched = false;
-        } else {
-            enemy.coldExposure = std::max(0.0f, enemy.coldExposure - ColdExposureDecayPerSecond * dt);
-        }
         const double poisonDps = enemy.status.poisonDamagePerSecond();
         if (poisonDps > 0.0) {
             enemy.poisonDamageAccumulator += poisonDps * static_cast<double>(dt);
             const int poisonDamage = static_cast<int>(std::floor(enemy.poisonDamageAccumulator));
             if (poisonDamage > 0) {
-                applyEnemyDamage(enemy, poisonDamage);
+                const EnemyDamageResult damageResult = applyEnemyDamageTyped(
+                    enemy,
+                    poisonDamage,
+                    "poison",
+                    {},
+                    &statusPopupEvents_);
                 enemy.poisonDamageAccumulator -= static_cast<double>(poisonDamage);
-                revealEnemyHpBar(enemy, poisonDamage);
+                revealEnemyHpBar(enemy, damageResult.damageDealt);
                 enemy.hitFlash = 0.12f;
-                events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy, {}, poisonDamage));
+                events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy, {}, damageResult.damageDealt));
                 if (enemy.hp <= 0) {
                     processEnemyDeath(enemy);
                     continue;
@@ -9882,11 +10056,16 @@ void EnemySystem::update(
             enemy.hotDamageAccumulator += hotDps * static_cast<double>(dt);
             const int hotDamage = static_cast<int>(std::floor(enemy.hotDamageAccumulator));
             if (hotDamage > 0) {
-                applyEnemyDamageTyped(enemy, hotDamage, "fire");
+                const EnemyDamageResult damageResult = applyEnemyDamageTyped(
+                    enemy,
+                    hotDamage,
+                    "fire",
+                    {},
+                    &statusPopupEvents_);
                 enemy.hotDamageAccumulator -= static_cast<double>(hotDamage);
-                revealEnemyHpBar(enemy, hotDamage);
+                revealEnemyHpBar(enemy, damageResult.damageDealt);
                 enemy.hitFlash = 0.12f;
-                events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy, "status_hot", hotDamage));
+                events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy, "status_hot", damageResult.damageDealt));
                 if (enemy.hp <= 0) {
                     processEnemyDeath(enemy);
                     continue;
@@ -9895,7 +10074,9 @@ void EnemySystem::update(
         } else {
             enemy.hotDamageAccumulator = 0.0;
         }
-        const double bleedDps = enemy.status.bleedDamagePerSecond();
+        const double bleedDps = enemy.status.hasState("status_bleed")
+            ? static_cast<double>(enemy.maxHp) * (enemy.isBoss ? BleedBossMaxHpPerSecond : BleedNormalMaxHpPerSecond)
+            : 0.0;
         if (bleedDps > 0.0) {
             const bool movementStopped =
                 enemy.status.hasState("status_sleep") ||
@@ -9907,11 +10088,16 @@ void EnemySystem::update(
             enemy.bleedDamageAccumulator += bleedDps * movementScale * static_cast<double>(dt);
             const int bleedDamage = static_cast<int>(std::floor(enemy.bleedDamageAccumulator));
             if (bleedDamage > 0) {
-                applyEnemyDamage(enemy, bleedDamage);
+                const EnemyDamageResult damageResult = applyEnemyDamageTyped(
+                    enemy,
+                    bleedDamage,
+                    "bleed",
+                    {},
+                    &statusPopupEvents_);
                 enemy.bleedDamageAccumulator -= static_cast<double>(bleedDamage);
-                revealEnemyHpBar(enemy, bleedDamage);
+                revealEnemyHpBar(enemy, damageResult.damageDealt);
                 enemy.hitFlash = 0.12f;
-                events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy, "status_bleed", bleedDamage));
+                events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy, "status_bleed", damageResult.damageDealt));
                 if (enemy.hp <= 0) {
                     processEnemyDeath(enemy);
                     continue;
@@ -9982,16 +10168,21 @@ void EnemySystem::update(
                     const int adjustedFallDamage = enemy.isBoss
                         ? scaledPositiveDamage(queuedFallDamage, BossNormalIncomingDamageMultiplier)
                         : queuedFallDamage;
-                    const int damageDealt = applyDefenseModifier(enemy.status, adjustedFallDamage);
-                    applyEnemyDamageTyped(enemy, damageDealt, "blunt");
-                    revealEnemyHpBar(enemy, damageDealt);
-                    if (damageDealt > 0) {
+                    const int baseDamage = applyDefenseModifier(enemy.status, adjustedFallDamage);
+                    const EnemyDamageResult damageResult = applyEnemyDamageTyped(
+                        enemy,
+                        baseDamage,
+                        "blunt",
+                        {},
+                        &statusPopupEvents_);
+                    revealEnemyHpBar(enemy, damageResult.damageDealt);
+                    if (damageResult.damageDealt > 0) {
                         enemy.hitFlash = 0.12f;
                     }
                     events_.push_back(makePlayerAttackHitEvent(
                         enemy,
                         "fall_damage_synergy",
-                        damageDealt));
+                        damageResult.damageDealt));
                     if (enemy.hp <= 0) {
                         processEnemyDeath(enemy);
                         continue;
@@ -10855,9 +11046,15 @@ void EnemySystem::update(
                 continue;
             }
             const FlameBurstHitSpec flameBurstSpec = collectFlameBurstHitSpec(hitObject);
-            const BounceGroundedHitSpec bounceGroundedSpec = collectBounceGroundedHitSpec(hitObject);
+            BounceGroundedHitSpec bounceGroundedSpec = collectBounceGroundedHitSpec(hitObject);
+            const bool giantFallDamageApplied = bounceGroundedSpec.giantFallDamageActive &&
+                enemy.status.hasState("status_giant");
+            if (giantFallDamageApplied) {
+                bounceGroundedSpec.fallDamageActive = true;
+                bounceGroundedSpec.fallDamageMultiplier *= bounceGroundedSpec.giantFallDamageMultiplier;
+            }
             const ShockWetHitSpec shockWetSpec = collectShockWetHitSpec(hitObject);
-            const RingContactDamageResult damageResult = computeRingContactDamageAgainstEnemy(
+            RingContactDamageResult damageResult = computeRingContactDamageAgainstEnemy(
                 enemy,
                 item,
                 hitObject,
@@ -10871,6 +11068,66 @@ void EnemySystem::update(
                 discoveryEvents,
                 encyclopedia,
                 true);
+            const double sleepingEffectMultiplier = contactDamageMultiplierFor(
+                hitObject,
+                "sleeping_bonus_damage",
+                MaxSleepingBonusDamageMultiplier);
+            const double sleepingMultiplier = sleepingEffectMultiplier > 1.0
+                ? sleepingEffectMultiplier
+                : SleepingDamageMultiplier;
+            double conditionalMultiplier = 1.0;
+            const double paralyzedMultiplier = contactDamageMultiplierFor(
+                hitObject,
+                "paralyzed_bonus_damage",
+                8.0);
+            damageResult.paralyzedBonusApplied = paralyzedMultiplier > 1.0 &&
+                enemy.status.hasState("status_paralyze");
+            if (damageResult.paralyzedBonusApplied) {
+                conditionalMultiplier *= paralyzedMultiplier;
+            }
+            const double gluedMultiplier = contactDamageMultiplierFor(
+                hitObject,
+                "glued_bonus_damage",
+                8.0);
+            damageResult.gluedBonusApplied = gluedMultiplier > 1.0 &&
+                enemy.status.hasState("status_glued");
+            if (damageResult.gluedBonusApplied) {
+                conditionalMultiplier *= gluedMultiplier;
+            }
+            const double statusCountBonus = contactEffectValueFor(
+                hitObject,
+                "status_count_bonus_damage",
+                0.0,
+                1.0);
+            damageResult.statusCountBonusApplied = statusCountBonus > 0.0 && !enemy.status.states().empty();
+            if (damageResult.statusCountBonusApplied) {
+                conditionalMultiplier *= 1.0 + statusCountBonus * static_cast<double>(enemy.status.states().size());
+            }
+            const double stunnedMultiplier = contactDamageMultiplierFor(
+                hitObject,
+                "stunned_bonus_damage",
+                8.0);
+            damageResult.stunnedBonusApplied = stunnedMultiplier > 1.0 && enemy.status.hasState("status_stun");
+            if (damageResult.stunnedBonusApplied) {
+                conditionalMultiplier *= stunnedMultiplier;
+            }
+            const EnemyDamageResult appliedDamage = applyEnemyDamageTyped(
+                enemy,
+                damageResult.damageDealt,
+                damageResult.damageType,
+                EnemyDamageOptions{
+                    .sleepingMultiplier = sleepingMultiplier,
+                    .conditionalMultiplier = conditionalMultiplier,
+                    .nonlethal = damageResult.nonlethalHit,
+                },
+                &statusPopupEvents_);
+            damageResult.damageDealt = appliedDamage.damageDealt;
+            damageResult.sleepingBonusApplied = appliedDamage.sleepingBonusApplied && sleepingEffectMultiplier > 1.0;
+            damageResult.iceShatterApplied = appliedDamage.iceShatterApplied;
+            damageResult.frostbiteApplied = appliedDamage.frostbiteApplied;
+            if (damageResult.stunnedBonusApplied) {
+                enemy.status.removeState("status_stun");
+            }
             const std::string_view contactDamageType = damageResult.damageType;
             const bool frontGuarded = damageResult.frontGuarded;
             const bool sleepingBonusApplied = damageResult.sleepingBonusApplied;
@@ -10887,7 +11144,6 @@ void EnemySystem::update(
                 frontGuarded ? RingImpactResult::Guard : RingImpactResult::Hit,
                 enemy.position,
                 static_cast<float>(std::max(0, damageDealt))));
-            applyEnemyDamageTyped(enemy, damageDealt, contactDamageType);
             if (dryWetBonusApplied) {
                 enemy.status.removeState("status_wet");
             }
@@ -10970,6 +11226,7 @@ void EnemySystem::update(
                     burst.position = enemy.position;
                     burst.radius = flameBurstSpec.radius;
                     burst.damage = flameBurstSpec.damage;
+                    burst.ringItemDamageMultiplier = player.status.multiplierFor(ModifierStat::Attack);
                     burst.damageType = "fire";
                     burst.effectId = "flame_burst";
                     burst.excludedRuntimeId = enemy.id;
@@ -10990,14 +11247,29 @@ void EnemySystem::update(
                     if (nonlethalHit) {
                         recordObjectEffectDiscovery(discoveryEvents, *hitObject, "nonlethal_hit", "", enemy.position);
                     }
+                    if (damageResult.paralyzedBonusApplied) {
+                        recordObjectEffectDiscovery(discoveryEvents, *hitObject, "paralyzed_bonus_damage", "", enemy.position);
+                    }
+                    if (damageResult.gluedBonusApplied) {
+                        recordObjectEffectDiscovery(discoveryEvents, *hitObject, "glued_bonus_damage", "", enemy.position);
+                    }
+                    if (damageResult.statusCountBonusApplied) {
+                        recordObjectEffectDiscovery(discoveryEvents, *hitObject, "status_count_bonus_damage", "", enemy.position);
+                    }
+                    if (damageResult.stunnedBonusApplied) {
+                        recordObjectEffectDiscovery(discoveryEvents, *hitObject, "stunned_bonus_damage", "", enemy.position);
+                    }
                 }
                 if (enemy.hp > 0 && beginExternalGroundBounce(enemy, map, item.worldPosition, bounceGroundedSpec, placementCatalog_)) {
                     if (hitEffectId.empty()) {
                         hitEffectId = "bounce_grounded";
                     }
                     recordObjectEffectDiscovery(discoveryEvents, *hitObject, "bounce_grounded", "", enemy.position);
-                    if (bounceGroundedSpec.fallDamageActive) {
+                    if (effectSpecsContainForTarget(hitObject->orbitEffects, "enemy", "fall_damage_synergy")) {
                         recordObjectEffectDiscovery(discoveryEvents, *hitObject, "fall_damage_synergy", "", enemy.position);
+                    }
+                    if (giantFallDamageApplied) {
+                        recordObjectEffectDiscovery(discoveryEvents, *hitObject, "giant_fall_damage", "", enemy.position);
                     }
                 }
             }
@@ -11391,16 +11663,23 @@ bool EnemySystem::hitByPlayerProjectile(
             continue;
         }
 
+        const int ringDamage = std::max(0, static_cast<int>(std::ceil(
+            static_cast<double>(damage) * player.status.multiplierFor(ModifierStat::Attack))));
         const BossDamageAdjustment bossDamage = adjustBossIncomingDamage(
             enemy,
-            std::max(0, damage),
+            ringDamage,
             projectile.position,
             projectile.radius,
             hitboxCatalog_,
             placementCatalog_);
         const int adjustedDamage = applyDefenseModifier(enemy.status, bossDamage.damage);
-        applyEnemyDamageTyped(enemy, adjustedDamage, projectile.damageType);
-        revealEnemyHpBar(enemy, adjustedDamage);
+        const EnemyDamageResult damageResult = applyEnemyDamageTyped(
+            enemy,
+            adjustedDamage,
+            projectile.damageType,
+            {},
+            &statusPopupEvents_);
+        revealEnemyHpBar(enemy, damageResult.damageDealt);
         enemy.hitFlash = 0.12f;
 
         if (!projectile.effects.empty()) {
@@ -11422,7 +11701,7 @@ bool EnemySystem::hitByPlayerProjectile(
         if (!bossDamage.effectId.empty()) {
             hitEffectId = std::string(bossDamage.effectId);
         }
-        EnemyEvent hitEvent = makePlayerAttackHitEvent(enemy, hitEffectId, adjustedDamage);
+        EnemyEvent hitEvent = makePlayerAttackHitEvent(enemy, hitEffectId, damageResult.damageDealt);
         hitEvent.weakPointHit = bossDamage.weakPointHit;
         events_.push_back(std::move(hitEvent));
         if (enemy.hp <= 0) {
@@ -11440,7 +11719,8 @@ int EnemySystem::applyObjectBreakShardDamage(
     int damage,
     std::string_view damageType,
     std::string_view effectId,
-    SpellRingSystem& spellRing)
+    SpellRingSystem& spellRing,
+    double ringItemDamageMultiplier)
 {
     if (damage <= 0 || radius <= 0.0f) {
         return 0;
@@ -11450,6 +11730,7 @@ int EnemySystem::applyObjectBreakShardDamage(
     spec.position = position;
     spec.radius = radius;
     spec.damage = damage;
+    spec.ringItemDamageMultiplier = ringItemDamageMultiplier;
     spec.damageType = std::string(damageType);
     spec.effectId = std::string(effectId);
     return applyMagicArea(spec, spellRing);
@@ -11472,7 +11753,6 @@ int EnemySystem::applyColdAirAura(
 
     int touched = 0;
     int frozen = 0;
-    const float clampedStrength = std::max(0.0f, strength);
     for (Enemy& enemy : enemies_.items()) {
         if (!enemyCanBeHit(enemy) || enemy.spawnTimer > 0.0f) {
             continue;
@@ -11482,29 +11762,15 @@ int EnemySystem::applyColdAirAura(
         }
 
         ++touched;
-        enemy.coldExposureTouched = true;
         if (enemy.status.hasState("status_frozen")) {
-            enemy.coldExposure = 0.0f;
             continue;
         }
 
-        enemy.coldExposure = std::min(
-            ColdExposureFreezeThreshold,
-            enemy.coldExposure + clampedStrength * ColdExposureRatePerSecond * dt);
-        if (enemy.coldExposure >= ColdExposureFreezeThreshold) {
-            const EntityStateApplyResult result = enemy.status.applyState(
-                "status_frozen",
-                clampedStrength,
-                FrozenDefaultDurationSeconds,
-                std::string(source),
-                StateApplyMode::KeepLonger);
-            queueStatusPopupEvent(
-                statusPopupEvents_,
-                enemy.position,
-                "status_frozen",
-                StatusPopupTarget::Enemy,
-                result);
-            enemy.coldExposure = 0.0f;
+        if (applyCooling(
+                enemy,
+                CoolingPerColdAuraSecond * static_cast<double>(dt),
+                source,
+                &statusPopupEvents_)) {
             enemy.hitFlash = 0.12f;
             ++frozen;
         }
@@ -11734,7 +12000,10 @@ int EnemySystem::applyMagicArea(const EnemyMagicHitSpec& spec, SpellRingSystem& 
         if (spec.damage > 0) {
             const int typedDamage = std::max(
                 0,
-                static_cast<int>(std::ceil(static_cast<double>(spec.damage) * damageTypeMultiplier(spec.damageType))));
+                static_cast<int>(std::ceil(
+                    static_cast<double>(spec.damage) *
+                    damageTypeMultiplier(spec.damageType) *
+                    std::max(0.0, spec.ringItemDamageMultiplier))));
             const BossDamageAdjustment bossDamage = adjustBossIncomingDamage(
                 enemy,
                 typedDamage,
@@ -11742,16 +12011,21 @@ int EnemySystem::applyMagicArea(const EnemyMagicHitSpec& spec, SpellRingSystem& 
                 radius,
                 hitboxCatalog_,
                 placementCatalog_);
-            const int damageDealt = applyDefenseModifier(enemy.status, bossDamage.damage);
-            applyEnemyDamageTyped(enemy, damageDealt, spec.damageType.empty() ? spec.effectId : spec.damageType);
-            revealEnemyHpBar(enemy, damageDealt);
+            const int adjustedDamage = applyDefenseModifier(enemy.status, bossDamage.damage);
+            const EnemyDamageResult damageResult = applyEnemyDamageTyped(
+                enemy,
+                adjustedDamage,
+                spec.damageType.empty() ? spec.effectId : spec.damageType,
+                {},
+                &statusPopupEvents_);
+            revealEnemyHpBar(enemy, damageResult.damageDealt);
             enemy.hitFlash = 0.12f;
             EnemyEvent hitEvent = makePlayerAttackHitEvent(
                 enemy,
                 bossDamage.effectId.empty()
                     ? (spec.effectId.empty() ? spec.damageType : spec.effectId)
                     : std::string(bossDamage.effectId),
-                damageDealt);
+                damageResult.damageDealt);
             hitEvent.weakPointHit = bossDamage.weakPointHit;
             events_.push_back(std::move(hitEvent));
         }
@@ -11855,16 +12129,21 @@ void EnemySystem::applyExplosionDamage(Vec2 position, float radius, SpellRingSys
             safeRadius,
             hitboxCatalog_,
             placementCatalog_);
-        const int damageDealt = applyDefenseModifier(enemy.status, bossDamage.damage);
-        applyEnemyDamageTyped(enemy, damageDealt, "fire");
-        revealEnemyHpBar(enemy, damageDealt);
+        const int adjustedDamage = applyDefenseModifier(enemy.status, bossDamage.damage);
+        const EnemyDamageResult damageResult = applyEnemyDamageTyped(
+            enemy,
+            adjustedDamage,
+            "fire",
+            {},
+            &statusPopupEvents_);
+        revealEnemyHpBar(enemy, damageResult.damageDealt);
         enemy.hitFlash = 0.18f;
         enemy.knockbackVelocity = normalize(enemy.position - position) * 110.0f;
         enemy.knockbackTimer = std::max(enemy.knockbackTimer, 0.14f);
         EnemyEvent hitEvent = makePlayerAttackHitEvent(
             enemy,
             bossDamage.effectId.empty() ? "fire" : std::string(bossDamage.effectId),
-            damageDealt);
+            damageResult.damageDealt);
         hitEvent.ringItemImpact = true;
         hitEvent.weakPointHit = bossDamage.weakPointHit;
         events_.push_back(std::move(hitEvent));

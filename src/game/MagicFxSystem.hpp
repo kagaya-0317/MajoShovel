@@ -158,8 +158,6 @@ public:
 
     MagicFxEmitterHandle addEmitter(const MagicFxEmitterConfig& config);
     void emitBurst(const MagicFxEmitterConfig& config);
-    void queueMagicCastSound();
-    void queueMagicImpactSound();
     std::vector<MagicFxSoundEvent> consumeSoundEvents();
     MagicFxEmitterHandle startFireAura(Vec2 position, float radius);
     MagicFxEmitterHandle startFireballLoop(Vec2 position, Vec2 direction, float radius);
@@ -209,7 +207,6 @@ private:
     [[nodiscard]] Vec2 sampleVelocity(const MagicFxEmitterConfig& config);
     void addParticle(Particle particle);
     void addThunderImpactArc(ThunderImpactArc arc);
-    void queueSound(std::string_view cueId, float volumeScale = 1.0f, float pitchScale = 1.0f);
     void queueSoundAt(std::string_view cueId, Vec2 position, float volumeScale = 1.0f, float pitchScale = 1.0f);
 
     std::vector<Particle> particles_;

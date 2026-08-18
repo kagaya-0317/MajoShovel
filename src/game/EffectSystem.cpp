@@ -866,7 +866,7 @@ void renderEffectVisual(Renderer& renderer, const Effect& effect)
         : lerp(effect.startRadius, effect.endRadius, t);
     const Vec2 drawPosition = effectDrawPosition(effect);
     if (effect.type == EffectType::LevelUpPulseRing) {
-        renderer.drawAntialiasedRing(drawPosition, radius, 5.0f, color);
+        renderer.drawAntialiasedRing(drawPosition, radius, std::max(1.0f, effect.ringWidth), color);
     } else if (effect.type == EffectType::Ring) {
         const float width = std::max(2.2f, radius * 0.075f);
         renderer.drawSoftRing(drawPosition, radius, width, color);
@@ -1334,13 +1334,17 @@ void EffectSystem::spawnLevelUpPopup(Vec2 position)
     popup->duration = 1.14f;
 }
 
-void EffectSystem::spawnPresentationPulseRings(Vec2 position, Color color, int pulseCount)
+void EffectSystem::spawnPresentationPulseRings(
+    Vec2 position,
+    Color color,
+    int pulseCount,
+    PresentationPulseRingOptions options)
 {
-    constexpr float FramesPerSecond = 60.0f;
-    constexpr float PulseDuration = 75.0f / FramesPerSecond;
-    constexpr float PulseInterval = 15.0f / FramesPerSecond;
-    constexpr float PulseStartRadius = 8.0f;
-    constexpr float PulseEndRadius = 72.0f;
+    options.duration = std::max(0.01f, options.duration);
+    options.interval = std::max(0.0f, options.interval);
+    options.startRadius = std::max(0.0f, options.startRadius);
+    options.endRadius = std::max(0.0f, options.endRadius);
+    options.ringWidth = std::max(1.0f, options.ringWidth);
 
     for (int pulseIndex = 0; pulseIndex < std::max(0, pulseCount); ++pulseIndex) {
         Effect* pulse = effects_.acquire();
@@ -1351,10 +1355,11 @@ void EffectSystem::spawnPresentationPulseRings(Vec2 position, Color color, int p
         pulse->layer = EffectLayer::Foreground;
         pulse->position = position;
         pulse->color = color;
-        pulse->duration = PulseDuration;
-        pulse->startRadius = PulseStartRadius;
-        pulse->endRadius = PulseEndRadius;
-        pulse->age = -PulseInterval * static_cast<float>(pulseIndex);
+        pulse->duration = options.duration;
+        pulse->startRadius = options.startRadius;
+        pulse->endRadius = options.endRadius;
+        pulse->ringWidth = options.ringWidth;
+        pulse->age = -options.interval * static_cast<float>(pulseIndex);
     }
 }
 
@@ -1871,6 +1876,8 @@ void EffectSystem::spawnStatusAura(Vec2 position, std::string_view stateId)
         spawn(ParticleEffectId::PoisonAura, position);
     } else if (stateId == "status_slow") {
         spawn(ParticleEffectId::SlowAura, position);
+    } else if (stateId == "status_cooling") {
+        spawn(ParticleEffectId::SlowAura, position, {1.0f, 0.0f}, 1.0f, EffectLayer::World, {142, 222, 255, 255});
     } else if (stateId == "status_glued") {
         spawn(ParticleEffectId::SlowAura, position);
     } else if (stateId == "status_defense_down") {

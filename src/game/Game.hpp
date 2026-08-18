@@ -196,6 +196,11 @@ enum class AudioCueEditMode {
     Se,
 };
 
+enum class AudioCueEditSortMode {
+    ManifestOrder,
+    FileName,
+};
+
 struct BaseEditRect {
     float x = 0.0f;
     float y = 0.0f;
@@ -569,6 +574,13 @@ private:
         int count = 0;
         float age = 0.0f;
         float lifetime = 3.4f;
+    };
+
+    enum class ImportantDungeonNoticeSound {
+        None,
+        Warning,
+        Astral,
+        Success,
     };
 
     struct InventoryCarryState {
@@ -1133,7 +1145,8 @@ private:
         White,
     };
     enum class ScreenTransitionSound {
-        Generic,
+        None,
+        GameStart,
         DungeonLadder,
         WarpPoint,
         Home,
@@ -1284,6 +1297,7 @@ private:
     float worldBuildProgress() const;
     std::string worldBuildStatusText() const;
     void playAudioBgm(std::string_view id, float fadeSeconds = 0.0f, bool restart = false);
+    void playCurrentDungeonBgm(float fadeSeconds = 0.0f, bool restart = false);
     void stopAudioBgm(float fadeSeconds = 0.0f);
     void playAudioSe(std::string_view id, float volumeScale = 1.0f, float pitchScale = 1.0f);
     void playAudioSeAt(std::string_view id, Vec2 worldPosition, float volumeScale = 1.0f, float pitchScale = 1.0f);
@@ -1323,16 +1337,27 @@ private:
     void startTitleGame();
     void requestScreenTransition(
         ScreenTransitionTarget target,
-        ScreenTransitionSound sound = ScreenTransitionSound::Generic);
+        ScreenTransitionSound sound);
     void requestDeathResultExitTransition(ScreenTransitionTarget target);
     bool deathResultExitTransitionActive() const;
     void requestMiningStartTransition(bool useLatestWarpPoint, bool forceRegenerate);
     void requestReturnToBaseTransition(
         bool stageCleared,
         bool died,
-        ScreenTransitionSound sound = ScreenTransitionSound::Generic);
-    void requestBaseAreaCrossfade(BaseArea targetArea, Vec2 playerPosition, Vec2 playerFacing, std::string status);
-    void requestBaseAreaFade(BaseArea targetArea, Vec2 playerPosition, Vec2 playerFacing, std::string status, bool closeBaseUi);
+        ScreenTransitionSound sound = ScreenTransitionSound::DungeonLadder);
+    void requestBaseAreaCrossfade(
+        BaseArea targetArea,
+        Vec2 playerPosition,
+        Vec2 playerFacing,
+        std::string status,
+        ScreenTransitionSound sound);
+    void requestBaseAreaFade(
+        BaseArea targetArea,
+        Vec2 playerPosition,
+        Vec2 playerFacing,
+        std::string status,
+        bool closeBaseUi,
+        ScreenTransitionSound sound);
     void startScreenTransition(
         ScreenTransitionTarget target,
         ScreenTransitionPhase phase,
@@ -1955,6 +1980,7 @@ private:
     bool processingBulkRepairExecutable() const;
     void updateDungeonDepthTutorials();
     void applyAstralDistortionToLayout();
+    void pushAstralDistortionNotice(AstralDistortionKind previous);
     AstralDistortionKind chooseAstralDistortionForDepth(int depth, AstralDistortionKind previous) const;
     float astralLightRadiusMultiplier() const;
     float astralHardnessMultiplier() const;
@@ -1978,10 +2004,8 @@ private:
     bool spawnAppearingChestNode(
         DungeonTile tile,
         LootChestKind chestKind,
-        int depthRank,
-        Vec2 sourceWorldPosition,
-        std::string_view logMergeKey = {});
-    void startChestSpawnJump(ChestNode& node, Vec2 sourceWorldPosition, std::mt19937& rng);
+        int depthRank);
+    void startChestSpawnJump(ChestNode& node, std::mt19937& rng);
     void updateChestSpawnJump(ChestNode& node, float dt);
     Vec2 chestVisualCenter(const ChestNode& node) const;
     float chestVisualAltitude(const ChestNode& node) const;
@@ -2255,13 +2279,14 @@ private:
     bool loadAudioCueManifestForEdit();
     bool saveAudioCueManifestFromEdit(std::string& message);
     bool handleAudioCueEditCommand(std::string_view normalized);
-    bool handleAudioCueEditEvent(const SDL_Event& event);
+    void rebuildAudioCueEditCueOrder();
     void rebuildAudioCueFileList();
     void enterAudioCueEditMode(AudioCueEditMode editMode);
     void exitAudioCueEditMode();
     void syncAudioCueEditDraftFromSelection();
     void copySelectedAudioCueSettings();
     void pasteCopiedAudioCueSettings();
+    void previewSelectedConfiguredAudioCue();
     void previewSelectedAudioCueFile();
     void applySelectedAudioCueFile();
     void updateAudioCueEditScreen(const Input& input, UiContext& ui);
@@ -2378,7 +2403,7 @@ private:
     bool startDebugStoryTestPresentation(std::string_view id, std::function<void()> onComplete);
     bool startStoryEventForTrigger(std::string_view trigger);
     void maybeStartOpeningBaseIntroEvent();
-    void pushDungeonNotice(
+    bool pushDungeonNotice(
         std::vector<DungeonLogEntry>& notices,
         std::string message,
         std::string mergeKey,
@@ -2386,7 +2411,11 @@ private:
         float mergeSeconds,
         int maxVisible);
     void pushDungeonLog(std::string message, std::string mergeKey = {});
-    void pushImportantDungeonNotice(std::string message, std::string mergeKey = {});
+    void pushImportantDungeonNotice(
+        std::string message,
+        std::string mergeKey = {},
+        ImportantDungeonNoticeSound sound = ImportantDungeonNoticeSound::None);
+    void pushDungeonInventoryFullNotice();
     void pushCountedDungeonLog(std::string label, int amount, std::string suffix, std::string mergeKey);
     void updateDungeonLogs(float dt);
     void handleRingItemAddedEvents();
@@ -2412,7 +2441,7 @@ private:
     bool hiddenDungeonNpcTargetActive(std::string_view targetKey) const;
     bool handleHiddenDungeonNpcEnemyEvent(const EnemyEvent& enemyEvent);
     void handleHiddenDungeonNpcCaptureResult(const CaptureResult& capture);
-    void switchActiveRingWithLog(int delta);
+    void switchActiveRing(int delta);
     int unlockedRingHudCount() const;
     UiRect ringStatusHudRect(int ringIndex, int unlockedRingCount) const;
     bool updateRingStatusHud(UiContext& ui, float dt);
@@ -2771,8 +2800,12 @@ private:
     std::string enemyShadowStatus_;
     ScreenMode audioCueEditReturnMode_ = ScreenMode::Playing;
     AudioCueEditMode audioCueEditMode_ = AudioCueEditMode::Bgm;
+    AudioCueEditSortMode audioCueEditSortMode_ = AudioCueEditSortMode::ManifestOrder;
     std::vector<AudioCueEditEntry> audioCueEditEntries_;
+    std::vector<AudioCueEditEntry> audioCueEditBgmAssets_;
     std::vector<AudioCueFileEntry> audioCueEditFiles_;
+    std::vector<int> audioCueEditCueOrder_;
+    bool audioCueEditCueOrderNeedsRefresh_ = false;
     int audioCueEditCueIndex_ = -1;
     int audioCueEditFileIndex_ = -1;
     AudioCueEditEntry audioCueEditDraft_{};
@@ -2785,6 +2818,8 @@ private:
     UiScrollAreaState audioCueEditFileScrollState_{};
     UiSliderState audioCueEditVolumeSliderState_{};
     UiSliderState audioCueEditPitchSliderState_{};
+    int audioCueEditLastCueClickIndex_ = -1;
+    std::uint64_t audioCueEditLastCueClickTicks_ = 0;
     int audioCueEditLastFileClickIndex_ = -1;
     std::uint64_t audioCueEditLastFileClickTicks_ = 0;
     bool audioCueEditDirty_ = false;
@@ -3075,6 +3110,7 @@ private:
     bool hasLatestWarpPointPosition_ = false;
     std::optional<Vec2> requestedWarpPointStartPosition_;
     UiConfirmDialogState warpReturnConfirm_{};
+    ScreenTransitionSound warpReturnTransitionSound_ = ScreenTransitionSound::DungeonLadder;
     int focusedWarpReturnPointIndex_ = -1;
     int hoveredWarpReturnPointIndex_ = -1;
     int disarmedWarpReturnPointIndex_ = -1;

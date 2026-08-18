@@ -21,7 +21,12 @@ constexpr std::size_t MaxLightningStrikes = 32;
 constexpr std::size_t MaxThunderImpactArcs = 220;
 constexpr float MagicFxBounceStopSpeed = 32.0f;
 constexpr std::string_view AudioSeMagicCast = "se.magic.cast";
-constexpr std::string_view AudioSeMagicImpact = "se.magic.impact";
+constexpr std::string_view EarthSpikeImagePath = "assets/effects/magic_earth_spike.png";
+constexpr float EarthSpikeHeightScale = 2.18f;
+constexpr float EarthSpikeRiseFraction = 0.18f;
+constexpr float EarthSpikeSettleFraction = 0.12f;
+constexpr float EarthSpikeRiseOvershoot = 1.04f;
+constexpr float EarthSpikeGroundOffsetScale = 0.08f;
 
 std::mt19937& magicFxRng()
 {
@@ -441,224 +446,52 @@ void drawEarthCrack(Renderer& renderer, const MagicFxSystem::Particle& particle,
     }
 }
 
-void drawEarthSpikeProfiled(Renderer& renderer, const MagicFxSystem::Particle& particle, Color color, float size)
+void drawEarthSpikeImage(Renderer& renderer, const MagicFxSystem::Particle& particle, Color color, float size)
 {
     if (size <= 0.0f || color.a == 0) {
         return;
     }
 
-    const float progress = particle.lifetime > 0.0f ? clamp(particle.age / particle.lifetime, 0.0f, 1.0f) : 1.0f;
-    const float rise = progress < 0.18f ? 1.0f - std::pow(1.0f - progress / 0.18f, 3.0f) : 1.0f;
-    const Vec2 base = particle.position;
-    const Vec2 up = fromAngle(particle.rotation);
-    const Vec2 side = perpendicular(up);
-    const float seed = particle.rotation * 11.3f + particle.startSize * 0.27f + base.x * 0.015f + base.y * 0.018f;
-    const float spikeHeight = size * lerp(1.72f, 2.18f, hash01(seed + 1.0f)) * rise;
-    const float baseWidth = size * lerp(0.56f, 0.80f, hash01(seed + 2.0f));
-
-    constexpr int Count = 8;
-    constexpr std::array<float, Count> T{{0.00f, 0.12f, 0.27f, 0.43f, 0.60f, 0.76f, 0.90f, 1.00f}};
-    std::array<Vec2, Count> center{};
-    std::array<Vec2, Count> left{};
-    std::array<Vec2, Count> right{};
-    std::array<Vec2, Count> ridge{};
-
-    for (int i = 0; i < Count; ++i) {
-        const float t = T[static_cast<std::size_t>(i)];
-        const float taper = std::pow(1.0f - t, 0.76f);
-        float width = baseWidth * (0.08f + taper * lerp(0.78f, 1.08f, hash01(seed + 20.0f + static_cast<float>(i) * 2.77f)));
-        if (i == Count - 1) {
-            width = baseWidth * lerp(0.025f, 0.065f, hash01(seed + 101.0f));
-        } else if (hash01(seed + 35.0f + static_cast<float>(i) * 4.13f) < 0.32f) {
-            width *= lerp(0.70f, 0.90f, hash01(seed + 38.0f + static_cast<float>(i)));
-        }
-
-        const float bend = std::sin(t * Pi * 0.96f) * (hash01(seed + 50.0f) - 0.5f) * 0.46f + std::sin(t * Pi * 2.4f + seed) * 0.10f;
-        center[static_cast<std::size_t>(i)] = base + up * (spikeHeight * t) + side * (baseWidth * bend);
-        left[static_cast<std::size_t>(i)] = center[static_cast<std::size_t>(i)] - side * (width * lerp(0.86f, 1.34f, hash01(seed + 70.0f + static_cast<float>(i)))) + up * (baseWidth * (hash01(seed + 90.0f + static_cast<float>(i)) - 0.5f) * 0.10f);
-        right[static_cast<std::size_t>(i)] = center[static_cast<std::size_t>(i)] + side * (width * lerp(0.72f, 1.22f, hash01(seed + 80.0f + static_cast<float>(i)))) + up * (baseWidth * (hash01(seed + 100.0f + static_cast<float>(i)) - 0.5f) * 0.10f);
-        ridge[static_cast<std::size_t>(i)] = center[static_cast<std::size_t>(i)] + side * (width * (hash01(seed + 112.0f + static_cast<float>(i)) - 0.5f) * 0.26f);
-    }
-
-    const Vec2 tip = center.back() + up * (baseWidth * lerp(0.07f, 0.18f, hash01(seed + 120.0f))) + side * (baseWidth * (hash01(seed + 121.0f) - 0.5f) * 0.20f);
-    left.back() = tip - side * (baseWidth * lerp(0.018f, 0.050f, hash01(seed + 122.0f)));
-    right.back() = tip + side * (baseWidth * lerp(0.014f, 0.046f, hash01(seed + 123.0f)));
-    ridge.back() = tip;
-
-    std::array<Vec2, Count * 2> outline{};
-    std::array<Vec2, Count * 2> body{};
-    for (int i = 0; i < Count; ++i) {
-        const int ri = Count - 1 - i;
-        outline[static_cast<std::size_t>(i)] = right[static_cast<std::size_t>(ri)];
-        outline[static_cast<std::size_t>(Count + i)] = left[static_cast<std::size_t>(i)];
-        body[static_cast<std::size_t>(i)] = center[static_cast<std::size_t>(ri)] + (right[static_cast<std::size_t>(ri)] - center[static_cast<std::size_t>(ri)]) * 0.88f;
-        body[static_cast<std::size_t>(Count + i)] = center[static_cast<std::size_t>(i)] + (left[static_cast<std::size_t>(i)] - center[static_cast<std::size_t>(i)]) * 0.88f;
-    }
-
-    renderer.fillEllipse(base + up * (baseWidth * -0.02f), {baseWidth * 1.62f * rise, baseWidth * 0.34f * rise}, scaleAlpha({42, 28, 19, color.a}, 0.78f));
-    renderer.fillEllipse(base + up * (baseWidth * 0.06f), {baseWidth * 1.30f * rise, baseWidth * 0.25f * rise}, scaleAlpha({160, 96, 46, color.a}, 0.42f));
-    for (int i = 0; i < 16; ++i) {
-        const float s = seed + 180.0f + static_cast<float>(i) * 8.71f;
-        const float a = static_cast<float>(i) * Pi * 2.0f / 16.0f + (hash01(s + 5.0f) - 0.5f) * 0.42f;
-        const Vec2 pos = base + side * (std::cos(a) * baseWidth * lerp(0.72f, 1.52f, hash01(s))) + up * (std::sin(a) * baseWidth * lerp(0.08f, 0.27f, hash01(s + 1.0f)));
-        drawDirtClod(renderer, pos, baseWidth * lerp(0.07f, 0.19f, hash01(s + 2.0f)) * rise, particle.rotation + hash01(s + 4.0f) * Pi * 2.0f, scaleAlpha(mixColor({86, 56, 34, color.a}, {202, 132, 70, color.a}, hash01(s + 3.0f)), 0.78f));
-    }
-
-    renderer.fillPolygon(outline.data(), outline.size(), scaleAlpha({32, 23, 19, color.a}, 0.98f));
-    renderer.fillPolygon(body.data(), body.size(), scaleAlpha({126, 78, 45, color.a}, 0.94f));
-
-    for (int i = 0; i < Count - 1; ++i) {
-        const float salt = seed + 140.0f + static_cast<float>(i) * 8.0f;
-        const std::array<Vec2, 4> lf{body[static_cast<std::size_t>(Count + i)], body[static_cast<std::size_t>(Count + i + 1)], ridge[static_cast<std::size_t>(i + 1)], ridge[static_cast<std::size_t>(i)]};
-        const std::array<Vec2, 4> rf{ridge[static_cast<std::size_t>(i)], ridge[static_cast<std::size_t>(i + 1)], body[static_cast<std::size_t>(Count - 2 - i)], body[static_cast<std::size_t>(Count - 1 - i)]};
-        renderer.fillPolygon(lf.data(), lf.size(), scaleAlpha(mixColor({174, 108, 56, color.a}, {234, 166, 88, color.a}, hash01(salt)), 0.92f));
-        renderer.fillPolygon(rf.data(), rf.size(), scaleAlpha(mixColor({34, 27, 24, color.a}, {82, 54, 36, color.a}, hash01(salt + 2.0f)), 0.96f));
-    }
-
-    renderer.drawSoftLine(ridge.back(), ridge[1], std::max(1.3f, baseWidth * 0.075f), scaleAlpha({255, 206, 130, color.a}, 0.36f));
-    renderer.drawSoftLine(body[static_cast<std::size_t>(Count + 5)], body[static_cast<std::size_t>(Count + 2)], std::max(1.0f, baseWidth * 0.050f), scaleAlpha({238, 166, 88, color.a}, 0.26f));
-    renderer.drawSoftLine(body[1], body[5], std::max(1.2f, baseWidth * 0.060f), scaleAlpha({16, 13, 12, color.a}, 0.54f));
-
-    auto pointInside = [&](float t, float u) {
-        const float y = clamp(t, 0.0f, 0.999f);
-        int index = 0;
-        for (int j = 0; j < Count - 1; ++j) {
-            if (y >= T[static_cast<std::size_t>(j)] && y <= T[static_cast<std::size_t>(j + 1)]) {
-                index = j;
-                break;
-            }
-        }
-        const float local = clamp((y - T[static_cast<std::size_t>(index)]) / (T[static_cast<std::size_t>(index + 1)] - T[static_cast<std::size_t>(index)]), 0.0f, 1.0f);
-        const Vec2 l = left[static_cast<std::size_t>(index)] + (left[static_cast<std::size_t>(index + 1)] - left[static_cast<std::size_t>(index)]) * local;
-        const Vec2 r = right[static_cast<std::size_t>(index)] + (right[static_cast<std::size_t>(index + 1)] - right[static_cast<std::size_t>(index)]) * local;
-        return l + (r - l) * clamp(u, 0.0f, 1.0f);
-    };
-    for (int i = 0; i < 68; ++i) {
-        const float s = seed + 220.0f + static_cast<float>(i) * 6.37f;
-        const Vec2 p = pointInside(lerp(0.06f, 0.92f, hash01(s)), lerp(0.16f, 0.84f, hash01(s + 1.0f)));
-        const float roll = hash01(s + 3.0f);
-        const Color fleck = roll < 0.30f
-            ? scaleAlpha({236, 166, 88, color.a}, 0.22f)
-            : (roll < 0.62f ? scaleAlpha({96, 60, 34, color.a}, 0.30f) : scaleAlpha({28, 20, 16, color.a}, 0.26f));
-        renderer.fillSoftCircle(p, std::max(0.55f, baseWidth * lerp(0.014f, 0.045f, hash01(s + 2.0f))), fleck);
-    }
-    for (int i = 0; i < 34; ++i) {
-        const float s = seed + 360.0f + static_cast<float>(i) * 5.91f;
-        const float t = lerp(0.10f, 0.88f, hash01(s));
-        const float u = lerp(0.20f, 0.80f, hash01(s + 1.0f));
-        const bool bright = hash01(s + 4.0f) < 0.34f;
-        renderer.drawSoftLine(
-            pointInside(t, u),
-            pointInside(t + lerp(0.028f, 0.092f, hash01(s + 2.0f)), u + (hash01(s + 3.0f) - 0.5f) * 0.30f),
-            std::max(0.55f, baseWidth * lerp(0.012f, 0.034f, hash01(s + 5.0f))),
-            bright ? scaleAlpha({232, 158, 82, color.a}, 0.22f) : scaleAlpha({18, 13, 11, color.a}, 0.38f));
-    }
-}
-
-void drawEarthSpike(Renderer& renderer, const MagicFxSystem::Particle& particle, Color color, float size)
-{
-    if (size <= 0.0f || color.a == 0) {
+    const ImageHandle image = renderer.acquireImage(EarthSpikeImagePath, TextureFilter::Linear);
+    RectF sourceBounds{};
+    if (!image.valid() || !renderer.getImageOpaqueBounds(image, sourceBounds) ||
+        sourceBounds.w <= 0.0f || sourceBounds.h <= 0.0f) {
         return;
     }
-    const float progress = particle.lifetime > 0.0f ? clamp(particle.age / particle.lifetime, 0.0f, 1.0f) : 1.0f;
-    const float rise = progress < 0.18f
-        ? 1.0f - (1.0f - progress / 0.18f) * (1.0f - progress / 0.18f) * (1.0f - progress / 0.18f)
+
+    const float progress = particle.lifetime > 0.0f
+        ? clamp(particle.age / particle.lifetime, 0.0f, 1.0f)
         : 1.0f;
-    const Vec2 base = particle.position;
-    const Vec2 up = fromAngle(particle.rotation);
-    const Vec2 side = perpendicular(up);
-    const float seed = particle.rotation * 11.3f + particle.startSize * 0.27f + base.x * 0.015f + base.y * 0.018f;
-    const float spikeHeight = size * lerp(1.18f, 1.50f, hash01(seed + 1.0f)) * rise;
-    const float baseWidth = size * lerp(0.68f, 0.94f, hash01(seed + 2.0f));
+    const float riseProgress = clamp(progress / EarthSpikeRiseFraction, 0.0f, 1.0f);
+    const float rise = 1.0f - std::pow(1.0f - riseProgress, 3.0f);
+    if (rise <= 0.0f) {
+        return;
+    }
 
-    auto drift = [&](float salt, float scale) {
-        return (hash01(seed + salt) - 0.5f) * scale;
-    };
-    auto centerAt = [&](float t, float salt, float scale) {
-        const float bend = drift(salt, scale) * std::sin(t * Pi * 0.95f);
-        return base + up * (spikeHeight * t) + side * (baseWidth * bend);
-    };
+    const float settleProgress = clamp(
+        (progress - EarthSpikeRiseFraction) / EarthSpikeSettleFraction,
+        0.0f,
+        1.0f);
+    const float settleScale = lerp(EarthSpikeRiseOvershoot, 1.0f, smooth01(settleProgress));
+    const float fullHeight = size * EarthSpikeHeightScale * settleScale;
+    const float fullWidth = fullHeight * sourceBounds.w / sourceBounds.h;
+    const float visibleSourceHeight = std::max(1.0f, sourceBounds.h * rise);
+    sourceBounds.y += sourceBounds.h - visibleSourceHeight;
+    sourceBounds.h = visibleSourceHeight;
 
-    const Vec2 c0 = centerAt(0.00f, 10.0f, 0.08f);
-    const Vec2 c1 = centerAt(0.22f, 11.0f, 0.28f);
-    const Vec2 c2 = centerAt(0.47f, 12.0f, 0.36f);
-    const Vec2 c3 = centerAt(0.72f, 13.0f, 0.30f);
-    const Vec2 c4 = centerAt(0.96f, 14.0f, 0.22f);
-    const float topWidth = baseWidth * lerp(0.16f, 0.30f, hash01(seed + 15.0f));
+    ImageDrawOptions options;
+    options.anchor = {0.5f, 1.0f};
+    options.tint = {255, 255, 255, color.a};
+    const float variationSeed =
+        particle.startSize * 0.27f + particle.position.x * 0.015f + particle.position.y * 0.018f;
+    options.flipX = hash01(variationSeed) < 0.5f;
 
-    const Vec2 leftBase = c0 - side * (baseWidth * lerp(0.62f, 0.90f, hash01(seed + 20.0f))) + up * (baseWidth * drift(21.0f, 0.10f));
-    const Vec2 leftLow = c1 - side * (baseWidth * lerp(0.46f, 0.78f, hash01(seed + 22.0f))) + up * (baseWidth * drift(23.0f, 0.14f));
-    const Vec2 leftMid = c2 - side * (baseWidth * lerp(0.34f, 0.72f, hash01(seed + 24.0f))) + up * (baseWidth * drift(25.0f, 0.12f));
-    const Vec2 leftHigh = c3 - side * (baseWidth * lerp(0.20f, 0.48f, hash01(seed + 26.0f))) + up * (baseWidth * drift(27.0f, 0.10f));
-    const Vec2 topLeft = c4 - side * (topWidth * lerp(0.72f, 1.36f, hash01(seed + 28.0f))) - up * (baseWidth * lerp(0.02f, 0.12f, hash01(seed + 29.0f)));
-
-    const Vec2 rightBase = c0 + side * (baseWidth * lerp(0.56f, 0.84f, hash01(seed + 30.0f))) + up * (baseWidth * drift(31.0f, 0.08f));
-    const Vec2 rightLow = c1 + side * (baseWidth * lerp(0.50f, 0.82f, hash01(seed + 32.0f))) + up * (baseWidth * drift(33.0f, 0.13f));
-    const Vec2 rightMid = c2 + side * (baseWidth * lerp(0.30f, 0.64f, hash01(seed + 34.0f))) + up * (baseWidth * drift(35.0f, 0.11f));
-    const Vec2 rightHigh = c3 + side * (baseWidth * lerp(0.16f, 0.44f, hash01(seed + 36.0f))) + up * (baseWidth * drift(37.0f, 0.12f));
-    const Vec2 topRight = c4 + side * (topWidth * lerp(0.48f, 1.18f, hash01(seed + 38.0f))) - up * (baseWidth * lerp(0.04f, 0.16f, hash01(seed + 39.0f)));
-    const Vec2 chippedTip = c4 + side * (topWidth * drift(40.0f, 1.10f)) + up * (baseWidth * lerp(0.02f, 0.13f, hash01(seed + 41.0f)));
-
-    const Vec2 rightShelf = rightBase + side * (baseWidth * lerp(0.04f, 0.16f, hash01(seed + 42.0f))) + up * (baseWidth * lerp(0.02f, 0.13f, hash01(seed + 43.0f)));
-    const Vec2 rightRoot = c0 + side * (baseWidth * lerp(0.40f, 0.74f, hash01(seed + 44.0f))) + up * (-baseWidth * lerp(0.04f, 0.18f, hash01(seed + 45.0f)));
-    const Vec2 rootDip = c0 + side * (baseWidth * drift(46.0f, 0.22f)) + up * (-baseWidth * lerp(0.08f, 0.24f, hash01(seed + 47.0f)));
-    const Vec2 leftRoot = c0 - side * (baseWidth * lerp(0.44f, 0.82f, hash01(seed + 48.0f))) + up * (-baseWidth * lerp(0.02f, 0.16f, hash01(seed + 49.0f)));
-    const Vec2 leftShelf = leftBase - side * (baseWidth * lerp(0.04f, 0.18f, hash01(seed + 55.0f))) + up * (baseWidth * lerp(0.00f, 0.12f, hash01(seed + 56.0f)));
-
-    const std::array<Vec2, 14> outline{
-        chippedTip,
-        topRight,
-        rightHigh,
-        rightMid,
-        rightLow,
-        rightShelf,
-        rightRoot,
-        rootDip,
-        leftRoot,
-        leftShelf,
-        leftLow,
-        leftMid,
-        leftHigh,
-        topLeft};
-    renderer.fillPolygon(outline.data(), outline.size(), scaleAlpha({54, 38, 28, color.a}, 0.96f));
-
-    const Vec2 ridgeLow = c1 + side * (baseWidth * drift(50.0f, 0.26f));
-    const Vec2 ridgeMid = c2 + side * (baseWidth * drift(51.0f, 0.30f));
-    const Vec2 ridgeHigh = c3 + side * (baseWidth * drift(52.0f, 0.26f));
-    const Vec2 ridgeTip = c4 + side * (baseWidth * drift(53.0f, 0.18f)) - up * (baseWidth * lerp(0.02f, 0.10f, hash01(seed + 54.0f)));
-    const Vec2 rootRidge = c0 + side * (baseWidth * drift(57.0f, 0.18f)) + up * (-baseWidth * lerp(0.02f, 0.10f, hash01(seed + 58.0f)));
-    const Vec2 lowerLeftBreak = c0 - side * (baseWidth * lerp(0.18f, 0.42f, hash01(seed + 59.0f))) + up * (baseWidth * lerp(0.02f, 0.14f, hash01(seed + 60.0f)));
-    const Vec2 lowerRightBreak = c0 + side * (baseWidth * lerp(0.16f, 0.46f, hash01(seed + 61.0f))) + up * (baseWidth * lerp(0.00f, 0.13f, hash01(seed + 62.0f)));
-
-    const std::array<Vec2, 5> leftFace{chippedTip, topLeft, leftHigh, leftMid, ridgeMid};
-    const std::array<Vec2, 6> rightFace{chippedTip, topRight, rightHigh, rightMid, ridgeMid, ridgeHigh};
-    const std::array<Vec2, 5> centerRidgeFace{ridgeMid, rightMid, rightLow, ridgeLow, lowerLeftBreak};
-    const std::array<Vec2, 5> lowerRidgeFace{ridgeLow, lowerRightBreak, rootRidge, lowerLeftBreak, leftMid};
-    const std::array<Vec2, 4> lowerLeftFace{leftMid, lowerLeftBreak, leftRoot, leftShelf};
-    const std::array<Vec2, 4> lowerCenterFace{lowerLeftBreak, rootRidge, rootDip, leftRoot};
-    const std::array<Vec2, 5> lowerRightFace{rightLow, rightShelf, rightRoot, lowerRightBreak, ridgeLow};
-    const std::array<Vec2, 4> rightBaseFace{lowerRightBreak, rightRoot, rootDip, rootRidge};
-    const std::array<Vec2, 4> topFace{topLeft, chippedTip, topRight, ridgeTip};
-    renderer.fillPolygon(leftFace.data(), leftFace.size(), scaleAlpha({150, 104, 64, color.a}, 0.92f));
-    renderer.fillPolygon(rightFace.data(), rightFace.size(), scaleAlpha({86, 60, 44, color.a}, 0.96f));
-    renderer.fillPolygon(centerRidgeFace.data(), centerRidgeFace.size(), scaleAlpha({124, 84, 54, color.a}, 0.82f));
-    renderer.fillPolygon(lowerRidgeFace.data(), lowerRidgeFace.size(), scaleAlpha({116, 78, 52, color.a}, 0.78f));
-    renderer.fillPolygon(lowerLeftFace.data(), lowerLeftFace.size(), scaleAlpha({132, 90, 56, color.a}, 0.74f));
-    renderer.fillPolygon(lowerCenterFace.data(), lowerCenterFace.size(), scaleAlpha({104, 70, 48, color.a}, 0.72f));
-    renderer.fillPolygon(lowerRightFace.data(), lowerRightFace.size(), scaleAlpha({72, 50, 38, color.a}, 0.82f));
-    renderer.fillPolygon(rightBaseFace.data(), rightBaseFace.size(), scaleAlpha({84, 58, 42, color.a}, 0.72f));
-    renderer.fillPolygon(topFace.data(), topFace.size(), scaleAlpha({178, 124, 74, color.a}, 0.68f));
-
-    renderer.drawSoftLine(chippedTip + (ridgeHigh - chippedTip) * 0.22f, chippedTip + (ridgeHigh - chippedTip) * 0.48f, 1.1f, scaleAlpha({222, 166, 102, color.a}, 0.18f));
-    renderer.drawSoftLine(ridgeHigh + (ridgeMid - ridgeHigh) * 0.16f, ridgeHigh + (ridgeMid - ridgeHigh) * 0.42f, 1.0f, scaleAlpha({210, 148, 88, color.a}, 0.15f));
-    renderer.drawLine(ridgeMid, ridgeLow, scaleAlpha({76, 52, 38, color.a}, 0.20f));
-    renderer.drawLine(ridgeLow, rootRidge, scaleAlpha({64, 44, 32, color.a}, 0.20f));
-    renderer.drawSoftLine(topLeft + (leftHigh - topLeft) * 0.20f, topLeft + (leftHigh - topLeft) * 0.54f, 1.0f, scaleAlpha({210, 148, 84, color.a}, 0.14f));
-    renderer.drawLine(rightHigh, rightLow, scaleAlpha({38, 28, 22, color.a}, 0.38f));
-    renderer.drawLine(leftMid, lowerLeftBreak, scaleAlpha({54, 36, 28, color.a}, 0.16f));
-    renderer.drawLine(rightLow, ridgeLow, scaleAlpha({42, 30, 24, color.a}, 0.18f));
-    renderer.drawSoftLine(leftShelf, lowerLeftBreak, 1.0f, scaleAlpha({206, 142, 78, color.a}, 0.13f));
-    renderer.drawLine(lowerRightBreak, rightRoot, scaleAlpha({36, 26, 22, color.a}, 0.30f));
+    renderer.drawImageRegion(
+        image,
+        sourceBounds,
+        particle.position + Vec2{0.0f, size * EarthSpikeGroundOffsetScale},
+        {fullWidth, fullHeight * rise},
+        options);
 }
 
 void drawSharpLightningSegment(Renderer& renderer, Vec2 a, Vec2 b, float width, Color color)
@@ -1037,7 +870,7 @@ void drawParticle(Renderer& renderer, const MagicFxSystem::Particle& particle)
         drawWindSparkle(renderer, center, size, particle.rotation, color);
         break;
     case MagicFxParticleShape::EarthSpike:
-        drawEarthSpikeProfiled(renderer, particle, color, size);
+        drawEarthSpikeImage(renderer, particle, color, size);
         break;
     case MagicFxParticleShape::EarthCrack:
         drawEarthCrack(renderer, particle, color, particle.startSize);
@@ -1087,11 +920,6 @@ void MagicFxSystem::emitBurst(const MagicFxEmitterConfig& config)
     spawnParticles(config, std::max(0, config.burstCount));
 }
 
-void MagicFxSystem::queueSound(std::string_view cueId, float volumeScale, float pitchScale)
-{
-    queueSoundAt(cueId, {}, volumeScale, pitchScale);
-}
-
 void MagicFxSystem::queueSoundAt(std::string_view cueId, Vec2 position, float volumeScale, float pitchScale)
 {
     if (cueId.empty()) {
@@ -1103,16 +931,6 @@ void MagicFxSystem::queueSoundAt(std::string_view cueId, Vec2 position, float vo
         std::max(0.0f, volumeScale),
         std::max(0.01f, pitchScale),
     });
-}
-
-void MagicFxSystem::queueMagicCastSound()
-{
-    queueSound(AudioSeMagicCast);
-}
-
-void MagicFxSystem::queueMagicImpactSound()
-{
-    queueSound(AudioSeMagicImpact);
 }
 
 std::vector<MagicFxSoundEvent> MagicFxSystem::consumeSoundEvents()
@@ -1448,7 +1266,6 @@ MagicFxEmitterHandle MagicFxSystem::startFireballLoop(Vec2 position, Vec2 direct
 
 void MagicFxSystem::playFireGroundBurn(Vec2 position, float radius, float duration)
 {
-    queueMagicImpactSound();
     radius = std::max(4.0f, radius);
     duration = std::max(0.05f, duration);
 
@@ -1788,7 +1605,6 @@ MagicFxEmitterHandle MagicFxSystem::startIceShardLoop(Vec2 position, Vec2 direct
 
 void MagicFxSystem::playIceShatter(Vec2 position, float radius)
 {
-    queueMagicImpactSound();
     radius = std::max(8.0f, radius * 1.22f);
 
     MagicFxEmitterConfig largeShards;
@@ -1928,7 +1744,6 @@ MagicFxEmitterHandle MagicFxSystem::startThunderAura(Vec2 position, float radius
 
 void MagicFxSystem::playThunderStrike(Vec2 origin, Vec2 target, bool strong)
 {
-    queueSoundAt(AudioSeMagicImpact, target, strong ? 1.12f : 0.86f, strong ? 0.94f : 1.08f);
     LightningStrike strike;
     strike.active = true;
     strike.strong = strong;
@@ -2099,7 +1914,6 @@ void MagicFxSystem::playThunderStrike(Vec2 origin, Vec2 target, bool strong)
 
 void MagicFxSystem::playThunderSparkBurst(Vec2 position, float radius)
 {
-    queueSoundAt(AudioSeMagicImpact, position, 0.82f, 1.18f);
     MagicFxEmitterConfig burst;
     burst.position = position;
     burst.direction = {1.0f, 0.0f};
@@ -2388,7 +2202,6 @@ MagicFxEmitterHandle MagicFxSystem::startDirtClodLoop(Vec2 position, Vec2 direct
 
 void MagicFxSystem::playEarthSpikeRise(Vec2 position, float radius)
 {
-    queueSoundAt(AudioSeMagicImpact, position, 1.06f, 0.88f);
     radius = std::max(8.0f, radius);
     const float spikeLifetime = sampleRange({1.02f, 1.10f});
     constexpr float SpikeFadeOutFraction = 0.14f;
@@ -2584,7 +2397,6 @@ void MagicFxSystem::playEarthSpikeRise(Vec2 position, float radius)
 
 void MagicFxSystem::playEarthDebrisBurst(Vec2 position, float radius)
 {
-    queueSoundAt(AudioSeMagicImpact, position, 0.96f, 0.92f);
     radius = std::max(5.0f, radius);
 
     MagicFxEmitterConfig debris;

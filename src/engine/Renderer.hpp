@@ -126,6 +126,14 @@ public:
         int scale,
         TextStyle style,
         TextFontRole fontRole);
+    // ネイティブフォントを指定したピクセルサイズで描画する。
+    void drawTextAtPixelSize(
+        Vec2 pos,
+        std::string_view text,
+        Color color,
+        int pixelSize,
+        TextStyle style = TextStyle::Regular,
+        TextFontRole fontRole = TextFontRole::Ui);
     void drawOutlinedText(
         Vec2 pos,
         std::string_view text,
@@ -140,6 +148,19 @@ public:
         int scale,
         TextStyle style,
         TextFontRole fontRole);
+    // 指定幅へ収まる最大サイズを1px単位で求め、同じ単位で計測・描画できる。
+    Vec2 measureTextAtPixelSize(
+        std::string_view text,
+        int pixelSize,
+        TextStyle style = TextStyle::Regular,
+        TextFontRole fontRole = TextFontRole::Ui);
+    int fitTextPixelSize(
+        std::string_view text,
+        float maxWidth,
+        int maxPixelSize,
+        int minPixelSize = 1,
+        TextStyle style = TextStyle::Regular,
+        TextFontRole fontRole = TextFontRole::Ui);
     Vec2 measureWrappedText(std::string_view text, float maxWidth, int scale = 2, TextStyle style = TextStyle::Regular);
     void drawWrappedText(Vec2 pos, std::string_view text, float maxWidth, Color color, int scale = 2, TextStyle style = TextStyle::Regular);
     bool loadTextFont(std::string_view path, TextFontRole fontRole = TextFontRole::Ui);
@@ -333,9 +354,28 @@ private:
     void setColor(Color color);
     void drawGlyph(char c, Vec2 pos, Color color, int scale);
     bool drawNativeText(Vec2 pos, std::string_view text, Color color, int scale, TextStyle style, TextFontRole fontRole);
+    bool drawNativeTextAtPixelSize(
+        Vec2 pos,
+        std::string_view text,
+        Color color,
+        int pixelSize,
+        TextStyle style,
+        TextFontRole fontRole);
     bool drawNativeOutlinedText(Vec2 pos, std::string_view text, Color color, Color outline, int outlinePx, int scale, TextStyle style);
     bool measureNativeText(std::string_view text, int scale, TextStyle style, TextFontRole fontRole, Vec2& outSize);
-    bool renderNativeTextToTexture(std::string_view text, Color color, int scale, TextStyle style, TextFontRole fontRole, TextTexture& outTexture);
+    bool measureNativeTextAtPixelSize(
+        std::string_view text,
+        int pixelSize,
+        TextStyle style,
+        TextFontRole fontRole,
+        Vec2& outSize);
+    bool renderNativeTextToTextureAtPixelSize(
+        std::string_view text,
+        Color color,
+        int pixelSize,
+        TextStyle style,
+        TextFontRole fontRole,
+        TextTexture& outTexture);
     bool renderNativeOutlinedTextToTexture(
         std::string_view text,
         Color color,

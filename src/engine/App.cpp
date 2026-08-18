@@ -2216,6 +2216,7 @@ void App::run()
         }
         if (testPlayMode_ && input_.testFreezePressed()) {
             testFreezePaused_ = !testFreezePaused_;
+            audio_.setBgmPaused(testFreezePaused_);
             if (testFreezePaused_) {
                 frozenTime_ = time_;
                 logInfo("Test freeze: PAUSED (F7)");

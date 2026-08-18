@@ -2013,23 +2013,53 @@ struct RingUiItemDrawOrderEntry {
     RingUiItemFrontPriority frontPriority = RingUiItemFrontPriority::Normal;
 };
 
+bool ringUiItemDrawsBehind(
+    const RingUiItemDrawOrderEntry& left,
+    const RingUiItemDrawOrderEntry& right)
+{
+    if (left.frontPriority != right.frontPriority) {
+        return left.frontPriority < right.frontPriority;
+    }
+    if (left.position.y != right.position.y) {
+        return left.position.y < right.position.y;
+    }
+    if (left.position.x != right.position.x) {
+        return left.position.x < right.position.x;
+    }
+    return left.itemIndex < right.itemIndex;
+}
+
 void sortRingUiItemsBackToFront(std::vector<RingUiItemDrawOrderEntry>& entries)
 {
+    std::stable_sort(entries.begin(), entries.end(), ringUiItemDrawsBehind);
+}
+
+struct RingUiItemInteractionTarget {
+    RingUiItemDrawOrderEntry drawOrder{};
+    UiRect hitRect{};
+    UiRect navigationRect{};
+};
+
+int frontmostRingUiItemInteractionIndex(
+    std::vector<RingUiItemInteractionTarget>& targets,
+    const UiContext& ui)
+{
     std::stable_sort(
-        entries.begin(),
-        entries.end(),
-        [](const RingUiItemDrawOrderEntry& left, const RingUiItemDrawOrderEntry& right) {
-            if (left.frontPriority != right.frontPriority) {
-                return left.frontPriority < right.frontPriority;
-            }
-            if (left.position.y != right.position.y) {
-                return left.position.y < right.position.y;
-            }
-            if (left.position.x != right.position.x) {
-                return left.position.x < right.position.x;
-            }
-            return left.itemIndex < right.itemIndex;
+        targets.begin(),
+        targets.end(),
+        [](const RingUiItemInteractionTarget& left, const RingUiItemInteractionTarget& right) {
+            return ringUiItemDrawsBehind(left.drawOrder, right.drawOrder);
         });
+
+    for (auto it = targets.rbegin(); it != targets.rend(); ++it) {
+        const bool focused = ui.navigationActive()
+            ? ui.navigationFocused(it->navigationRect)
+            : ui.hovered(it->hitRect);
+        if (focused) {
+            return it->drawOrder.itemIndex;
+        }
+    }
+    return -1;
 }
 
 RingUiPreviewStyle ringUiPreviewStyle(int ringIndex)

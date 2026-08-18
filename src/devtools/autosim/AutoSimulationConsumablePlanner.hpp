@@ -19,6 +19,8 @@ struct AutoSimulationConsumableProfile {
 AutoSimulationConsumableProfile autoSimulationConsumableProfile(
     const GameTestObjectEntrySnapshot& item);
 
+[[nodiscard]] bool autoSimulationNeedsLowHpReturn(const GameTestSnapshot& snapshot);
+
 class AutoSimulationConsumablePlanner {
 public:
     std::optional<GameTestAction> chooseAction(const GameTestSnapshot& snapshot) const;

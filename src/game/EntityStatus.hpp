@@ -58,6 +58,8 @@ public:
         StateApplyMode mode = StateApplyMode::Overwrite);
     bool removeState(std::string_view stateId);
     [[nodiscard]] bool hasState(std::string_view stateId) const;
+    [[nodiscard]] const EntityState* state(std::string_view stateId) const;
+    bool setStateValue(std::string_view stateId, double value);
     [[nodiscard]] const std::vector<EntityState>& states() const;
 
     void applyModifier(
@@ -79,7 +81,6 @@ public:
     [[nodiscard]] double sizeMultiplierFromStates() const;
     [[nodiscard]] double poisonDamagePerSecond() const;
     [[nodiscard]] double hotDamagePerSecond() const;
-    [[nodiscard]] double bleedDamagePerSecond() const;
     [[nodiscard]] const std::vector<EntityModifier>& modifiers() const;
 
 private:

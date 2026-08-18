@@ -22,7 +22,8 @@ constexpr float ActionCooldownSeconds = 0.35f;
 constexpr float BaseResumeDelaySeconds = 0.95f;
 constexpr float FastPlanReuseSeconds = 0.16f;
 constexpr float ReturnActionRadius = 64.0f;
-constexpr float LowHpReturnRatio = 0.34f;
+constexpr int LowHpReturnContinuePathTiles = 7;
+constexpr float LowHpReturnContinueFallbackDistance = ReturnActionRadius * 3.0f;
 constexpr float TargetSameDistance = 28.0f;
 constexpr float MineTargetSameDistance = 4.0f;
 constexpr float RouteWaypointSameDistance = 18.0f;
@@ -96,22 +97,6 @@ float bestBackpackLightRadius(const GameTestSnapshot& snapshot)
         }
     }
     return best;
-}
-
-float hpRatio(const GameTestSnapshot& snapshot)
-{
-    if (snapshot.player.maxHp <= 0) {
-        return 1.0f;
-    }
-    return std::clamp(
-        static_cast<float>(snapshot.player.hp) / static_cast<float>(snapshot.player.maxHp),
-        0.0f,
-        1.0f);
-}
-
-bool shouldReturnForLowHp(const GameTestSnapshot& snapshot)
-{
-    return snapshot.player.hp > 0 && hpRatio(snapshot) <= LowHpReturnRatio;
 }
 
 std::optional<int> miningTargetHp(const GameTestSnapshot& snapshot, const AutoSimulationPlan& plan)
@@ -283,7 +268,9 @@ AutoSimulationIntent actionIntent(const GameTestAction& action)
     case GameTestActionKind::ReturnToBaseAfterGameOver:
         intent.goal = AutoSimulationGoal::ReturnToBase;
         intent.iconKind = AutoSimulationIntentIconKind::Base;
-        intent.subject = "拠点へ戻りたい";
+        intent.subject = action.reason.find("low_hp") != std::string::npos
+            ? "HPが少なく回復手段もないので拠点へ戻りたい"
+            : "拠点へ戻りたい";
         break;
     case GameTestActionKind::StartMiningFromBase:
     case GameTestActionKind::StartCheckpointMeasurement:
@@ -1609,15 +1596,32 @@ void AutoSimulationController::updateMissionState(const GameTestSnapshot& snapsh
         completeMission();
     }
 
+    const bool returnForLowHp = autoSimulationNeedsLowHpReturn(snapshot);
+    const bool lowHpReturnMission = mission_.goal == AutoSimulationGoal::ReturnToBase &&
+        mission_.reason.find("low_hp") != std::string::npos;
+    bool lowHpReturnPointClose = false;
+    if (lowHpReturnMission) {
+        const AutoSimulationPlan returnPlan = makeMissionPlan(snapshot);
+        lowHpReturnPointClose = returnPlan.routePathTileCount > 0
+            ? returnPlan.routePathTileCount <= LowHpReturnContinuePathTiles
+            : distanceSquared(snapshot.player.position, mission_.targetWorld) <=
+                LowHpReturnContinueFallbackDistance * LowHpReturnContinueFallbackDistance;
+    }
+    if (lowHpReturnMission && !returnForLowHp && !lowHpReturnPointClose) {
+        if (settings_.trace) {
+            logInfo("AutoSim: low-HP return cancelled; healing is available or HP recovered.");
+        }
+        completeMission();
+    }
+
     const bool returnForFullBackpack = backpackReturnArmed_ && backpackFull(snapshot);
-    const bool returnForLowHp = shouldReturnForLowHp(snapshot);
     const bool urgentReturn = returnForFullBackpack || returnForLowHp;
     if (urgentReturn && mission_.goal != AutoSimulationGoal::ReturnToBase) {
         const GameTestWarpPointSnapshot* warp = nearestDiscoveredWarp(snapshot);
         beginMission(
             AutoSimulationGoal::ReturnToBase,
             warp != nullptr ? warp->position : snapshot.dungeon.startWorld,
-            returnForFullBackpack ? "backpack_full_mission" : "low_hp_mission",
+            returnForFullBackpack ? "backpack_full_mission" : "low_hp_no_recovery_mission",
             warp != nullptr ? warp->index : -1);
     } else if (mission_.goal == AutoSimulationGoal::ReturnToBase && mission_.targetIndex < 0) {
         if (const GameTestWarpPointSnapshot* warp = nearestDiscoveredWarp(snapshot)) {
@@ -2027,7 +2031,7 @@ void AutoSimulationController::update(const GameTestSnapshot& snapshot, float dt
             action.kind = GameTestActionKind::ReturnToBaseViaWarp;
             action.reason = returnForFullBackpack
                 ? "backpack_full_near_warp"
-                : (returnForLowHp ? "low_hp_near_warp" : "checkpoint_base_prep");
+                : (returnForLowHp ? "low_hp_no_recovery_near_warp" : "checkpoint_base_prep");
             queueAction(std::move(action));
             inputFrame_ = {};
             return;

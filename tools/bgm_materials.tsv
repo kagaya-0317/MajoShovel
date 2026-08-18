@@ -1,5 +1,5 @@
 ﻿source	output	cue_id	display_name	loop_start_seconds	loop_end_seconds	loop_crossfade_ms	notes
-_First_village.mp3	first_village.wav	bgm.asset.first_village	First village	0	50.5	30	終端の減衰前から先頭へ戻す
+_First_village.mp3	first_village.wav	bgm.asset.first_village	First village	0	full	1000	終端まで再生し、末尾1秒の減衰と先頭をクロスフェード
 A_letter.mp3	a_letter.wav	bgm.asset.a_letter	A letter	0	full	0	ユーザー指定の全体ループ
 Cunning_Monsters.mp3	cunning_monsters.wav	bgm.asset.cunning_monsters	Cunning Monsters	7.5	99.3375	20	導入後から終端無音前までを反復
 Dot_Snow.mp3	dot_snow.wav	bgm.asset.dot_snow	Dot Snow	0	full	0	ユーザー指定の全体ループ

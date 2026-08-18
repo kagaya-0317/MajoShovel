@@ -161,6 +161,26 @@ bool EntityStatus::hasState(std::string_view stateId) const
     });
 }
 
+const EntityState* EntityStatus::state(std::string_view stateId) const
+{
+    const auto it = std::find_if(states_.begin(), states_.end(), [stateId](const EntityState& state) {
+        return state.stateId == stateId;
+    });
+    return it != states_.end() ? &*it : nullptr;
+}
+
+bool EntityStatus::setStateValue(std::string_view stateId, double value)
+{
+    const auto it = std::find_if(states_.begin(), states_.end(), [stateId](const EntityState& state) {
+        return state.stateId == stateId;
+    });
+    if (it == states_.end()) {
+        return false;
+    }
+    it->value = value;
+    return true;
+}
+
 const std::vector<EntityState>& EntityStatus::states() const
 {
     return states_;
@@ -322,17 +342,6 @@ double EntityStatus::hotDamagePerSecond() const
     double result = 0.0;
     for (const EntityState& state : states_) {
         if (state.stateId == "status_hot") {
-            result += state.value > 0.0 ? state.value : 1.0;
-        }
-    }
-    return result;
-}
-
-double EntityStatus::bleedDamagePerSecond() const
-{
-    double result = 0.0;
-    for (const EntityState& state : states_) {
-        if (state.stateId == "status_bleed") {
             result += state.value > 0.0 ? state.value : 1.0;
         }
     }

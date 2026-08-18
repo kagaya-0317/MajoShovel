@@ -259,7 +259,9 @@ void Player::update(
         }
     }
     velocity = moveAxis * speed + knockbackMove;
-    const double bleedDps = status.bleedDamagePerSecond();
+    const double bleedDps = status.hasState("status_bleed")
+        ? static_cast<double>(maxHp) * 0.02
+        : 0.0;
     if (bleedDps > 0.0) {
         const double movementScale = lengthSquared(velocity) > 1.0f ? 1.5 : 0.5;
         bleedDamageAccumulator += bleedDps * movementScale * static_cast<double>(dt);

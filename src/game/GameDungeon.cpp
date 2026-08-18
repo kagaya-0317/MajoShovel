@@ -124,11 +124,15 @@ constexpr float TutorialAppleGuaranteedProgress = 0.12f;
 constexpr std::string_view FinalStoryStageId = "stage_03_star_core";
 constexpr std::string_view AstragnaBossEnemyId = "astragna";
 constexpr std::string_view PostEndingIntroFlag = "story_post_ending_intro";
-constexpr std::string_view AudioBgmDungeon = "bgm.dungeon";
+constexpr std::string_view AudioBgmBoss = "bgm.boss";
+constexpr std::string_view AudioBgmFinalBoss = "bgm.boss.final";
 constexpr std::string_view AudioSeChestOpen = "se.chest.open";
 constexpr std::string_view AudioSeCaptureFail = "se.capture.fail";
 constexpr std::string_view AudioSeBuriedEnemyWarning = "se.enemy.buried_warning";
 constexpr std::string_view AudioSeDiscovery = "se.discovery";
+constexpr std::string_view AudioSeNoticeWarning = "se.notice.warning";
+constexpr std::string_view AudioSeNoticeAstral = "se.notice.astral";
+constexpr std::string_view AudioSeNoticeSuccess = "se.notice.success";
 constexpr std::string_view AudioSeWarpUnlock = "se.warp.unlock";
 constexpr std::string_view AudioSeBossSpawn = "se.boss.spawn";
 constexpr std::string_view AudioSeBossDefeat = "se.boss.defeat";
@@ -168,9 +172,14 @@ constexpr std::string_view DungeonRouteDeviationNotice =
     "本道から離れている…　深度を進めるなら来た道を戻ろう";
 constexpr std::string_view DungeonRouteDeviationNoticeMergeKey = "dungeon_route_deviation";
 
-bool usesOuterShellBossIntroPosition(std::string_view stageId, std::string_view bossEnemyId)
+bool isFinalStoryBoss(std::string_view stageId, std::string_view bossEnemyId)
 {
     return bossEnemyId == AstragnaBossEnemyId || stageId == FinalStoryStageId;
+}
+
+bool usesOuterShellBossIntroPosition(std::string_view stageId, std::string_view bossEnemyId)
+{
+    return isFinalStoryBoss(stageId, bossEnemyId);
 }
 
 std::optional<int> hiddenEndingStoryStageIndex(std::string_view stageId)
@@ -588,6 +597,28 @@ float chestMimicChanceForKind(LootChestKind kind)
     }
     return 0.0f;
 }
+
+void spawnAppearingChestLandingDust(EffectSystem& effects, Vec2 position)
+{
+    SmokeBurstOptions smoke;
+    smoke.count = effects.lightweightMode() ? 3 : 5;
+    smoke.size = 13.0f;
+    smoke.sizeJitter = 0.38f;
+    smoke.spreadRadius = 7.0f;
+    smoke.speed = 30.0f;
+    smoke.riseSpeed = 10.0f;
+    smoke.duration = 0.48f;
+    smoke.durationJitter = 0.08f;
+    smoke.colorA = {248, 248, 244, 176};
+    smoke.colorB = {190, 198, 204, 132};
+    smoke.layer = EffectLayer::Foreground;
+
+    constexpr std::array<float, 2> HorizontalOffsets{-24.0f, 24.0f};
+    for (const float offsetX : HorizontalOffsets) {
+        effects.spawnSmokeBurst(position + Vec2{offsetX, 10.0f}, smoke);
+    }
+}
+
 constexpr float DiscardThrowDurationMin = 0.48f;
 constexpr float DiscardThrowDurationMax = 0.62f;
 constexpr float DiscardThrowArcHeightMin = 52.0f;
@@ -3129,6 +3160,32 @@ void Game::applyAstralDistortionToLayout()
         astralRun_.baseStageHardnessMultiplier * astralHardnessMultiplier());
 }
 
+void Game::pushAstralDistortionNotice(AstralDistortionKind previous)
+{
+    std::string_view message;
+    switch (astralRun_.distortion) {
+    case AstralDistortionKind::FadingStarlight:
+        message = "星明かりが遠のいた…";
+        break;
+    case AstralDistortionKind::StarHardened:
+        message = "星が硬化している…";
+        break;
+    case AstralDistortionKind::EchoSpawn:
+        message = "残響が湧き上がる…";
+        break;
+    case AstralDistortionKind::None:
+        if (previous == AstralDistortionKind::None) {
+            return;
+        }
+        message = "星の歪みが消えた…";
+        break;
+    }
+    pushImportantDungeonNotice(
+        std::string(message),
+        "astral_distortion",
+        ImportantDungeonNoticeSound::Astral);
+}
+
 void Game::initializeAstralRunForLayout()
 {
     if (!currentStageIsRoguelike()) {
@@ -3156,23 +3213,10 @@ void Game::initializeAstralRunForLayout()
         astralRun_.maxReachedDepth = std::max(astralRun_.maxReachedDepth, startingDepth);
     }
     astralRun_.baseStageHardnessMultiplier = dungeonLayout_.stageHardnessMultiplier;
-    astralRun_.distortion = chooseAstralDistortionForDepth(startingDepth, astralRun_.distortion);
+    const AstralDistortionKind previousDistortion = astralRun_.distortion;
+    astralRun_.distortion = chooseAstralDistortionForDepth(startingDepth, previousDistortion);
     applyAstralDistortionToLayout();
-    const char* distortionName = "なし";
-    switch (astralRun_.distortion) {
-    case AstralDistortionKind::FadingStarlight:
-        distortionName = "星明かりが遠のく";
-        break;
-    case AstralDistortionKind::StarHardened:
-        distortionName = "星硬化";
-        break;
-    case AstralDistortionKind::EchoSpawn:
-        distortionName = "残響湧き";
-        break;
-    case AstralDistortionKind::None:
-        break;
-    }
-    pushDungeonLog(std::string("星の歪み: ") + distortionName, "astral_distortion");
+    pushAstralDistortionNotice(previousDistortion);
 }
 
 void Game::updateAstralRunProgress()
@@ -3193,24 +3237,11 @@ void Game::updateAstralRunProgress()
     }
 
     astralRun_.currentDepth = depth;
-    astralRun_.distortion = chooseAstralDistortionForDepth(depth, astralRun_.distortion);
+    const AstralDistortionKind previousDistortion = astralRun_.distortion;
+    astralRun_.distortion = chooseAstralDistortionForDepth(depth, previousDistortion);
     ++astralRun_.distortionChanges;
     applyAstralDistortionToLayout();
-    const char* distortionName = "なし";
-    switch (astralRun_.distortion) {
-    case AstralDistortionKind::FadingStarlight:
-        distortionName = "星明かりが遠のく";
-        break;
-    case AstralDistortionKind::StarHardened:
-        distortionName = "星硬化";
-        break;
-    case AstralDistortionKind::EchoSpawn:
-        distortionName = "残響湧き";
-        break;
-    case AstralDistortionKind::None:
-        break;
-    }
-    pushDungeonLog(std::string("星の歪み: ") + distortionName, "astral_distortion");
+    pushAstralDistortionNotice(previousDistortion);
 }
 
 int Game::roguelikeSectionRankForDepthMeters(int depthMeters) const
@@ -3791,18 +3822,14 @@ bool Game::handleCaptureResult(const CaptureResult& capture)
     }
 
     playAudioSe(AudioSeCaptureFail);
-    if (capture.type == CaptureResultType::OutOfRange) {
-        pushDungeonLog("虫とりアミ: 遠すぎる", "capture_out_of_range");
-    } else if (capture.type == CaptureResultType::InventoryFull) {
-        pushDungeonLog("虫とりアミ: 持ち物がいっぱい", "capture_inventory_full");
-    } else if (capture.type == CaptureResultType::BossLocked) {
-        pushDungeonLog("虫とりアミ: 初回ボスは捕獲できない", "capture_boss_locked");
-    } else if (capture.type == CaptureResultType::BossAlreadyOwned) {
-        pushDungeonLog("虫とりアミ: 捕獲中のボスは再捕獲できない", "capture_boss_owned");
-    } else if (capture.type == CaptureResultType::KnowledgeLocked) {
-        pushDungeonLog("虫とりアミ: 本編で捕まえたことのない敵", "capture_knowledge_locked:" + capture.enemyName);
+    if (capture.type == CaptureResultType::InventoryFull) {
+        pushDungeonLog("リュックがいっぱいで捕獲できない！", "capture_inventory_full");
+    } else if (capture.type == CaptureResultType::BossLocked ||
+        capture.type == CaptureResultType::BossAlreadyOwned ||
+        capture.type == CaptureResultType::KnowledgeLocked) {
+        pushDungeonLog("不思議な力で捕獲できない！", "capture_power_locked");
     } else if (capture.type == CaptureResultType::Failed) {
-        pushDungeonLog("虫とりアミ: 逃げられた", "capture_failed:" + capture.enemyName);
+        pushDungeonLog("捕獲に失敗した！", "capture_failed:" + capture.enemyName);
     }
     return false;
 }
@@ -3875,12 +3902,10 @@ void Game::finalizeCaptureAbsorbAnimation(const CaptureAbsorbAnimation& animatio
             false,
             &animation.item);
         if (dropped) {
-            pushDungeonLog(
-                "リュックがいっぱいなので " + animation.enemy.enemyName + " は地面に落ちた",
-                "capture_drop_full:" + animation.enemy.enemyName);
+            pushDungeonInventoryFullNotice();
         } else {
             pushDungeonLog(
-                "虫とりアミ: " + animation.enemy.enemyName + " を収納できなかった",
+                "虫とりアミ: " + animation.enemy.enemyName + " を収納できなかった（エラー）",
                 "capture_drop_failed:" + animation.enemy.enemyName);
         }
     }
@@ -5073,7 +5098,7 @@ void Game::startIntroTutorialDungeon()
     baseEditEnabled_ = false;
     baseEditMode_ = BaseEditMode::None;
     resetPlayerFootstepDust();
-    playAudioBgm(AudioBgmDungeon, 0.45f);
+    playCurrentDungeonBgm(0.45f);
     pendingStoryTrigger_ = std::string(IntroTutorialFallTrigger);
 }
 
@@ -5273,9 +5298,7 @@ void Game::spawnIntroTutorialChest()
     spawnAppearingChestNode(
         introTutorialChestTile_,
         LootChestKind::Common,
-        1,
-        tileWorldCenter(introTutorialChestTile_),
-        "intro_tutorial_chest");
+        1);
 }
 
 void Game::spawnIntroTutorialSecondChest()
@@ -5298,9 +5321,7 @@ void Game::spawnIntroTutorialSecondChest()
     spawnAppearingChestNode(
         introTutorialSecondChestTile_,
         LootChestKind::Common,
-        1,
-        tileWorldCenter(introTutorialSecondChestTile_),
-        std::string_view{});
+        1);
     introTutorialSecondChestPlaced_ = true;
 }
 
@@ -5474,7 +5495,9 @@ bool Game::updateIntroTutorial(const Input& input, float)
                 introTutorialExitHovered_;
             if (input.confirmPressed() || input.useItemPressed() || exitClicked) {
                 introTutorialPhase_ = IntroTutorialPhase::Returning;
-                requestScreenTransition(ScreenTransitionTarget::IntroTutorialToBase);
+                requestScreenTransition(
+                    ScreenTransitionTarget::IntroTutorialToBase,
+                    ScreenTransitionSound::DungeonLadder);
                 return true;
             }
         } else {
@@ -6775,19 +6798,16 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
     const auto activeEventEnemies = [&](const DungeonEventInstance& event) {
         return enemies_.activeDungeonEventEnemyCount(event.id);
     };
-    const auto resolveWitchObjectiveAwaitingReward = [&](
-                                                        DungeonEventInstance& event,
-                                                        std::string logMessage,
-                                                        std::string logMergeKey) {
+    const auto resolveWitchObjectiveAwaitingReward = [&](DungeonEventInstance& event) {
         if (event.objectiveResolved) {
             return false;
         }
         event.objectiveResolved = true;
-        pushDungeonLog(std::move(logMessage), std::move(logMergeKey));
         if (!hiddenRouteNpcAttackActive()) {
             pushImportantDungeonNotice(
                 "魔女の頼みを解決した！話しかけてみよう！",
-                "dungeon_event_witch_resolved:" + event.id);
+                "dungeon_event_witch_resolved:" + event.id,
+                ImportantDungeonNoticeSound::Success);
         }
         return true;
     };
@@ -6895,13 +6915,11 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
             if (!event.activated && chestOpenedAt(event.rewardTile)) {
                 event.activated = true;
                 enemies_.wakeDungeonEventEnemies(event.id);
-                pushDungeonLog("眠っていた敵が起きた", "dungeon_event_wake:" + event.id);
             }
             const int activeEnemies = activeEventEnemies(event);
             if (!event.activated && activeEnemies > 0 &&
                 enemies_.activeSleepingDungeonEventEnemyCount(event.id) < activeEnemies) {
                 event.activated = true;
-                pushDungeonLog("眠っていた敵が起きた", "dungeon_event_wake:" + event.id);
             }
             if (event.activated && chestOpenedAt(event.rewardTile) && activeEnemies <= 0) {
                 completeDungeonEvent(event, std::nullopt);
@@ -6926,41 +6944,45 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
 
         if (event.kind == DungeonEventKind::NestRoom) {
             bool allHolesDestroyed = !event.nestHoles.empty();
-            for (DungeonEventNestHole& hole : event.nestHoles) {
-                if (hole.destroyed) {
-                    continue;
-                }
-                allHolesDestroyed = false;
-                const Vec2 holeCenter = tileWorldCenter(hole.tile);
-                const DungeonEventRingHit hit = hitDungeonEventTargetWithRing(
-                    holeCenter,
-                    hole.hitCooldown,
-                    hole.destroyed,
-                    DungeonEventHitRequirement::AnyContact);
-                if (hit) {
-                    hole.hp = std::max(0, hole.hp - hit.damage);
-                    hole.destroyed = hole.hp <= 0;
-                    queueTerrainImpactSound(
-                        hit,
-                        TileType::Dirt,
-                        hole.destroyed ? RingImpactResult::Break : RingImpactResult::Hit,
-                        holeCenter);
-                    if (hole.destroyed) {
-                        effects_.spawnTileBreak(
-                            holeCenter,
+            std::vector<DungeonTile> newRewardTiles;
+            std::vector<std::size_t> newRewardHoleIndices;
+            for (std::size_t holeIndex = 0; holeIndex < event.nestHoles.size(); ++holeIndex) {
+                DungeonEventNestHole& hole = event.nestHoles[holeIndex];
+                if (!hole.destroyed) {
+                    const Vec2 holeCenter = tileWorldCenter(hole.tile);
+                    const DungeonEventRingHit hit = hitDungeonEventTargetWithRing(
+                        holeCenter,
+                        hole.hitCooldown,
+                        hole.destroyed,
+                        DungeonEventHitRequirement::AnyContact);
+                    if (hit) {
+                        hole.hp = std::max(0, hole.hp - hit.damage);
+                        hole.destroyed = hole.hp <= 0;
+                        queueTerrainImpactSound(
+                            hit,
                             TileType::Dirt,
-                            tileMap_.tileColorAtWorld(holeCenter),
-                            false);
-                        if (!hole.rewardSpawned) {
-                            hole.rewardSpawned = true;
-                            ensureDungeonEventChest(event, dungeonEventOffsetTile(hole.tile, 1, 0), LootChestKind::Common);
+                            hole.destroyed ? RingImpactResult::Break : RingImpactResult::Hit,
+                            holeCenter);
+                        if (hole.destroyed) {
+                            effects_.spawnTileBreak(
+                                holeCenter,
+                                TileType::Dirt,
+                                tileMap_.tileColorAtWorld(holeCenter),
+                                false);
                         }
                     }
                 }
+
                 if (hole.destroyed) {
+                    if (!hole.rewardSpawned) {
+                        hole.rewardSpawned = true;
+                        newRewardTiles.push_back(dungeonEventOffsetTile(hole.tile, 1, 0));
+                        newRewardHoleIndices.push_back(holeIndex);
+                    }
                     continue;
                 }
 
+                allHolesDestroyed = false;
                 hole.spawnCooldown = std::max(0.0f, hole.spawnCooldown - dt);
                 const int activeHoleEnemies = enemies_.activeRuntimeEnemyCount(hole.spawnedEnemyRuntimeIds);
                 if (hole.spawnCooldown <= 0.0f && activeHoleEnemies < 3 && activeEventEnemies(event) < 9) {
@@ -6971,7 +6993,20 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
                     hole.spawnCooldown = 4.0f;
                 }
             }
-            if (allHolesDestroyed && activeEventEnemies(event) <= 0) {
+
+            bool rewardRevealScheduled = true;
+            if (!newRewardTiles.empty()) {
+                rewardRevealScheduled = scheduleDungeonEventChestReveal(
+                    event,
+                    std::move(newRewardTiles),
+                    LootChestKind::Common);
+                if (!rewardRevealScheduled) {
+                    for (const std::size_t holeIndex : newRewardHoleIndices) {
+                        event.nestHoles[holeIndex].rewardSpawned = false;
+                    }
+                }
+            }
+            if (allHolesDestroyed && rewardRevealScheduled && activeEventEnemies(event) <= 0) {
                 event.rewardSpawned = true;
                 completeDungeonEvent(event, std::nullopt);
             }
@@ -7035,7 +7070,6 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
                 if (hitEventObjectWithRing(object, DungeonEventHitRequirement::Thunder)) {
                     object.powered = true;
                     playAudioSe("se.discovery");
-                    pushDungeonLog("受電石が通電した", "dungeon_event_power:" + event.id);
                 }
             }
             const bool allPowered = !event.eventObjects.empty() &&
@@ -7051,10 +7085,7 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
 
         if (event.kind == DungeonEventKind::BuriedWitch) {
             if (buriedWitchRocksCleared(tileMap_, event.centerTile)) {
-                resolveWitchObjectiveAwaitingReward(
-                    event,
-                    "魔女を助け出せそう",
-                    "dungeon_event_witch_ready:" + event.id);
+                resolveWitchObjectiveAwaitingReward(event);
             }
             continue;
         }
@@ -7067,10 +7098,11 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
                 if (playerNearTile(object.tile, 1.5f)) {
                     object.destroyed = true;
                     event.activated = true;
-                    resolveWitchObjectiveAwaitingReward(
-                        event,
-                        "落とし物を拾った",
-                        "dungeon_event_baggage_pickup:" + event.id);
+                    if (resolveWitchObjectiveAwaitingReward(event)) {
+                        pushDungeonLog(
+                            "落とし物を拾った",
+                            "dungeon_event_baggage_pickup:" + event.id);
+                    }
                     playAudioSe("se.pickup");
                 }
             }
@@ -7089,10 +7121,7 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
 
         if (event.kind == DungeonEventKind::SurroundedWitch) {
             if (event.activated && activeEventEnemies(event) <= 0) {
-                resolveWitchObjectiveAwaitingReward(
-                    event,
-                    "囲まれた魔女を助けた",
-                    "dungeon_event_witch_ready:" + event.id);
+                resolveWitchObjectiveAwaitingReward(event);
             }
             continue;
         }
@@ -7105,7 +7134,6 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
                 if (hitEventObjectWithRing(object, DungeonEventHitRequirement::Fire)) {
                     object.powered = true;
                     event.activated = true;
-                    pushDungeonLog("焚き火に火がついた", "dungeon_event_campfire:" + event.id);
                     playAudioSe("se.discovery");
                 }
             }
@@ -7114,10 +7142,7 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
                     return object.kind == DungeonEventObjectKind::Campfire && object.powered;
                 });
             if (lit) {
-                resolveWitchObjectiveAwaitingReward(
-                    event,
-                    "魔女が温まれそう",
-                    "dungeon_event_witch_ready:" + event.id);
+                resolveWitchObjectiveAwaitingReward(event);
             }
             continue;
         }
@@ -7151,10 +7176,7 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
                     return object.kind != DungeonEventObjectKind::HeavyRock || object.destroyed;
                 });
             if (rockCleared) {
-                resolveWitchObjectiveAwaitingReward(
-                    event,
-                    "重い岩をどかした",
-                    "dungeon_event_witch_ready:" + event.id);
+                resolveWitchObjectiveAwaitingReward(event);
             }
             continue;
         }
@@ -7209,7 +7231,6 @@ void Game::handleDungeonEventEnemyEvent(const EnemyEvent& enemyEvent)
         event->bossEnemyRuntimeId > 0 &&
         event->bossEnemyRuntimeId == enemyEvent.enemyRuntimeId) {
         event->bossDefeated = true;
-        pushDungeonLog("親分を倒した", "dungeon_event_boss_defeated:" + event->id);
     }
 }
 
@@ -7532,9 +7553,6 @@ void Game::updateDungeonEventItemRequestUi(const Input& input, UiContext& ui)
                 event->deliveredObjectId = objectId;
                 event->objectiveResolved = true;
                 event->activated = true;
-                pushDungeonLog(
-                    "魔女に" + displayName + "を渡した",
-                    "dungeon_event_item_request:" + event->id);
                 closeDungeonEventItemRequestUi();
                 if (!startDungeonEventWitchRewardDialogue(*event)) {
                     logWarning("[dungeon_event] failed to continue item request dialogue: " + event->id);
@@ -7831,9 +7849,6 @@ bool Game::updateDungeonEventDiscovery(float dt)
 
     dungeonEventDiscoveryCooldown_ = DungeonEventDiscoveryCooldownSeconds;
     playAudioSe(AudioSeDiscovery);
-    pushDungeonLog(
-        std::string("発見: ") + dungeonEventKindDisplayName(event->kind),
-        "dungeon_event:" + std::string(dungeonEventKindId(event->kind)));
     return true;
 }
 
@@ -8165,7 +8180,7 @@ bool Game::spawnDungeonEventReward(DungeonEventInstance& event, const DungeonEve
             }
         }
         if (!spawned) {
-            pushDungeonLog("リュックがいっぱいなので、お礼を床に置いた", "dungeon_event_reward_full:" + event.id);
+            pushDungeonInventoryFullNotice();
             spawned = worldDrops_.spawnObjectDrop(
                 objectCatalog_,
                 objectId,
@@ -8220,9 +8235,6 @@ bool Game::completeDungeonEvent(DungeonEventInstance& event, std::optional<Dunge
         event.rewardClaimed = true;
     }
     event.completed = true;
-    pushDungeonLog(
-        std::string("完了: ") + dungeonEventKindDisplayName(event.kind),
-        "dungeon_event_complete:" + std::string(dungeonEventKindId(event.kind)));
     return true;
 }
 
@@ -8242,9 +8254,7 @@ bool Game::ensureDungeonEventChest(DungeonEventInstance& event, DungeonTile tile
     const bool spawned = spawnAppearingChestNode(
         tile,
         chestKind,
-        depthRank,
-        tileWorldCenter(event.focusTile),
-        "dungeon_event_chest:" + event.id + ":" + std::to_string(tile.x) + ":" + std::to_string(tile.y));
+        depthRank);
     if (!spawned) {
         return false;
     }
@@ -9359,7 +9369,7 @@ bool Game::updateWarpReturnUi(const Input& input, UiContext& ui)
                 enterAstralResult(AstralRunResult::Returned);
                 return true;
             }
-            requestReturnToBaseTransition(false, false);
+            requestReturnToBaseTransition(false, false, warpReturnTransitionSound_);
             return true;
         }
         if (result == UiConfirmDialogResult::Cancelled) {
@@ -9427,6 +9437,9 @@ bool Game::updateWarpReturnUi(const Input& input, UiContext& ui)
     if (returnPromptFocused &&
         (input.confirmPressed() || input.useItemPressed() || clickedReturnFocusIndex != -1)) {
         ui.emitSound(UiSoundEvent::MenuOpen);
+        warpReturnTransitionSound_ = focusedWarpReturnPointIndex_ == DungeonEntranceReturnFocusIndex
+            ? ScreenTransitionSound::DungeonLadder
+            : ScreenTransitionSound::WarpPoint;
         const bool roguelikeReturn = currentStageIsRoguelike();
         openUiConfirmDialog(
             warpReturnConfirm_,
@@ -9527,10 +9540,17 @@ void Game::updateWarpPoints(float dt)
             captureRetrySnapshotAtWarpPoint();
             point.lightRevealTimer = 0.0f;
             point.lightRevealAnimating = true;
-            pushDungeonLog("ワープポイント発見", "warp_point");
             const Vec2 unlockPosition = point.position;
             const auto playUnlockPresentation = [this, unlockPosition]() {
-                effects_.spawnPresentationPulseRings(unlockPosition, {104, 226, 255, 220}, 4);
+                PresentationPulseRingOptions pulseOptions;
+                pulseOptions.duration = 1.875f;
+                pulseOptions.endRadius = 144.0f;
+                pulseOptions.ringWidth = 3.0f;
+                effects_.spawnPresentationPulseRings(
+                    unlockPosition,
+                    {104, 226, 255, 220},
+                    4,
+                    pulseOptions);
                 playAudioSe(AudioSeWarpUnlock);
             };
             DungeonFocusRequest request;
@@ -9617,7 +9637,8 @@ void Game::updateDungeonRouteDeviation(float dt)
 
     pushImportantDungeonNotice(
         std::string(DungeonRouteDeviationNotice),
-        std::string(DungeonRouteDeviationNoticeMergeKey));
+        std::string(DungeonRouteDeviationNoticeMergeKey),
+        ImportantDungeonNoticeSound::Warning);
     dungeonRouteDeviation_.noticeShownForCurrentExcursion = true;
 }
 
@@ -10475,9 +10496,7 @@ void Game::assignChestMimic(ChestNode& node)
 bool Game::spawnAppearingChestNode(
     DungeonTile tile,
     LootChestKind chestKind,
-    int depthRank,
-    Vec2 sourceWorldPosition,
-    std::string_view logMergeKey)
+    int depthRank)
 {
     auto existing = std::find_if(chestNodes_.begin(), chestNodes_.end(), [tile](const ChestNode& node) {
         return sameDungeonTile(node.tile, tile);
@@ -10509,22 +10528,15 @@ bool Game::spawnAppearingChestNode(
         (static_cast<std::uint32_t>(tile.x) * 0x85EBCA6Bu) ^
         (static_cast<std::uint32_t>(tile.y) * 0xC2B2AE35u) ^
         (static_cast<std::uint32_t>(runStats_.elapsedSeconds * 1000.0f) * 0x27D4EB2Du));
-    startChestSpawnJump(node, sourceWorldPosition, rng);
+    startChestSpawnJump(node, rng);
     chestNodes_.push_back(node);
-    if (!logMergeKey.empty()) {
-        pushDungeonLog("宝箱が現れた", std::string(logMergeKey));
-    }
     return true;
 }
 
-void Game::startChestSpawnJump(ChestNode& node, Vec2 sourceWorldPosition, std::mt19937& rng)
+void Game::startChestSpawnJump(ChestNode& node, std::mt19937& rng)
 {
     const Vec2 target = tileWorldCenter(node.tile);
-    if (!std::isfinite(sourceWorldPosition.x) || !std::isfinite(sourceWorldPosition.y)) {
-        sourceWorldPosition = target;
-    }
-
-    const WorldDropSpawnMotion motion = makeWorldLootJumpMotion(sourceWorldPosition, rng);
+    const WorldDropSpawnMotion motion = makeWorldLootJumpMotion(target, rng);
     node.spawnJumpActive = motion.jump && motion.jumpDurationSeconds > 0.0f;
     node.spawnJumpStartPosition = motion.startPosition;
     node.spawnJumpElapsedSeconds = 0.0f;
@@ -10550,6 +10562,7 @@ void Game::updateChestSpawnJump(ChestNode& node, float dt)
         node.spawnJumpElapsedSeconds = 0.0f;
         node.spawnJumpDurationSeconds = 0.0f;
         node.spawnJumpArcHeight = 0.0f;
+        spawnAppearingChestLandingDust(effects_, tileWorldCenter(node.tile));
     }
 }
 
@@ -11242,7 +11255,6 @@ bool Game::trySpawnFailsafeShovelDropFromWall(Vec2 wallCenter)
     }
 
     digToolFailsafeSpawnCooldown_ = DigToolFailsafeSpawnCooldownSeconds;
-    pushDungeonLog(inlineItemTag(DigToolFailsafeShovelObjectId) + " 壁からスコップが出た", "dig_tool_failsafe");
     return true;
 }
 
@@ -12942,7 +12954,9 @@ void Game::requestBossEncounterIntro(BossEncounterPurpose purpose)
     bossEncounter_.stageId = currentStageId_;
     bossEncounter_.spawnPoint = bossSpawnPoint_;
     bossEncounterRingHidden_ = true;
-    requestScreenTransition(ScreenTransitionTarget::BossEncounterIntro);
+    requestScreenTransition(
+        ScreenTransitionTarget::BossEncounterIntro,
+        ScreenTransitionSound::None);
 }
 
 void Game::applyBossStoryPlayerPlacement()
@@ -13541,7 +13555,9 @@ void Game::requestBossEncounterAfterDialogueTransition()
 
     bossEncounter_.phase = BossEncounterPhase::AfterDialogueTransition;
     bossEncounterRingHidden_ = true;
-    requestScreenTransition(ScreenTransitionTarget::BossEncounterAfterDialogue);
+    requestScreenTransition(
+        ScreenTransitionTarget::BossEncounterAfterDialogue,
+        ScreenTransitionSound::None);
 }
 
 void Game::finishBossEncounterAfterDialogueTransition()
@@ -13678,7 +13694,12 @@ bool Game::beginBossFightForCurrentEncounter()
     if (!bossEncounter_.bossSpawnPresentationPlayed) {
         playAudioSe(AudioSeBossSpawn);
     }
-    playAudioBgm("bgm.boss", 0.45f);
+    const std::string_view bossEnemyId = bossEncounter_.bossEnemyId.empty()
+        ? std::string_view(currentStageDefinition().bossEnemyId)
+        : std::string_view(bossEncounter_.bossEnemyId);
+    playAudioBgm(
+        isFinalStoryBoss(currentStageId_, bossEnemyId) ? AudioBgmFinalBoss : AudioBgmBoss,
+        0.45f);
     return true;
 }
 
@@ -13699,11 +13720,11 @@ void Game::beginBossDefeatSequence(Vec2 position)
         bossEncounter_.spawnPoint = bossSpawnPoint_;
     }
     if (bossEncounter_.finalBoss && startFinalBossAfterStoryInPlace()) {
-        playAudioBgm("bgm.dungeon", 0.70f);
+        playCurrentDungeonBgm(0.70f);
         return;
     }
     playAudioSe(AudioSeBossDefeatFlash);
-    playAudioBgm("bgm.dungeon", 0.70f);
+    playCurrentDungeonBgm(0.70f);
     effects_.spawnAreaPulse(position, 92.0f, {255, 214, 110, 210});
 }
 
@@ -14135,7 +14156,7 @@ bool Game::restoreDebugRoguelikeRunSnapshot()
 
     mode_ = ScreenMode::Playing;
     pauseReturnMode_ = ScreenMode::Playing;
-    playAudioBgm(AudioBgmDungeon, 0.45f);
+    playCurrentDungeonBgm(0.45f);
     reloadNotice_ = "ローグライクRUNを復帰しました";
     reloadNoticeTimer_ = 1.8f;
     logInfo("Debug: roguelike RUN snapshot restored.");
@@ -14383,7 +14404,7 @@ void Game::renderRingEquipFx(Renderer& renderer) const
     }
 }
 
-void Game::pushDungeonNotice(
+bool Game::pushDungeonNotice(
     std::vector<DungeonLogEntry>& notices,
     std::string message,
     std::string mergeKey,
@@ -14392,7 +14413,7 @@ void Game::pushDungeonNotice(
     int maxVisible)
 {
     if (message.empty()) {
-        return;
+        return false;
     }
 
     if (!mergeKey.empty()) {
@@ -14401,7 +14422,7 @@ void Game::pushDungeonNotice(
                 entry.message = std::move(message);
                 entry.age = 0.0f;
                 entry.lifetime = lifetime;
-                return;
+                return false;
             }
         }
     }
@@ -14415,6 +14436,7 @@ void Game::pushDungeonNotice(
     while (static_cast<int>(notices.size()) > noticeLimit) {
         notices.erase(notices.begin());
     }
+    return true;
 }
 
 void Game::pushDungeonLog(std::string message, std::string mergeKey)
@@ -14428,15 +14450,43 @@ void Game::pushDungeonLog(std::string message, std::string mergeKey)
         DungeonLogMaxVisible);
 }
 
-void Game::pushImportantDungeonNotice(std::string message, std::string mergeKey)
+void Game::pushImportantDungeonNotice(
+    std::string message,
+    std::string mergeKey,
+    ImportantDungeonNoticeSound sound)
 {
-    pushDungeonNotice(
+    const bool added = pushDungeonNotice(
         importantDungeonNotices_,
         std::move(message),
         std::move(mergeKey),
         ImportantDungeonNoticeLifetime,
         ImportantDungeonNoticeMergeSeconds,
         ImportantDungeonNoticeMaxVisible);
+    if (!added) {
+        return;
+    }
+
+    switch (sound) {
+    case ImportantDungeonNoticeSound::Warning:
+        playAudioSe(AudioSeNoticeWarning);
+        break;
+    case ImportantDungeonNoticeSound::Astral:
+        playAudioSe(AudioSeNoticeAstral);
+        break;
+    case ImportantDungeonNoticeSound::Success:
+        playAudioSe(AudioSeNoticeSuccess);
+        break;
+    case ImportantDungeonNoticeSound::None:
+        break;
+    }
+}
+
+void Game::pushDungeonInventoryFullNotice()
+{
+    pushImportantDungeonNotice(
+        "リュックがいっぱいで拾えないよ",
+        "pickup_inventory_full",
+        ImportantDungeonNoticeSound::Warning);
 }
 
 void Game::pushCountedDungeonLog(std::string label, int amount, std::string suffix, std::string mergeKey)
@@ -14503,7 +14553,8 @@ void Game::handleRingItemAddedEvents()
         if (dungeonContext) {
             pushImportantDungeonNotice(
                 std::string(ringDisplayName(event.ringIndex, unlockedRingCount())) + " が重量オーバーだ！",
-                "ring_overweight:" + std::to_string(event.ringIndex));
+                "ring_overweight:" + std::to_string(event.ringIndex),
+                ImportantDungeonNoticeSound::Warning);
         }
     }
 }
@@ -14596,7 +14647,8 @@ void Game::handleRingItemBreakEvents(std::vector<EffectDiscoveryEvent>* discover
                             shardDamage,
                             objectBreakShardDamageType(shardSpec.kind),
                             shardSpec.effectKey,
-                            spellRing_);
+                            spellRing_,
+                            player_.status.multiplierFor(ModifierStat::Attack));
                         appendObjectEffectDiscovery(discoveryEvents, encyclopedia_, *object, shardSpec.effectKey, event.position);
                     }
                 } else if (effect.effectKey == "break_fire_burst") {
@@ -14604,6 +14656,7 @@ void Game::handleRingItemBreakEvents(std::vector<EffectDiscoveryEvent>* discover
                     spec.position = event.position;
                     spec.radius = objectBreakElementRadius(effect.effectKey, effect.value);
                     spec.damage = objectBreakFireDamage(effect.value);
+                    spec.ringItemDamageMultiplier = player_.status.multiplierFor(ModifierStat::Attack);
                     spec.damageType = "fire";
                     spec.effectId = "break_fire_burst";
                     enemies_.applyMagicArea(spec, spellRing_);
@@ -14827,7 +14880,7 @@ void Game::startHiddenMonicaDuel()
     baseEditEnabled_ = false;
     baseEditMode_ = BaseEditMode::None;
     resetPlayerFootstepDust();
-    playAudioBgm(AudioBgmDungeon, 0.45f);
+    playCurrentDungeonBgm(0.45f);
 
     std::string message;
     if (!saveSaveData(message)) {
@@ -14999,9 +15052,6 @@ bool Game::handleHiddenDungeonNpcEnemyEvent(const EnemyEvent& enemyEvent)
         logError("[hidden] dungeon npc removal save failed: " + message);
     }
 
-    pushDungeonLog(
-        (enemyEvent.enemyName.empty() ? std::string("NPC") : enemyEvent.enemyName) + "が消えた",
-        "hidden_npc_removed:" + targetKey);
     return true;
 }
 

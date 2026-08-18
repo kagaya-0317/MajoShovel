@@ -105,6 +105,7 @@ struct Effect {
     float duration = 0.35f;
     float startRadius = 2.0f;
     float endRadius = 10.0f;
+    float ringWidth = 5.0f;
     float drag = 3.5f;
     float rotation = 0.0f;
     float angularVelocity = 0.0f;
@@ -170,6 +171,14 @@ struct SmokeBurstOptions {
     EffectLayer layer = EffectLayer::Foreground;
 };
 
+struct PresentationPulseRingOptions {
+    float duration = 1.25f;
+    float interval = 0.25f;
+    float startRadius = 8.0f;
+    float endRadius = 72.0f;
+    float ringWidth = 5.0f;
+};
+
 struct SmokePuff {
     bool active = false;
     EffectLayer layer = EffectLayer::Foreground;
@@ -210,7 +219,11 @@ public:
     void spawnDamagePopup(Vec2 position, int amount, DamagePopupStyle style = DamagePopupStyle::Enemy);
     void spawnStatusPopup(Vec2 position, std::string_view stateId, StatusPopupTarget target);
     void spawnLevelUpPopup(Vec2 position);
-    void spawnPresentationPulseRings(Vec2 position, Color color, int pulseCount);
+    void spawnPresentationPulseRings(
+        Vec2 position,
+        Color color,
+        int pulseCount,
+        PresentationPulseRingOptions options = {});
     void spawnLevelUpEffects(Vec2 position);
     void spawnDigHit(Vec2 position, Vec2 direction = {1.0f, 0.0f}, Color colorOverride = {0, 0, 0, 0}, bool playSound = true);
     void spawnTileBreak(

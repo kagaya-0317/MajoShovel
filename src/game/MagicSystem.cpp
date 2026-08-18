@@ -27,6 +27,29 @@ constexpr float EarthDebrisLightSeconds = 0.72f;
 constexpr float WindWaveFxFadeStart = 0.68f;
 constexpr float MagicAuraCooldownFraction = 0.65f;
 constexpr float MinimumMagicAuraSeconds = 0.08f;
+constexpr std::string_view AudioSeMagicCast = "se.magic.cast";
+
+struct MagicAudioProfile {
+    std::string_view castCueId;
+    std::string_view impactCueId;
+};
+
+constexpr MagicAudioProfile magicAudioProfile(MagicElement element)
+{
+    switch (element) {
+    case MagicElement::Fire:
+        return {"se.magic.fire.cast", "se.magic.fire.impact"};
+    case MagicElement::Ice:
+        return {"se.magic.ice.cast", "se.magic.ice.impact"};
+    case MagicElement::Thunder:
+        return {"se.magic.thunder.cast", "se.magic.thunder.impact"};
+    case MagicElement::Wind:
+        return {"se.magic.wind.cast", "se.magic.wind.impact"};
+    case MagicElement::Earth:
+        return {"se.magic.earth.cast", "se.magic.earth.impact"};
+    }
+    return {};
+}
 
 std::mt19937& magicSystemRng()
 {
@@ -282,11 +305,7 @@ bool MagicSystem::cast(
         }
     }
 
-    if (magicFx_ != nullptr) {
-        magicFx_->queueMagicCastSound();
-    } else {
-        soundEvents_.push_back(MagicSoundEvent{.kind = MagicSoundKind::Cast, .position = origin});
-    }
+    queueCastSounds(element, origin);
 
     switch (element) {
     case MagicElement::Fire:
@@ -308,13 +327,14 @@ bool MagicSystem::cast(
     return false;
 }
 
-void MagicSystem::update(Player&, SpellRingSystem& spellRing, EnemySystem& enemies, TileMap& map, float dt)
+void MagicSystem::update(Player& player, SpellRingSystem& spellRing, EnemySystem& enemies, TileMap& map, float dt)
 {
+    const double ringItemDamageMultiplier = player.status.multiplierFor(ModifierStat::Attack);
     updateItemAuras(spellRing, dt);
     updateTransientLights(dt);
-    updateThunder(enemies, spellRing);
-    updateProjectiles(enemies, spellRing, map, dt);
-    updateGroundAreas(enemies, spellRing, dt);
+    updateThunder(enemies, spellRing, ringItemDamageMultiplier);
+    updateProjectiles(enemies, spellRing, map, dt, ringItemDamageMultiplier);
+    updateGroundAreas(enemies, spellRing, dt, ringItemDamageMultiplier);
 }
 
 void MagicSystem::appendLightSources(std::vector<LightSource>& outLights) const
@@ -485,7 +505,12 @@ void MagicSystem::castEarth(Vec2 origin, Vec2 direction, int power)
     }
 }
 
-void MagicSystem::updateProjectiles(EnemySystem& enemies, SpellRingSystem& spellRing, TileMap& map, float dt)
+void MagicSystem::updateProjectiles(
+    EnemySystem& enemies,
+    SpellRingSystem& spellRing,
+    TileMap& map,
+    float dt,
+    double ringItemDamageMultiplier)
 {
     for (MagicProjectile& projectile : projectiles_) {
         if (!projectile.active) {
@@ -509,22 +534,7 @@ void MagicSystem::updateProjectiles(EnemySystem& enemies, SpellRingSystem& spell
 
         if (!projectile.piercesWalls && map.isCircleBlocked(projectile.position, projectile.radius)) {
             if (projectile.kind == ProjectileKind::IceShard) {
-                if (magicFx_ != nullptr) {
-                    magicFx_->playIceShatter(projectile.position, projectile.radius + 12.0f);
-                } else {
-                    soundEvents_.push_back(MagicSoundEvent{.kind = MagicSoundKind::Impact, .position = projectile.position});
-                }
-                addGroundArea(MagicGroundArea{
-                    .kind = GroundKind::IceShatter,
-                    .position = projectile.position,
-                    .radius = projectile.radius + 12.0f,
-                    .age = 0.0f,
-                    .lifetime = IceShatterLightSeconds,
-                    .tickTimer = 0.0f,
-                    .damage = 0,
-                    .active = true,
-                    .triggered = false,
-                });
+                emitProjectileImpact(projectile);
             }
             stopProjectileFx(projectile);
             projectile.active = false;
@@ -532,7 +542,7 @@ void MagicSystem::updateProjectiles(EnemySystem& enemies, SpellRingSystem& spell
         }
 
         if (projectile.kind == ProjectileKind::DirtClod && projectile.age > 0.12f && projectile.height <= 0.0f && projectile.verticalVelocity <= 0.0f) {
-            playProjectileImpactFx(projectile);
+            emitProjectileImpact(projectile);
             stopProjectileFx(projectile);
             projectile.active = false;
             continue;
@@ -542,6 +552,7 @@ void MagicSystem::updateProjectiles(EnemySystem& enemies, SpellRingSystem& spell
         hit.position = projectile.position;
         hit.radius = projectile.radius;
         hit.damage = projectile.damage;
+        hit.ringItemDamageMultiplier = ringItemDamageMultiplier;
         hit.damageType = std::string(magicElementDamageType(projectile.element));
         hit.effectId = hit.damageType;
         hit.maxHits = 1;
@@ -550,13 +561,13 @@ void MagicSystem::updateProjectiles(EnemySystem& enemies, SpellRingSystem& spell
             hit.knockbackStrength = 120.0f;
         }
         const int hitCount = enemies.applyMagicArea(hit, spellRing);
-        if (hitCount > 0 && projectile.kind == ProjectileKind::WindWave) {
-            playProjectileImpactFx(projectile);
-            projectile.damage = 0;
-            continue;
-        }
-        if (hitCount > 0) {
-            playProjectileImpactFx(projectile);
+        if (projectile.kind == ProjectileKind::WindWave) {
+            if (hitCount > 0 && projectile.damage > 0) {
+                emitProjectileImpact(projectile);
+                projectile.damage = 0;
+            }
+        } else if (hitCount > 0) {
+            emitProjectileImpact(projectile);
             stopProjectileFx(projectile);
             projectile.active = false;
             if (projectile.kind == ProjectileKind::Fireball) {
@@ -566,11 +577,7 @@ void MagicSystem::updateProjectiles(EnemySystem& enemies, SpellRingSystem& spell
         }
 
         if (projectile.kind == ProjectileKind::Fireball && projectile.age > 0.12f && projectile.height <= 0.0f) {
-            if (magicFx_ != nullptr) {
-                magicFx_->queueMagicImpactSound();
-            } else {
-                soundEvents_.push_back(MagicSoundEvent{.kind = MagicSoundKind::Impact, .position = projectile.position});
-            }
+            emitProjectileImpact(projectile);
             stopProjectileFx(projectile);
             projectile.active = false;
             spawnFirePatch(projectile.position, 28.0f, std::max(1, projectile.damage / 2));
@@ -590,7 +597,11 @@ void MagicSystem::updateProjectiles(EnemySystem& enemies, SpellRingSystem& spell
         projectiles_.end());
 }
 
-void MagicSystem::updateGroundAreas(EnemySystem& enemies, SpellRingSystem& spellRing, float dt)
+void MagicSystem::updateGroundAreas(
+    EnemySystem& enemies,
+    SpellRingSystem& spellRing,
+    float dt,
+    double ringItemDamageMultiplier)
 {
     for (MagicGroundArea& area : groundAreas_) {
         if (!area.active) {
@@ -610,6 +621,7 @@ void MagicSystem::updateGroundAreas(EnemySystem& enemies, SpellRingSystem& spell
                 hit.position = area.position;
                 hit.radius = area.radius;
                 hit.damage = area.damage;
+                hit.ringItemDamageMultiplier = ringItemDamageMultiplier;
                 hit.damageType = "fire";
                 hit.effectId = "fire";
                 enemies.applyMagicArea(hit, spellRing);
@@ -627,15 +639,12 @@ void MagicSystem::updateGroundAreas(EnemySystem& enemies, SpellRingSystem& spell
 
         if (area.kind == GroundKind::EarthSpike && !area.triggered) {
             area.triggered = true;
-            if (magicFx_ != nullptr) {
-                magicFx_->queueMagicImpactSound();
-            } else {
-                soundEvents_.push_back(MagicSoundEvent{.kind = MagicSoundKind::Impact, .position = area.position});
-            }
+            queueImpactSound(MagicElement::Earth, area.position, 1.06f, 0.88f);
             EnemyMagicHitSpec hit;
             hit.position = area.position;
             hit.radius = area.radius;
             hit.damage = area.damage;
+            hit.ringItemDamageMultiplier = ringItemDamageMultiplier;
             hit.damageType = "earth";
             hit.effectId = "earth";
             enemies.applyMagicArea(hit, spellRing);
@@ -649,20 +658,22 @@ void MagicSystem::updateGroundAreas(EnemySystem& enemies, SpellRingSystem& spell
         groundAreas_.end());
 }
 
-void MagicSystem::updateThunder(EnemySystem& enemies, SpellRingSystem& spellRing)
+void MagicSystem::updateThunder(
+    EnemySystem& enemies,
+    SpellRingSystem& spellRing,
+    double ringItemDamageMultiplier)
 {
     for (const PendingThunder& thunder : pendingThunder_) {
         EnemyMagicHitSpec hit;
         hit.position = thunder.origin;
         hit.radius = 0.0f;
         hit.damage = thunder.damage;
+        hit.ringItemDamageMultiplier = ringItemDamageMultiplier;
         hit.damageType = "thunder";
         hit.effectId = "thunder";
         Vec2 target{};
         if (enemies.applyMagicNearest(thunder.origin, thunder.range, hit, spellRing, &target)) {
-            if (magicFx_ == nullptr) {
-                soundEvents_.push_back(MagicSoundEvent{.kind = MagicSoundKind::Impact, .position = target});
-            }
+            queueImpactSound(MagicElement::Thunder, target, 1.12f, 0.94f);
             addTransientLight(thunder.origin, 108.0f, 0.18f);
             addTransientLight((thunder.origin + target) * 0.5f, 126.0f, 0.17f);
             addGroundArea(MagicGroundArea{
@@ -680,9 +691,7 @@ void MagicSystem::updateThunder(EnemySystem& enemies, SpellRingSystem& spellRing
                 magicFx_->playThunderStrike(thunder.origin, target, true);
             }
         } else {
-            if (magicFx_ == nullptr) {
-                soundEvents_.push_back(MagicSoundEvent{.kind = MagicSoundKind::Impact, .position = thunder.origin});
-            }
+            queueImpactSound(MagicElement::Thunder, thunder.origin, 0.86f, 1.08f);
             addGroundArea(MagicGroundArea{
                 .kind = GroundKind::ThunderStrikeLight,
                 .position = thunder.origin,
@@ -850,12 +859,14 @@ void MagicSystem::updateProjectileFx(MagicProjectile& projectile)
     }
 }
 
-void MagicSystem::playProjectileImpactFx(const MagicProjectile& projectile)
+void MagicSystem::emitProjectileImpact(const MagicProjectile& projectile)
 {
-    const Vec2 direction = lengthSquared(projectile.velocity) > 0.0001f ? normalize(projectile.velocity) : Vec2{1.0f, 0.0f};
-    if (magicFx_ == nullptr) {
-        soundEvents_.push_back(MagicSoundEvent{.kind = MagicSoundKind::Impact, .position = projectile.position});
-    }
+    const bool earthDebris = projectile.kind == ProjectileKind::DirtClod;
+    queueImpactSound(
+        projectile.element,
+        projectile.position,
+        earthDebris ? 0.96f : 1.0f,
+        earthDebris ? 0.92f : 1.0f);
     switch (projectile.kind) {
     case ProjectileKind::Fireball:
         return;
@@ -904,6 +915,33 @@ void MagicSystem::stopProjectileFx(MagicProjectile& projectile)
     }
     magicFx_->stopEmitter({projectile.fxEmitterId});
     projectile.fxEmitterId = 0;
+}
+
+void MagicSystem::queueCastSounds(MagicElement element, Vec2 position)
+{
+    const MagicAudioProfile profile = magicAudioProfile(element);
+    soundEvents_.push_back(MagicSoundEvent{
+        .cueId = AudioSeMagicCast,
+        .position = position,
+    });
+    soundEvents_.push_back(MagicSoundEvent{
+        .cueId = profile.castCueId,
+        .position = position,
+    });
+}
+
+void MagicSystem::queueImpactSound(
+    MagicElement element,
+    Vec2 position,
+    float volumeScale,
+    float pitchScale)
+{
+    soundEvents_.push_back(MagicSoundEvent{
+        .cueId = magicAudioProfile(element).impactCueId,
+        .position = position,
+        .volumeScale = volumeScale,
+        .pitchScale = pitchScale,
+    });
 }
 
 void MagicSystem::spawnFirePatch(Vec2 position, float radius, int damage)

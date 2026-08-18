@@ -1,9 +1,14 @@
 ﻿id	type	path	volume	loop	cooldown_ms	pitch	display_name	loop_start_frame	loop_end_frame	loop_crossfade_frames
-bgm.title	bgm	bgm/title_placeholder.wav	0.44	true	0	0	タイトルBGM
-bgm.base	bgm	bgm/base_placeholder.wav	0.38	true	0	0	拠点BGM
-bgm.dungeon	bgm	bgm/dungeon_placeholder.wav	0.42	true	0	0	ダンジョンBGM
-bgm.boss	bgm	bgm/boss_placeholder.wav	0.48	true	0	0	ボス戦BGM
-bgm.asset.first_village	bgm	bgm/first_village.wav	0.42	true	0	0	First village	0	2424000	1440
+bgm.title	bgm	bgm/zz_tmp_title_placeholder.wav	0.44	true	0	0	タイトルBGM	0	0	0
+bgm.base	bgm	bgm/first_village.wav	1	true	0	0	拠点BGM	0	0	48000
+bgm.dungeon.1	bgm	bgm/small_cave.wav	1	true	0	0	ダンジョン1 BGM	0	0	0
+bgm.dungeon.2	bgm	bgm/zz_tmp_dungeon_placeholder.wav	0.42	true	0	0	ダンジョン2 BGM	0	0	0
+bgm.dungeon.3	bgm	bgm/zz_tmp_dungeon_placeholder.wav	0.42	true	0	0	ダンジョン3 BGM	0	0	0
+bgm.dungeon.4	bgm	bgm/zz_tmp_dungeon_placeholder.wav	0.42	true	0	0	ダンジョン4 BGM	0	0	0
+bgm.boss	bgm	bgm/zz_tmp_boss_placeholder.wav	0.48	true	0	0	ボス戦BGM	0	0	0
+bgm.boss.final	bgm	bgm/zz_tmp_boss_placeholder.wav	0.48	true	0	0	ラスボス戦BGM	0	0	0
+bgm.ending	bgm	bgm/zz_tmp_title_placeholder.wav	0.44	true	0	0	エンディング用BGM	0	0	0
+bgm.asset.first_village	bgm	bgm/first_village.wav	0.42	true	0	0	First village	0	0	48000
 bgm.asset.a_letter	bgm	bgm/a_letter.wav	0.42	true	0	0	A letter	0	0	0
 bgm.asset.cunning_monsters	bgm	bgm/cunning_monsters.wav	0.42	true	0	0	Cunning Monsters	360000	4768200	960
 bgm.asset.dot_snow	bgm	bgm/dot_snow.wav	0.42	true	0	0	Dot Snow	0	0	0
@@ -23,145 +28,160 @@ bgm.asset.devil_organ	bgm	bgm/devil_organ.wav	0.42	true	0	0	あくまのオル�
 bgm.asset.devil_march	bgm	bgm/devil_march.wav	0.42	true	0	0	あくまの行進	0	5233536	0
 bgm.asset.moonlight_butterfly	bgm	bgm/moonlight_butterfly.wav	0.42	true	0	0	月光蝶	0	0	0
 bgm.asset.purgatory_road	bgm	bgm/purgatory_road.wav	0.42	true	0	0	煉獄道	0	4289328	0
-se.ui.confirm	se	se/0_Confirm1.wav	1	false	60	32.193	UI 決定
-se.ui.cancel	se	se/0_Cancel1.wav	1	false	60	32.193	UI キャンセル
-se.ui.error	se	se/0_Beep.wav	1	false	80	26.303	UI エラー
-se.ui.menu_open	se	se/sound8.wav	0.95	false	80	13.75	メニューを開く
-se.ui.tab_switch	se	se/0_Cursor1.wav	0.95	false	50	0	タブ切替
-se.ui.book_open	se	se/book.wav	1.25	false	120	0	本を開く
-se.ui.cursor_move	se	se/0_Cursor5.wav	1	false	35	0	カーソル移動
-se.ui.item_move	se	se/0_Cursor4.wav	1	false	55	0	アイテム移動
-se.ui.item_use	se	se/0_PowerUp.wav	1	false	80	26.303	アイテム使用
-se.ui.equip	se	se/sound7.wav	1	false	90	7.039	装備
-se.ui.ring_place	se	se/0_Cursor4.wav	1.05	false	90	0	リング配置
-se.ui.upgrade_select	se	se/0_Recharge1.wav	1	false	120	26.303	レベルアップ選択
-se.dev.build_ready	se	se/0_Cure1.wav	0.8	false	0	32.193	開発用ビルド完了
-se.dev.build_failed	se	se/0_Explosion2.wav	0.45	false	0	32.193	開発用ビルド失敗
-se.facility.forge_upgrade	se	se/facility_forge_upgrade.wav	0.82	false	180	0	拠点強化炉 強化完了
-se.facility.workbench_upgrade	se	se/facility_workbench_upgrade.wav	0.78	false	140	0	作業台 強化完了
-se.facility.workbench_repair	se	se/facility_workbench_repair.wav	0.76	false	160	0	作業台 修理完了
-se.facility.ring_workshop_upgrade	se	se/0_Recharge1.wav	0.82	false	180	26.303	リング工房 強化完了
-se.facility.ring_workshop_respec	se	se/0_Recharge2.wav	0.82	false	180	26.303	リング工房 再調整完了
-se.facility.diary_save	se	se/0_Message.wav	0.88	false	180	0	日記 保存完了
-se.merchant.transaction	se	se/merchant_transaction.wav	0.74	false	90	0	商人 取引完了
-se.dialogue.advance	se	se/0_Cursor5.wav	0.7	false	45	0	メッセージ送り
-se.dialogue.text.player	se	se/zz_tmp_dialogue_text_player_placeholder.wav	0.34	false	55	0	会話文字音 ルネ
-se.dialogue.text.monica	se	se/zz_tmp_dialogue_text_monica_placeholder.wav	0.32	false	55	0	会話文字音 モニカ
-se.dialogue.text.chicory	se	se/zz_tmp_dialogue_text_chicory_placeholder.wav	0.3	false	55	0	会話文字音 チコリ
-se.dialogue.text.astragna	se	se/zz_tmp_dialogue_text_astragna_placeholder.wav	0.36	false	55	0	会話文字音 アストラグナ
-se.dialogue.text.low	se	se/zz_tmp_dialogue_text_low_placeholder.wav	0.32	false	55	0	会話文字音 汎用低音
-se.dialogue.text.mid	se	se/zz_tmp_dialogue_text_mid_placeholder.wav	0.3	false	55	0	会話文字音 汎用中音
-se.dialogue.text.high	se	se/zz_tmp_dialogue_text_high_placeholder.wav	0.28	false	55	0	会話文字音 汎用高音
-se.story.phone.incoming	se	se/zz_tmp_story_phone_incoming_placeholder.wav	0.72	false	250	0	電話 着信
-se.story.phone.outgoing	se	se/zz_tmp_story_phone_outgoing_placeholder.wav	0.66	false	180	0	電話 発信
-se.story.phone.hangup	se	se/zz_tmp_story_phone_hangup_placeholder.wav	0.64	false	120	0	電話 切断
-se.story.rumble	se	se/earth.wav	0.95	false	320	-51.457	地面揺れ
-se.level_up.jingle	se	se/zz_tmp_level_up_jingle_placeholder.wav	0.86	false	0	0	レベルアップジングル
-se.game_over.jingle	se	se/zz_tmp_game_over_jingle_placeholder.wav	0.88	false	0	0	ゲームオーバージングル
-se.item.new.jingle	se	se/zz_tmp_ui_equip_placeholder.wav	0.84	false	0	0	新規アイテム入手ジングル
-se.transition	se	se/warp.wav	0.95	false	160	0	画面遷移
-se.footstep.base_outdoor	se	se/zz_tmp_footstep_base_outdoor_placeholder.wav	0.38	false	60	100	足音 拠点外
-se.footstep.home	se	se/zz_tmp_footstep_home_placeholder.wav	0.34	false	60	0	足音 家
-se.footstep.dungeon	se	se/zz_tmp_footstep_dungeon_placeholder.wav	0.2	false	60	80.735	足音 ダンジョン
-se.dig.hit	se	se/hit7.wav	0.7	false	70	0	採掘ヒット
-se.dig.break	se	se/0_Strike6.wav	1	false	90	0	採掘破壊
-se.dig.ore_break	se	se/crash4.wav	0.3	false	110	0	鉱石破壊
-se.attack.hit	se	se/0_Strike1.wav	1.05	false	45	-7.4	攻撃ヒット
-se.impact.dirt.scoop	se	se/0_Strike6.wav	0.5	false	55	58.496	衝突 土 すくい形状
-se.impact.dirt.blade	se	se/0_Strike7.wav	0.8	false	55	100	衝突 土 刃物
-se.impact.dirt.pointed	se	se/0_Strike8.wav	0.7	false	55	63.227	衝突 土 尖り
-se.impact.dirt.generic	se	se/0_Strike4.wav	0.5	false	55	58.496	衝突 土 汎用
-se.impact.rock.metal	se	se/metal9.wav	0.3	false	65	100	衝突 岩 金属
-se.impact.rock.pointed	se	se/metal.wav	0.45	false	65	0	衝突 岩 尖り
-se.impact.rock.stone	se	se/earth2.wav	0.6	false	65	53.605	衝突 岩 石
-se.impact.enemy.sword	se	se/0_KatanaSlash1.wav	0.7	false	45	67.807	敵命中 剣
-se.impact.enemy.spear	se	se/0_Stab1.wav	0.5	false	45	63.227	敵命中 槍
-se.impact.enemy.bat	se	se/metal5.wav	0.78	false	60	0	敵命中 バット
-se.impact.enemy.axe	se	se/0_KatanaSlash1.wav	0.84	false	50	13.75	敵命中 斧
-se.impact.slime.slime	se	se/0_Slime.wav	0.62	false	50	100	衝突 スライム同士
-se.impact.soft.soft	se	se/0_Slime.wav	0.55	false	50	0	衝突 柔らかい同士
-se.impact.hard.soft	se	se/zz_tmp_impact_hard_soft_placeholder.wav	0.64	false	50	48.543	衝突 硬いものと柔らかいもの
-se.impact.crisp	se	se/zz_tmp_impact_crisp_placeholder.wav	0.56	false	45	0	衝突 シャリ質感
-se.impact.paper.book	se	se/book.wav	0.54	false	45	100	衝突 本・紙
-se.impact.metal.trinket	se	se/metal4.wav	0.6	false	55	32.193	衝突 小物金属
-se.impact.resonant.gong	se	se/metal11.wav	0.74	false	110	100	衝突 鐘
-se.impact.resonant.chime	se	se/sound14.wav	0.75	false	80	48.543	衝突 風鈴
-se.impact.cloth.fluffy	se	se/0_WhipSwing2.wav	0.5	false	55	13.75	衝突 ふわふわ布
-se.impact.fiber.rustle	se	se/0_WhipSwing1.wav	0.54	false	45	43.296	衝突 毛束・網
-se.impact.glass	se	se/glass.wav	0.65	false	65	53.605	衝突 ガラス
-se.impact.metal.metal	se	se/metal9.wav	0.55	false	55	80.735	衝突 金属
-se.impact.stone.metal	se	se/metal11.wav	0.35	false	60	84.8	衝突 石と金属
-se.impact.wood	se	se/wood4.wav	0.58	false	55	26.303	衝突 木
-se.impact.generic	se	se/hit7.wav	0.75	false	45	-23.447	衝突 汎用
-se.pickup	se	se/zz_tmp_pickup_placeholder.wav	0.72	false	45	0	拾得
-se.money.drop	se	se/coin.wav	0.78	false	40	0	お金 落下
-se.money.arrive	se	se/coin2.wav	0.7	false	20	0	お金 吸収
-se.boss.spawn	se	se/earth.wav	0.82	false	350	0	ボス出現
-se.boss.defeat	se	se/0_RobotHeavy3.wav	0.88	false	400	0	ボス撃破
-se.boss.defeat_flash	se	se/0_Holy.wav	0.9	false	400	100	ボス撃破フラッシュ
-se.player.damage	se	se/0_Strike1.wav	0.82	false	150	-32.193	プレイヤー被弾
-se.player.pinch	se	se/alert.wav	0.97	false	900	0	ピンチ警告
-se.ring.throw	se	se/wind10.wav	0.69	false	120	17	リング投げ
-se.ring.charge_ready	se	se/sound14.wav	0.58	false	90	48	リング投げチャージ完了
-se.ring.appear	se	se/0_Buff2.wav	0.55	false	180	26.303	リング出現
-se.ring.unlock.jingle	se	se/zz_tmp_ring_unlock_jingle_placeholder.wav	0.88	false	0	0	スペルリング解禁ジングル
-se.enemy.defeat	se	se/zz_tmp_enemy_defeat_placeholder.wav	0.76	false	120	0	敵撃破
-se.enemy.spawn	se	se/0_Dash.wav	0.7	false	180	48.543	敵出現
-se.enemy.buried_warning	se	se/zz_tmp_enemy_buried_warning_placeholder.wav	0.74	false	80	0	埋没敵予兆
-se.enemy.alert	se	se/zz_tmp_enemy_alert_placeholder.wav	0.72	false	180	0	敵発見
-se.enemy.attack	se	se/zz_tmp_enemy_attack_placeholder.wav	0.76	false	140	0	敵攻撃
-se.enemy.rat_steal	se	se/enemy_rat_steal.wav	0.6	false	120	100	金食いネズミ 盗み「チュウ！」
-se.enemy.mimic_bite	se	se/bite3.wav	0.78	false	130	0	ミミック噛みつき
-se.enemy.shoot	se	se/shot6.wav	0.66	false	90	29	敵射撃
-se.enemy.heal	se	se/0_Heal1.wav	0.68	false	220	48.543	敵回復
-se.enemy.guard	se	se/metal4.wav	0.74	false	90	68	敵ガード
-se.enemy.transform	se	se/dark2.wav	0.72	false	180	52	敵変身煙
-se.projectile.pebble.launch	se	se/wind8.wav	0.62	false	30	29	弾 石つぶて 発射
-se.projectile.heavy.launch	se	se/wind5.wav	0.66	false	40	0	弾 重量物 発射
-se.projectile.frog.launch	se	se/0_ShotImpact.wav	0.76	false	55	80.735	弾 カエル発射
-se.projectile.quick.launch	se	se/wind7.wav	0.58	false	25	0	弾 素早い発射
-se.projectile.water_pip.launch	se	se/0_ShotImpact.wav	0.76	false	30	80.735	弾 水弾 発射
-se.projectile.bubble.launch	se	se/0_Poison1.wav	0.55	false	45	96.347	弾 泡 発射
-se.projectile.bubble.pop	se	se/0_Slap.wav	0.5	false	45	67.807	弾 泡 破裂
-se.projectile.fire_breath.launch	se	se/0_Fire.wav	0.6	false	35	76.553	弾 火炎ブレス 発射
-se.projectile.stone.launch	se	se/wind8.wav	0.62	false	35	37	弾 石 発射
-se.projectile.stone.destroy	se	se/0_Cape.wav	1	false	45	96.347	弾 石 消滅
-se.projectile.metal.launch	se	se/0_Shot.wav	0.66	false	35	72.247	弾 金属 発射
-se.projectile.metal.destroy	se	se/shot3.wav	0.7	false	45	0	弾 金属 消滅
-se.projectile.liquid.launch	se	se/0_ShotImpact.wav	0.6	false	35	72.247	弾 液体 発射
-se.projectile.liquid.destroy	se	se/0_Whip3.wav	0.4	false	45	48.543	弾 液体 消滅
-se.projectile.magic.launch	se	se/0_Charge.wav	0.62	false	35	100	弾 魔法 発射
-se.projectile.magic.destroy	se	se/0_Shot.wav	0.66	false	45	53.605	弾 魔法 消滅
-se.projectile.needle.launch	se	se/0_Strike1.wav	0.85	false	30	48.543	弾 針 発射
-se.projectile.needle.destroy	se	se/0_KatanaSlash2.wav	0.6	false	40	63.227	弾 針 消滅
-se.projectile.water.launch	se	se/0_ShotImpact.wav	0.6	false	35	88.753	弾 水 発射
-se.projectile.water.destroy	se	se/0_Shot.wav	0.64	false	45	37.851	弾 水 消滅
-se.projectile.fire.launch	se	se/0_Fire.wav	0.66	false	35	72.247	弾 火 発射
-se.projectile.fire.destroy	se	se/0_Explosion1.wav	0.4	false	45	88.753	弾 火 消滅
-se.projectile.web.launch	se	se/0_Strike1.wav	0.58	false	35	76.553	弾 糸 発射
-se.projectile.web.destroy	se	se/0_Stab1.wav	0.35	false	45	100	弾 糸 消滅
-se.projectile.wind.launch	se	se/0_WhipSwing2.wav	1.15	false	35	-15.2	弾 風 発射
-se.projectile.wind.destroy	se	se/wind.wav	0.5	false	45	7.039	弾 風 消滅
-se.projectile.explosion.launch	se	se/0_Explosion3.wav	0.7	false	40	48.543	弾 爆発 発射
-se.projectile.explosion.destroy	se	se/0_Explosion2.wav	0.5	false	60	0	弾 爆発 消滅
-se.projectile.impact	se	se/zz_tmp_projectile_impact_placeholder.wav	0.64	false	90	0	弾着弾
-se.ring.guard	se	se/zz_tmp_ring_guard_placeholder.wav	0.7	false	100	0	リング防御
-se.ring.reflect	se	se/zz_tmp_ring_reflect_placeholder.wav	0.74	false	120	0	リング反射
-se.ring.slow_bite	se	se/zz_tmp_ring_slow_bite_placeholder.wav	0.72	false	160	0	魔力ヒル噛みつき
-se.magic.cast	se	se/magic5.wav	0.31	false	90	100	魔法発動
-se.magic.impact	se	se/magic7.wav	0.74	false	100	44	魔法着弾
-se.capture.throw	se	se/zz_tmp_capture_throw_placeholder.wav	0.66	false	120	0	捕獲投げ
-se.capture.success	se	se/zz_tmp_capture_success_placeholder.wav	0.78	false	220	0	捕獲成功
-se.capture.fail	se	se/0_KickWhoosh1.wav	0.68	false	160	0	捕獲失敗
-se.discovery	se	se/zz_tmp_discovery_placeholder.wav	0.76	false	220	0	発見
-se.discovery.monster	se	se/sound12.wav	0.88	false	220	7.039	モンスター発見
-se.discovery.effect	se	se/zz_tmp_discovery_effect_placeholder.wav	0.86	false	220	0	効果発見
-se.warp.unlock	se	se/0_Holy.wav	0.72	false	360	100	ワープポイント解放
-se.chest.open	se	se/zz_tmp_chest_open_placeholder.wav	0.78	false	180	0	宝箱開封
-se.crate.break	se	se/0_FallThud.wav	0.9	false	120	58.496	木箱破壊
-se.item.break	se	se/crash3.wav	0.8	false	160	29	アイテム破損
-se.item.break.ceramic	se	se/crash4.wav	0.78	false	130	29	陶器破損
-se.item.break.glass	se	se/crash2.wav	0.82	false	120	0	ガラス破損
-se.explosion.tick	se	se/zz_tmp_explosion_tick_placeholder.wav	0.62	false	25	0	爆発予兆クリック
-se.explosion.boom	se	se/0_Explosion2.wav	0.55	false	130	37.851	爆発ボォォン
-se.explosion	se	se/0_Explosion3.wav	0.84	false	180	0	爆発
+se.ui.confirm	se	se/0_Confirm1.wav	1	false	60	32.193	UI 決定	0	0	0
+se.ui.cancel	se	se/0_Cancel1.wav	1	false	60	32.193	UI キャンセル	0	0	0
+se.ui.error	se	se/0_Beep.wav	1	false	80	26.303	UI エラー	0	0	0
+se.ui.menu_open	se	se/sound8.wav	0.95	false	80	13.75	メニューを開く	0	0	0
+se.ui.tab_switch	se	se/0_Cursor1.wav	0.95	false	50	0	タブ切替	0	0	0
+se.ui.book_open	se	se/book.wav	1.25	false	120	0	本を開く	0	0	0
+se.ui.cursor_move	se	se/0_Cursor5.wav	1	false	35	0	カーソル移動	0	0	0
+se.ui.item_move	se	se/0_Cursor4.wav	1	false	55	0	アイテム移動	0	0	0
+se.ui.item_use	se	se/0_PowerUp.wav	1	false	80	26.303	アイテム使用	0	0	0
+se.ui.equip	se	se/sound7.wav	1	false	90	7.039	装備	0	0	0
+se.ui.ring_place	se	se/0_Cursor4.wav	1.05	false	90	0	リング配置	0	0	0
+se.ui.upgrade_select	se	se/0_Recharge1.wav	1	false	120	26.303	レベルアップ選択	0	0	0
+se.notice.warning	se	se/0_Beep.wav	0.82	false	220	26.303	中央通知 警告	0	0	0
+se.notice.astral	se	se/zz_tmp_discovery_effect_placeholder.wav	0.86	false	220	0	中央通知 星の歪み	0	0	0
+se.notice.success	se	se/0_Cure1.wav	0.85	false	220	32.193	中央通知 成功	0	0	0
+se.dev.build_ready	se	se/0_Cure1.wav	0.8	false	0	32.193	開発用ビルド完了	0	0	0
+se.dev.build_failed	se	se/0_Explosion2.wav	0.45	false	0	32.193	開発用ビルド失敗	0	0	0
+se.facility.forge_upgrade	se	se/zz_tmp_facility_forge_upgrade.wav	0.82	false	180	0	拠点強化炉 強化完了	0	0	0
+se.facility.workbench_upgrade	se	se/zz_tmp_facility_workbench_upgrade.wav	0.78	false	140	0	作業台 強化完了	0	0	0
+se.facility.workbench_repair	se	se/zz_tmp_facility_workbench_repair.wav	0.76	false	160	0	作業台 修理完了	0	0	0
+se.facility.ring_workshop_upgrade	se	se/0_Recharge1.wav	0.82	false	180	26.303	リング工房 強化完了	0	0	0
+se.facility.ring_workshop_respec	se	se/0_Recharge2.wav	0.82	false	180	26.303	リング工房 再調整完了	0	0	0
+se.facility.diary_save	se	se/0_Message.wav	0.88	false	180	0	日記 保存完了	0	0	0
+se.merchant.transaction	se	se/zz_tmp_merchant_transaction.wav	0.74	false	90	0	商人 取引完了	0	0	0
+se.dialogue.advance	se	se/0_Cursor5.wav	0.7	false	45	0	メッセージ送り	0	0	0
+se.dialogue.text.player	se	se/0_Message2.wav	1.15	false	55	37.851	会話文字音 ルネ	0	0	0
+se.dialogue.text.monica	se	se/0_Message.wav	1	false	55	26.303	会話文字音 モニカ	0	0	0
+se.dialogue.text.chicory	se	se/0_Message2.wav	1	false	55	100	会話文字音 チコリ	0	0	0
+se.dialogue.text.astragna	se	se/8bit.wav	0.3	false	55	-100	会話文字音 アストラグナ	0	0	0
+se.dialogue.text.low	se	se/0_Message.wav	1	false	55	-100	会話文字音 汎用低音	0	0	0
+se.dialogue.text.mid	se	se/0_Message.wav	1	false	55	-32.193	会話文字音 汎用中音	0	0	0
+se.dialogue.text.high	se	se/0_Message.wav	1	false	55	0	会話文字音 汎用高音	0	0	0
+se.story.phone.incoming	se	se/0_Phone1.wav	0.72	false	250	0	電話 着信	0	0	0
+se.story.phone.outgoing	se	se/0_Phone2.wav	0.66	false	180	0	電話 発信	0	0	0
+se.story.phone.hangup	se	se/0_Phone3.wav	0.64	false	120	0	電話 切断	0	0	0
+se.story.rumble	se	se/earth.wav	0.95	false	320	-51.457	地面揺れ	0	0	0
+se.level_up.jingle	se	se/zz_tmp_level_up_jingle_placeholder.wav	0.86	false	0	0	レベルアップジングル	0	0	0
+se.game_over.jingle	se	se/zz_tmp_game_over_jingle_placeholder.wav	0.88	false	0	0	ゲームオーバージングル	0	0	0
+se.item.new.jingle	se	se/zz_tmp_ui_equip_placeholder.wav	0.84	false	0	0	新規アイテム入手ジングル	0	0	0
+se.transition.game_start	se	se/0_Buff2.wav	0.85	false	160	-15.2	ゲーム開始	0	0	0
+se.transition.dungeon_ladder	se	se/0_move.wav	0.2	false	160	0	ダンジョン入口移動	0	0	0
+se.transition.warp_point	se	se/warp.wav	0.95	false	160	0	ワープポイント移動	0	0	0
+se.transition.home	se	se/0_Door1.wav	0.8	false	160	0	自宅出入り	0	0	0
+se.footstep.base_outdoor	se	se/0_step2.wav	0.15	false	60	53.605	足音 拠点外	0	0	0
+se.footstep.home	se	se/0_step3.wav	0.8	false	60	13.75	足音 家	0	0	0
+se.footstep.dungeon	se	se/0_step1.wav	2	false	60	26.303	足音 ダンジョン	0	0	0
+se.dig.hit	se	se/hit7.wav	0.7	false	70	0	採掘ヒット	0	0	0
+se.dig.break	se	se/0_Strike6.wav	1	false	90	0	採掘破壊	0	0	0
+se.dig.ore_break	se	se/crash4.wav	0.3	false	110	0	鉱石破壊	0	0	0
+se.attack.hit	se	se/0_Strike1.wav	1.05	false	45	-7.4	攻撃ヒット	0	0	0
+se.impact.dirt.scoop	se	se/0_Strike6.wav	0.5	false	55	58.496	衝突 土 すくい形状	0	0	0
+se.impact.dirt.blade	se	se/0_Strike7.wav	0.8	false	55	100	衝突 土 刃物	0	0	0
+se.impact.dirt.pointed	se	se/0_Strike8.wav	0.7	false	55	63.227	衝突 土 尖り	0	0	0
+se.impact.dirt.generic	se	se/0_Strike4.wav	0.5	false	55	58.496	衝突 土 汎用	0	0	0
+se.impact.rock.metal	se	se/metal9.wav	0.3	false	65	100	衝突 岩 金属	0	0	0
+se.impact.rock.pointed	se	se/metal.wav	0.45	false	65	0	衝突 岩 尖り	0	0	0
+se.impact.rock.stone	se	se/earth2.wav	0.6	false	65	53.605	衝突 岩 石	0	0	0
+se.impact.enemy.sword	se	se/0_KatanaSlash1.wav	0.7	false	45	26.303	敵命中 剣	0	0	0
+se.impact.enemy.spear	se	se/0_Stab1.wav	0.5	false	45	63.227	敵命中 槍	0	0	0
+se.impact.enemy.bat	se	se/0_MetalBat.wav	0.78	false	60	0	敵命中 バット	0	0	0
+se.impact.enemy.axe	se	se/0_KatanaSlash1.wav	0.84	false	50	13.75	敵命中 斧	0	0	0
+se.impact.slime.slime	se	se/0_Slime.wav	0.62	false	50	100	衝突 スライム同士	0	0	0
+se.impact.soft.soft	se	se/0_Slime.wav	0.55	false	50	0	衝突 柔らかい同士	0	0	0
+se.impact.hard.soft	se	se/0_Pop.wav	0.64	false	50	84.8	衝突 硬いものと柔らかいもの	0	0	0
+se.impact.crisp	se	se/0_Bite.wav	0.9	false	45	67.807	衝突 シャリ質感	0	0	0
+se.impact.paper.book	se	se/book.wav	0.54	false	45	100	衝突 本・紙	0	0	0
+se.impact.metal.trinket	se	se/metal4.wav	0.6	false	55	32.193	衝突 小物金属	0	0	0
+se.impact.resonant.gong	se	se/metal11.wav	0.74	false	110	100	衝突 鐘	0	0	0
+se.impact.resonant.chime	se	se/sound14.wav	0.75	false	80	48.543	衝突 風鈴	0	0	0
+se.impact.cloth.fluffy	se	se/0_Washer.wav	1.45	false	55	72.247	衝突 ふわふわ布	0	0	0
+se.impact.fiber.rustle	se	se/0_WhipSwing1.wav	0.54	false	45	43.296	衝突 毛束・網	0	0	0
+se.impact.glass	se	se/glass.wav	0.65	false	65	53.605	衝突 ガラス	0	0	0
+se.impact.metal.metal	se	se/metal9.wav	0.55	false	55	80.735	衝突 金属	0	0	0
+se.impact.stone.metal	se	se/metal11.wav	0.35	false	60	84.8	衝突 石と金属	0	0	0
+se.impact.wood	se	se/wood4.wav	0.58	false	55	26.303	衝突 木	0	0	0
+se.impact.generic	se	se/hit7.wav	0.75	false	45	-23.447	衝突 汎用	0	0	0
+se.pickup	se	se/0_Pop.wav	0.72	false	45	0	拾得	0	0	0
+se.money.drop	se	se/coin.wav	0.78	false	40	0	お金 落下	0	0	0
+se.money.arrive	se	se/coin2.wav	0.7	false	20	0	お金 吸収	0	0	0
+se.boss.spawn	se	se/earth.wav	0.82	false	350	0	ボス出現	0	0	0
+se.boss.defeat	se	se/0_RobotHeavy3.wav	0.88	false	400	0	ボス撃破	0	0	0
+se.boss.defeat_flash	se	se/0_Holy.wav	0.9	false	400	100	ボス撃破フラッシュ	0	0	0
+se.player.damage	se	se/0_Strike1.wav	0.82	false	150	-32.193	プレイヤー被弾	0	0	0
+se.player.pinch	se	se/alert.wav	0.97	false	900	0	ピンチ警告	0	0	0
+se.ring.throw	se	se/wind10.wav	0.69	false	120	17	リング投げ	0	0	0
+se.ring.charge_ready	se	se/sound14.wav	0.58	false	90	48	リング投げチャージ完了	0	0	0
+se.ring.appear	se	se/0_Buff2.wav	0.55	false	180	26.303	リング出現	0	0	0
+se.ring.unlock.jingle	se	se/zz_tmp_ring_unlock_jingle_placeholder.wav	0.88	false	0	0	スペルリング解禁ジングル	0	0	0
+se.enemy.defeat	se	se/zz_tmp_enemy_defeat_placeholder.wav	0.76	false	120	0	敵撃破	0	0	0
+se.enemy.spawn	se	se/0_Dash.wav	0.7	false	180	48.543	敵出現	0	0	0
+se.enemy.buried_warning	se	se/zz_tmp_enemy_buried_warning_placeholder.wav	0.74	false	80	0	埋没敵予兆	0	0	0
+se.enemy.alert	se	se/zz_tmp_enemy_alert_placeholder.wav	0.72	false	180	0	敵発見	0	0	0
+se.enemy.attack	se	se/zz_tmp_enemy_attack_placeholder.wav	0.76	false	140	0	敵攻撃	0	0	0
+se.enemy.rat_steal	se	se/zz_tmp_enemy_rat_steal.wav	0.6	false	120	100	金食いネズミ 盗み「チュウ！」	0	0	0
+se.enemy.mimic_bite	se	se/bite3.wav	0.78	false	130	0	ミミック噛みつき	0	0	0
+se.enemy.shoot	se	se/shot6.wav	0.66	false	90	29	敵射撃	0	0	0
+se.enemy.heal	se	se/0_Heal1.wav	0.68	false	220	48.543	敵回復	0	0	0
+se.enemy.guard	se	se/metal4.wav	0.74	false	90	68	敵ガード	0	0	0
+se.enemy.transform	se	se/dark2.wav	0.72	false	180	52	敵変身煙	0	0	0
+se.projectile.pebble.launch	se	se/wind8.wav	0.62	false	30	29	弾 石つぶて 発射	0	0	0
+se.projectile.heavy.launch	se	se/wind5.wav	0.66	false	40	0	弾 重量物 発射	0	0	0
+se.projectile.frog.launch	se	se/0_ShotImpact.wav	0.76	false	55	80.735	弾 カエル発射	0	0	0
+se.projectile.quick.launch	se	se/wind7.wav	0.58	false	25	0	弾 素早い発射	0	0	0
+se.projectile.water_pip.launch	se	se/0_ShotImpact.wav	0.76	false	30	80.735	弾 水弾 発射	0	0	0
+se.projectile.bubble.launch	se	se/0_Poison1.wav	0.55	false	45	96.347	弾 泡 発射	0	0	0
+se.projectile.bubble.pop	se	se/0_Slap.wav	0.5	false	45	67.807	弾 泡 破裂	0	0	0
+se.projectile.fire_breath.launch	se	se/0_Fire.wav	0.6	false	35	76.553	弾 火炎ブレス 発射	0	0	0
+se.projectile.stone.launch	se	se/wind8.wav	0.62	false	35	37	弾 石 発射	0	0	0
+se.projectile.stone.destroy	se	se/0_Cape.wav	1	false	45	96.347	弾 石 消滅	0	0	0
+se.projectile.metal.launch	se	se/0_Shot.wav	0.66	false	35	72.247	弾 金属 発射	0	0	0
+se.projectile.metal.destroy	se	se/shot3.wav	0.7	false	45	0	弾 金属 消滅	0	0	0
+se.projectile.liquid.launch	se	se/0_ShotImpact.wav	0.6	false	35	72.247	弾 液体 発射	0	0	0
+se.projectile.liquid.destroy	se	se/0_Whip3.wav	0.4	false	45	48.543	弾 液体 消滅	0	0	0
+se.projectile.magic.launch	se	se/0_Charge.wav	0.62	false	35	100	弾 魔法 発射	0	0	0
+se.projectile.magic.destroy	se	se/0_Shot.wav	0.66	false	45	53.605	弾 魔法 消滅	0	0	0
+se.projectile.needle.launch	se	se/0_Strike1.wav	0.85	false	30	48.543	弾 針 発射	0	0	0
+se.projectile.needle.destroy	se	se/0_KatanaSlash2.wav	0.6	false	40	63.227	弾 針 消滅	0	0	0
+se.projectile.water.launch	se	se/0_ShotImpact.wav	0.6	false	35	88.753	弾 水 発射	0	0	0
+se.projectile.water.destroy	se	se/0_Shot.wav	0.64	false	45	37.851	弾 水 消滅	0	0	0
+se.projectile.fire.launch	se	se/0_Fire.wav	0.66	false	35	72.247	弾 火 発射	0	0	0
+se.projectile.fire.destroy	se	se/0_Explosion1.wav	0.4	false	45	88.753	弾 火 消滅	0	0	0
+se.projectile.web.launch	se	se/0_Strike1.wav	0.58	false	35	76.553	弾 糸 発射	0	0	0
+se.projectile.web.destroy	se	se/0_Stab1.wav	0.35	false	45	100	弾 糸 消滅	0	0	0
+se.projectile.wind.launch	se	se/0_WhipSwing2.wav	1.15	false	35	-15.2	弾 風 発射	0	0	0
+se.projectile.wind.destroy	se	se/wind.wav	0.5	false	45	7.039	弾 風 消滅	0	0	0
+se.projectile.explosion.launch	se	se/0_Explosion3.wav	0.7	false	40	48.543	弾 爆発 発射	0	0	0
+se.projectile.explosion.destroy	se	se/0_Explosion2.wav	0.5	false	60	0	弾 爆発 消滅	0	0	0
+se.projectile.impact	se	se/zz_tmp_projectile_impact_placeholder.wav	0.64	false	90	0	弾着弾	0	0	0
+se.ring.guard	se	se/zz_tmp_ring_guard_placeholder.wav	0.7	false	100	0	リング防御	0	0	0
+se.ring.reflect	se	se/zz_tmp_ring_reflect_placeholder.wav	0.74	false	120	0	リング反射	0	0	0
+se.ring.slow_bite	se	se/zz_tmp_ring_slow_bite_placeholder.wav	0.72	false	160	0	魔力ヒル噛みつき	0	0	0
+se.magic.cast	se	se/magic5.wav	0.31	false	90	100	魔法発動	0	0	0
+se.magic.fire.cast	se	se/0_Fire.wav	0.48	false	90	72.247	魔法 火 発動	0	0	0
+se.magic.fire.impact	se	se/0_Explosion1.wav	0.42	false	90	88.753	魔法 火 着弾	0	0	0
+se.magic.ice.cast	se	se/0_Ice1.wav	0.48	false	90	72.247	魔法 氷 発動	0	0	0
+se.magic.ice.impact	se	se/0_Ice2.wav	0.48	false	80	72.247	魔法 氷 着弾	0	0	0
+se.magic.thunder.cast	se	se/0_Thunder1.wav	0.52	false	90	72.247	魔法 雷 発動	0	0	0
+se.magic.thunder.impact	se	se/0_Thunder3.wav	0.58	false	110	63.227	魔法 雷 着弾	0	0	0
+se.magic.wind.cast	se	se/0_Wind.wav	0.52	false	90	72.247	魔法 風 発動	0	0	0
+se.magic.wind.impact	se	se/wind.wav	0.44	false	90	7.039	魔法 風 着弾	0	0	0
+se.magic.earth.cast	se	se/0_RockCrack.wav	0.44	false	90	72.247	魔法 土 発動	0	0	0
+se.magic.earth.impact	se	se/0_RockSplit.wav	0.46	false	90	72.247	魔法 土 着弾	0	0	0
+se.capture.throw	se	se/zz_tmp_capture_throw_placeholder.wav	0.66	false	120	0	捕獲投げ	0	0	0
+se.capture.success	se	se/zz_tmp_capture_success_placeholder.wav	0.78	false	220	0	捕獲成功	0	0	0
+se.capture.fail	se	se/0_KickWhoosh1.wav	0.68	false	160	0	捕獲失敗	0	0	0
+se.discovery	se	se/zz_tmp_discovery_placeholder.wav	0.76	false	220	0	発見	0	0	0
+se.discovery.monster	se	se/sound12.wav	0.88	false	220	7.039	モンスター発見	0	0	0
+se.discovery.effect	se	se/zz_tmp_discovery_effect_placeholder.wav	0.86	false	220	0	効果発見	0	0	0
+se.warp.unlock	se	se/0_Holy.wav	0.72	false	360	100	ワープポイント解放	0	0	0
+se.chest.open	se	se/0_Door2.wav	0.7	false	180	58.496	宝箱開封	0	0	0
+se.crate.break	se	se/0_FallThud.wav	0.9	false	120	58.496	木箱破壊	0	0	0
+se.item.break	se	se/crash3.wav	0.8	false	160	29	アイテム破損	0	0	0
+se.item.break.ceramic	se	se/crash4.wav	0.45	false	130	29	陶器破損	0	0	0
+se.item.break.glass	se	se/crash2.wav	0.35	false	120	0	ガラス破損	0	0	0
+se.explosion.tick	se	se/zz_tmp_explosion_tick_placeholder.wav	0.62	false	25	0	爆発予兆クリック	0	0	0
+se.explosion.boom	se	se/0_Explosion2.wav	0.55	false	130	37.851	爆発ボォォン	0	0	0
+se.explosion	se	se/0_Explosion3.wav	0.84	false	180	0	爆発	0	0	0

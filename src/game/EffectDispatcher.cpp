@@ -329,7 +329,7 @@ struct StatusDefinition {
     double defaultValue = 1.0;
 };
 
-constexpr std::array<StatusDefinition, 15> StatusDefinitions{{
+constexpr std::array<StatusDefinition, 16> StatusDefinitions{{
     {"status_poison", 8.0, 1.0},
     {"status_slow", 8.0, 0.65},
     {"status_glued", 4.0, 0.45},
@@ -344,7 +344,8 @@ constexpr std::array<StatusDefinition, 15> StatusDefinitions{{
     {"status_blind", 4.0, 0.5},
     {"status_wet", 4.0, 1.0},
     {"status_hot", 4.0, 1.0},
-    {"status_frozen", 2.5, 1.0},
+    {"status_cooling", 15.0, 0.25},
+    {"status_frozen", 3.0, 1.0},
 }};
 
 const StatusDefinition* findStatusDefinition(std::string_view effect)
@@ -508,6 +509,142 @@ void applyModifierInvocation(const EffectInvocation& invocation)
         sourceIdFor(invocation),
         StateApplyMode::KeepLonger);
     recordEffectDiscovery(invocation, "能力変化を与える");
+}
+
+Enemy* hitEnemyForInvocation(const EffectInvocation& invocation)
+{
+    return invocation.context->hitTarget != nullptr
+        ? invocation.context->hitTarget
+        : invocation.context->targetEntity;
+}
+
+void applyBleedingRingDamageBuffInvocation(const EffectInvocation& invocation)
+{
+    Enemy* enemy = hitEnemyForInvocation(invocation);
+    Player* owner = invocation.context->owner;
+    if (enemy == nullptr || owner == nullptr || !enemy->status.hasState("status_bleed")) {
+        return;
+    }
+
+    owner->status.applyModifier(
+        "bleeding_ring_damage_buff",
+        ModifierStat::Attack,
+        invocation.value > 0.0 ? invocation.value : 1.15,
+        0.0,
+        invocation.duration > 0.0 ? invocation.duration : 5.0,
+        sourceIdFor(invocation),
+        StateApplyMode::Overwrite);
+    recordEffectDiscovery(invocation, "出血中の敵に当てると、リングのアイテムによるダメージが上昇する");
+}
+
+void applyPoisonCleanseHealInvocation(const EffectInvocation& invocation)
+{
+    Enemy* enemy = hitEnemyForInvocation(invocation);
+    Player* owner = invocation.context->owner;
+    if (enemy == nullptr || owner == nullptr || !enemy->status.removeState("status_poison")) {
+        return;
+    }
+
+    const double percent = invocation.value > 0.0 ? invocation.value : 5.0;
+    const int amount = std::max(1, static_cast<int>(std::ceil(
+        static_cast<double>(owner->maxHp) * percent / 100.0)));
+    owner->heal(amount);
+    recordEffectDiscovery(invocation, "毒状態の敵に当てると毒を消し、ルネのHPを回復する");
+}
+
+void applySpreadPoisonInvocation(const EffectInvocation& invocation)
+{
+    Enemy* enemy = hitEnemyForInvocation(invocation);
+    const EffectContext& context = *invocation.context;
+    if (enemy == nullptr || context.enemies == nullptr || context.orbit == nullptr) {
+        return;
+    }
+    const EntityState* poison = enemy->status.state("status_poison");
+    if (poison == nullptr) {
+        return;
+    }
+
+    EnemyMagicHitSpec spread;
+    spread.position = enemy->position;
+    spread.radius = 144.0f;
+    spread.statusEffect = "status_poison";
+    spread.statusValue = poison->value;
+    spread.statusDuration = poison->duration;
+    spread.statusChance = 100.0;
+    spread.excludedRuntimeId = enemy->id;
+    if (context.enemies->applyMagicArea(spread, *context.orbit) > 0) {
+        recordEffectDiscovery(invocation, "毒状態の敵に当てると、近くの敵へ毒を広げる");
+    }
+}
+
+void applyGluedDefenseDownInvocation(const EffectInvocation& invocation)
+{
+    Enemy* enemy = hitEnemyForInvocation(invocation);
+    if (enemy == nullptr || !enemy->status.hasState("status_glued")) {
+        return;
+    }
+    const EntityStateApplyResult result = enemy->status.applyState(
+        "status_defense_down",
+        invocation.value > 0.0 ? invocation.value : 0.75,
+        invocation.duration > 0.0 ? invocation.duration : 5.0,
+        sourceIdFor(invocation),
+        StateApplyMode::Overwrite);
+    emitStatusPopupForApplyResult(invocation, "status_defense_down", result);
+    recordEffectDiscovery(invocation, "粘着中の敵に当てると防御力を低下させる");
+}
+
+void applySlowGlueInvocation(const EffectInvocation& invocation)
+{
+    Enemy* enemy = hitEnemyForInvocation(invocation);
+    if (enemy == nullptr || !enemy->status.hasState("status_slow")) {
+        return;
+    }
+    const EntityStateApplyResult result = enemy->status.applyState(
+        "status_glued",
+        invocation.value > 0.0 ? invocation.value : 0.45,
+        invocation.duration > 0.0 ? invocation.duration : 6.0,
+        sourceIdFor(invocation),
+        StateApplyMode::Overwrite);
+    emitStatusPopupForApplyResult(invocation, "status_glued", result);
+    recordEffectDiscovery(invocation, "鈍足中の敵に当てると粘着状態にする");
+}
+
+void applyWetDefenseBuffInvocation(const EffectInvocation& invocation)
+{
+    Enemy* enemy = hitEnemyForInvocation(invocation);
+    Player* owner = invocation.context->owner;
+    if (enemy == nullptr || owner == nullptr || !enemy->status.hasState("status_wet")) {
+        return;
+    }
+    owner->status.applyModifier(
+        "wet_defense_buff",
+        ModifierStat::Defense,
+        invocation.value > 0.0 ? invocation.value : 1.20,
+        0.0,
+        invocation.duration > 0.0 ? invocation.duration : 3.0,
+        sourceIdFor(invocation),
+        StateApplyMode::Overwrite);
+    recordEffectDiscovery(invocation, "水濡れ中の敵に当てると、ルネの防御力が上昇する");
+}
+
+void applyBlindConfuseInvocation(const EffectInvocation& invocation)
+{
+    Enemy* enemy = hitEnemyForInvocation(invocation);
+    if (enemy == nullptr || !enemy->status.hasState("status_blind")) {
+        return;
+    }
+    const EntityStateApplyResult result = enemy->status.applyState(
+        "status_confuse",
+        invocation.value > 0.0 ? invocation.value : 1.0,
+        invocation.duration > 0.0 ? invocation.duration : 4.0,
+        sourceIdFor(invocation),
+        StateApplyMode::Overwrite);
+    emitStatusPopupForApplyResult(invocation, "status_confuse", result);
+    recordEffectDiscovery(invocation, "暗闇中の敵に当てると混乱状態にする");
+}
+
+void applyDamageConditionMarkerInvocation(const EffectInvocation&)
+{
 }
 
 void applyOrbitModifierInvocation(const EffectInvocation& invocation)
@@ -714,6 +851,9 @@ void applyGroundInvocation(const EffectInvocation& invocation)
     spec.position = circle->center;
     spec.radius = std::clamp(circle->radius, 28.0f, 180.0f);
     spec.damage = magicCircleDamage(invocation.value, *circle);
+    if (invocation.context->owner != nullptr) {
+        spec.ringItemDamageMultiplier = invocation.context->owner->status.multiplierFor(ModifierStat::Attack);
+    }
     spec.damageType = "magic";
     spec.effectId = "complete_magic_circle";
     const int hitCount = invocation.context->enemies->applyMagicArea(spec, *invocation.context->orbit);
@@ -922,7 +1062,7 @@ void EffectDispatcher::registerFoundationHandlers(const ObjectCatalog& catalog)
         }
     }
 
-    for (std::string_view effect : {"status_poison", "status_slow", "status_glued", "status_defense_down", "status_giant", "status_paralyze", "status_shocked", "status_sleep", "status_bleed", "status_stun", "status_confuse", "status_blind", "status_wet", "status_hot", "status_frozen"}) {
+    for (std::string_view effect : {"status_poison", "status_slow", "status_glued", "status_defense_down", "status_giant", "status_paralyze", "status_shocked", "status_sleep", "status_bleed", "status_stun", "status_confuse", "status_blind", "status_wet", "status_hot", "status_cooling", "status_frozen"}) {
         registerHandler(std::string(effect), applyStateInvocation);
     }
 
@@ -932,6 +1072,22 @@ void EffectDispatcher::registerFoundationHandlers(const ObjectCatalog& catalog)
 
     for (std::string_view effect : {"buff_attack", "debuff_attack", "buff_speed", "debuff_speed", "buff_defense", "debuff_defense"}) {
         registerHandler(std::string(effect), applyModifierInvocation);
+    }
+
+    registerHandler("bleeding_ring_damage_buff", applyBleedingRingDamageBuffInvocation);
+    registerHandler("poison_cleanse_heal_percent", applyPoisonCleanseHealInvocation);
+    registerHandler("spread_poison", applySpreadPoisonInvocation);
+    registerHandler("glued_defense_down", applyGluedDefenseDownInvocation);
+    registerHandler("slow_glue", applySlowGlueInvocation);
+    registerHandler("wet_defense_buff", applyWetDefenseBuffInvocation);
+    registerHandler("blind_confuse", applyBlindConfuseInvocation);
+    for (std::string_view effect : {
+             "paralyzed_bonus_damage",
+             "glued_bonus_damage",
+             "status_count_bonus_damage",
+             "stunned_bonus_damage",
+             "giant_fall_damage"}) {
+        registerHandler(std::string(effect), applyDamageConditionMarkerInvocation);
     }
 
     if (catalog.effectCodes.find("knockback") != catalog.effectCodes.end()) {

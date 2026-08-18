@@ -32,8 +32,11 @@ constexpr std::string_view TutorialAppleObjectId = "item_apple";
 constexpr std::string_view MagicBookCategory = "魔導書";
 constexpr std::string_view AudioBgmTitle = "bgm.title";
 constexpr std::string_view AudioBgmBase = "bgm.base";
-constexpr std::string_view AudioBgmDungeon = "bgm.dungeon";
-constexpr std::string_view AudioSeTransition = "se.transition";
+constexpr std::string_view AudioBgmEnding = "bgm.ending";
+constexpr std::string_view AudioSeTransitionGameStart = "se.transition.game_start";
+constexpr std::string_view AudioSeTransitionDungeonLadder = "se.transition.dungeon_ladder";
+constexpr std::string_view AudioSeTransitionWarpPoint = "se.transition.warp_point";
+constexpr std::string_view AudioSeTransitionHome = "se.transition.home";
 constexpr std::string_view AudioSePlayerDamage = "se.player.damage";
 constexpr std::string_view AudioSePlayerPinch = "se.player.pinch";
 constexpr std::string_view AudioSeRingThrow = "se.ring.throw";
@@ -44,8 +47,6 @@ constexpr std::string_view AudioSeJunkCrabThrow = "se.projectile.metal.launch";
 constexpr std::string_view AudioSeEnemyHeal = "se.enemy.heal";
 constexpr std::string_view AudioSeEnemyMimicBite = "se.enemy.mimic_bite";
 constexpr std::string_view AudioSeRingSlowBite = "se.ring.slow_bite";
-constexpr std::string_view AudioSeMagicCast = "se.magic.cast";
-constexpr std::string_view AudioSeMagicImpact = "se.magic.impact";
 constexpr std::string_view AudioSeCaptureFail = "se.capture.fail";
 constexpr std::string_view AudioSeExplosionTick = "se.explosion.tick";
 constexpr std::string_view AudioSeDiscovery = "se.discovery";
@@ -107,6 +108,31 @@ constexpr float RingWorkshopShiftDistanceMetersPerLevel = 0.50f;
 constexpr float RingWorkshopThrowDistanceMetersPerLevel = 0.40f;
 constexpr float RingWorkshopThrowCooldownSecondsPerLevel = 0.18f;
 
+struct DungeonBgmBinding {
+    std::string_view stageId;
+    std::string_view cueId;
+};
+
+constexpr std::array<DungeonBgmBinding, 4> DungeonBgmBindings{{
+    {"stage_01_stardust", "bgm.dungeon.1"},
+    {"stage_02_junk_magic", "bgm.dungeon.2"},
+    {"stage_03_star_core", "bgm.dungeon.3"},
+    {"stage_04_astral_mine", "bgm.dungeon.4"},
+}};
+
+std::string_view dungeonBgmCueForStage(std::string_view stageId)
+{
+    const auto binding = std::find_if(
+        DungeonBgmBindings.begin(),
+        DungeonBgmBindings.end(),
+        [stageId](const DungeonBgmBinding& candidate) {
+            return candidate.stageId == stageId;
+        });
+    return binding != DungeonBgmBindings.end()
+        ? binding->cueId
+        : DungeonBgmBindings.front().cueId;
+}
+
 std::string_view dialogueTextSoundCueForSpeaker(std::string_view speakerId)
 {
     if (speakerId == "player") {
@@ -152,7 +178,8 @@ bool endsWith(std::string_view text, std::string_view suffix)
 
 bool impactSePitchJitterTarget(std::string_view id)
 {
-    if (startsWith(id, "se.impact.")) {
+    if (startsWith(id, "se.impact.") ||
+        (startsWith(id, "se.magic.") && endsWith(id, ".impact"))) {
         return true;
     }
     if (id == "se.dig.hit" ||
@@ -165,7 +192,6 @@ bool impactSePitchJitterTarget(std::string_view id)
         id == "se.ring.guard" ||
         id == "se.ring.reflect" ||
         id == "se.ring.slow_bite" ||
-        id == "se.magic.impact" ||
         id == "se.projectile.impact" ||
         id == "se.projectile.bubble.pop" ||
         id == "se.crate.break" ||
@@ -890,9 +916,6 @@ bool Game::handleEvent(const SDL_Event& event)
     if (handleOperationSettingsEvent(event)) {
         return true;
     }
-    if (handleAudioCueEditEvent(event)) {
-        return true;
-    }
     if (handleDebugNamedSaveEvent(event)) {
         return true;
     }
@@ -969,6 +992,11 @@ void Game::playAudioBgm(std::string_view id, float fadeSeconds, bool restart)
     }
     audio_->playBgm(cueId, fadeSeconds, restart);
     activeAudioBgmCue_ = cueId;
+}
+
+void Game::playCurrentDungeonBgm(float fadeSeconds, bool restart)
+{
+    playAudioBgm(dungeonBgmCueForStage(currentStageId_), fadeSeconds, restart);
 }
 
 void Game::stopAudioBgm(float fadeSeconds)
@@ -1877,7 +1905,7 @@ void Game::finishWorldBuild()
     baseEditMode_ = BaseEditMode::None;
     resetBaseEditDragState();
     mode_ = ScreenMode::Playing;
-    playAudioBgm(AudioBgmDungeon, 0.45f);
+    playCurrentDungeonBgm(0.45f);
     pauseReturnMode_ = ScreenMode::Playing;
     resetPlayerFootstepDust();
     camera_.follow(player_.position, 1.0f);
@@ -2222,7 +2250,7 @@ void Game::startEndingKamishibaiPlayback(EndingKind kind, bool replay)
     }();
     endingPlayer_.start(endingPages_, canSkipImmediately);
     mode_ = ScreenMode::EndingKamishibai;
-    playAudioBgm(AudioBgmTitle, 0.65f);
+    playAudioBgm(AudioBgmEnding, 0.65f);
     pausePage_ = PauseMenuPage::Main;
     pauseReturnMode_ = replay
         ? ScreenMode::Base
@@ -2438,7 +2466,8 @@ void Game::startTitleGame()
     const bool needsIntroTutorial = !hasStoryFlag(IntroTutorialCompletedFlag);
     requestScreenTransition(needsIntroTutorial
         ? ScreenTransitionTarget::TitleToIntroTutorial
-        : ScreenTransitionTarget::TitleToBase);
+        : ScreenTransitionTarget::TitleToBase,
+        ScreenTransitionSound::GameStart);
 }
 
 Game::ScreenTransitionFadeColor Game::fadeColorForScreenTransitionTarget(ScreenTransitionTarget target)
@@ -2557,11 +2586,19 @@ void Game::startScreenTransition(
 void Game::playScreenTransitionSound(ScreenTransitionSound sound)
 {
     switch (sound) {
-    case ScreenTransitionSound::Generic:
+    case ScreenTransitionSound::None:
+        return;
+    case ScreenTransitionSound::GameStart:
+        playAudioSe(AudioSeTransitionGameStart);
+        return;
     case ScreenTransitionSound::DungeonLadder:
+        playAudioSe(AudioSeTransitionDungeonLadder);
+        return;
     case ScreenTransitionSound::WarpPoint:
+        playAudioSe(AudioSeTransitionWarpPoint);
+        return;
     case ScreenTransitionSound::Home:
-        playAudioSe(AudioSeTransition);
+        playAudioSe(AudioSeTransitionHome);
         return;
     }
 }
@@ -2582,7 +2619,10 @@ void Game::requestDeathResultExitTransition(ScreenTransitionTarget target)
         target != ScreenTransitionTarget::AstralDeathReturnToBase) {
         return;
     }
-    requestScreenTransition(target);
+    const ScreenTransitionSound sound = target == ScreenTransitionTarget::GameOverRetry
+        ? ScreenTransitionSound::None
+        : ScreenTransitionSound::DungeonLadder;
+    requestScreenTransition(target, sound);
 }
 
 bool Game::deathResultExitTransitionActive() const
@@ -2605,7 +2645,9 @@ void Game::requestMiningStartTransition(bool useLatestWarpPoint, bool forceRegen
     startScreenTransition(
         ScreenTransitionTarget::MiningStart,
         ScreenTransitionPhase::FadingOut,
-        ScreenTransitionSound::Generic);
+        useLatestWarpPoint
+            ? ScreenTransitionSound::WarpPoint
+            : ScreenTransitionSound::DungeonLadder);
     screenTransition_.useLatestWarpPoint = useLatestWarpPoint;
     screenTransition_.forceRegenerate = forceRegenerate;
 }
@@ -2624,7 +2666,12 @@ void Game::requestReturnToBaseTransition(
     screenTransition_.returnDied = died;
 }
 
-void Game::requestBaseAreaCrossfade(BaseArea targetArea, Vec2 playerPosition, Vec2 playerFacing, std::string status)
+void Game::requestBaseAreaCrossfade(
+    BaseArea targetArea,
+    Vec2 playerPosition,
+    Vec2 playerFacing,
+    std::string status,
+    ScreenTransitionSound sound)
 {
     if (screenTransition_.active()) {
         return;
@@ -2633,14 +2680,20 @@ void Game::requestBaseAreaCrossfade(BaseArea targetArea, Vec2 playerPosition, Ve
     startScreenTransition(
         ScreenTransitionTarget::BaseArea,
         ScreenTransitionPhase::CrossFadeCapture,
-        ScreenTransitionSound::Generic);
+        sound);
     screenTransition_.targetBaseArea = targetArea;
     screenTransition_.targetBasePlayerPosition = playerPosition;
     screenTransition_.targetBasePlayerFacing = playerFacing;
     screenTransition_.targetBaseStatus = testPlayMode_ ? std::move(status) : std::string{};
 }
 
-void Game::requestBaseAreaFade(BaseArea targetArea, Vec2 playerPosition, Vec2 playerFacing, std::string status, bool closeBaseUi)
+void Game::requestBaseAreaFade(
+    BaseArea targetArea,
+    Vec2 playerPosition,
+    Vec2 playerFacing,
+    std::string status,
+    bool closeBaseUi,
+    ScreenTransitionSound sound)
 {
     if (screenTransition_.active()) {
         return;
@@ -2649,7 +2702,7 @@ void Game::requestBaseAreaFade(BaseArea targetArea, Vec2 playerPosition, Vec2 pl
     startScreenTransition(
         ScreenTransitionTarget::BaseArea,
         ScreenTransitionPhase::FadingOut,
-        ScreenTransitionSound::Generic);
+        sound);
     screenTransition_.targetBaseArea = targetArea;
     screenTransition_.targetBasePlayerPosition = playerPosition;
     screenTransition_.targetBasePlayerFacing = playerFacing;
@@ -2888,7 +2941,7 @@ void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
     baseEditMode_ = BaseEditMode::None;
     resetBaseEditDragState();
     mode_ = ScreenMode::Playing;
-    playAudioBgm(AudioBgmDungeon, 0.45f);
+    playCurrentDungeonBgm(0.45f);
     pauseReturnMode_ = ScreenMode::Playing;
     resetPlayerFootstepDust();
     camera_.follow(player_.position, 1.0f);
@@ -4101,7 +4154,7 @@ void Game::enterStageClear()
     levelUpPresentation_ = {};
     levelUpResultDialog_ = {};
     mode_ = ScreenMode::StageClear;
-    playAudioBgm(AudioBgmDungeon, 0.55f);
+    playCurrentDungeonBgm(0.55f);
     pausePage_ = PauseMenuPage::Main;
     pauseReturnMode_ = ScreenMode::Playing;
     inventoryReturnToPause_ = false;
@@ -4118,7 +4171,9 @@ void Game::beginFinalBossEndingSequence()
     }
 
     markCurrentStageCleared();
-    requestScreenTransition(ScreenTransitionTarget::FinalBossEndingKamishibai);
+    requestScreenTransition(
+        ScreenTransitionTarget::FinalBossEndingKamishibai,
+        ScreenTransitionSound::None);
 }
 
 void Game::startFinalBossEndingKamishibaiAfterTransition()
@@ -4480,7 +4535,7 @@ void Game::updateScreenMode(
             return;
         }
         if (input.cycleDelta() != 0) {
-            switchActiveRingWithLog(input.cycleDelta());
+            switchActiveRing(input.cycleDelta());
         }
         inventory_.updateShortcuts(
             input,
@@ -4794,7 +4849,7 @@ void Game::queueIntroTutorialChestLootDialogueIfReady()
             : IntroTutorialChestLootInventoryTrigger));
 }
 
-void Game::switchActiveRingWithLog(int delta)
+void Game::switchActiveRing(int delta)
 {
     if (delta == 0) {
         return;
@@ -4815,11 +4870,6 @@ void Game::switchActiveRingWithLog(int delta)
     const int currentRing = spellRing_.activeRingIndex();
     player_.spellRingShiftDistanceBonus = effectiveRingShiftDistanceForRing(currentRing) -
         balance_.spellRingShiftDistance;
-    if (currentRing != previousRing && mode_ == ScreenMode::Playing) {
-        pushDungeonLog(
-            ringDisplayNameWithSpaceSuffix(currentRing, ringCount, "に切替"),
-            "ring_switch");
-    }
 }
 
 void Game::update(const Input& input, const Time& time, Renderer& renderer)
@@ -5257,7 +5307,7 @@ void Game::update(const Input& input, const Time& time, Renderer& renderer)
         }
         appendPickupLogs(pickupEvents);
         if (blockedObjectPickupCount > 0) {
-            pushImportantDungeonNotice("リュックがいっぱいで拾えないよ", "pickup_inventory_full");
+            pushDungeonInventoryFullNotice();
         }
         if (gameplayRewardsEnabled()) {
             updateDigToolFailsafe(time.deltaSeconds());
@@ -5364,27 +5414,8 @@ void Game::update(const Input& input, const Time& time, Renderer& renderer)
         for (const ProjectileSoundEvent& event : projectiles_.consumeSoundEvents()) {
             playAudioSeAt(event.cueId, event.position, event.volumeScale, event.pitchScale);
         }
-        bool magicCastSound = false;
-        bool magicImpactSound = false;
-        Vec2 magicCastSoundPosition{};
-        Vec2 magicImpactSoundPosition{};
-        for (MagicSoundEvent event : magic_.consumeSoundEvents()) {
-            switch (event.kind) {
-            case MagicSoundKind::Cast:
-                magicCastSound = true;
-                magicCastSoundPosition = event.position;
-                break;
-            case MagicSoundKind::Impact:
-                magicImpactSound = true;
-                magicImpactSoundPosition = event.position;
-                break;
-            }
-        }
-        if (magicCastSound) {
-            playAudioSeAt(AudioSeMagicCast, magicCastSoundPosition);
-        }
-        if (magicImpactSound) {
-            playAudioSeAt(AudioSeMagicImpact, magicImpactSoundPosition);
+        for (const MagicSoundEvent& event : magic_.consumeSoundEvents()) {
+            playAudioSeAt(event.cueId, event.position, event.volumeScale, event.pitchScale);
         }
         for (const MagicFxSoundEvent& event : magicFx_.consumeSoundEvents()) {
             playAudioSeAt(event.cueId, event.position, event.volumeScale, event.pitchScale);

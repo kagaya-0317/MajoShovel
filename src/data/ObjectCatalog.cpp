@@ -615,8 +615,61 @@ bool autoTextForEffectCode(
     }
     if (effectCode == "sleeping_bonus_damage") {
         outText = value > 0.0
-            ? "眠っている敵への接触ダメージを " + formatDiscoveryNumber(value) + "倍にする"
-            : "眠っている敵への接触ダメージを強める";
+            ? "眠っている敵を起こすダメージを " + formatDiscoveryNumber(value) + "倍にする"
+            : "眠っている敵を起こすダメージを強める";
+        return true;
+    }
+    if (effectCode == "paralyzed_bonus_damage") {
+        outText = "麻痺状態の敵へのダメージを " + formatDiscoveryNumber(value) + "倍にする";
+        return true;
+    }
+    if (effectCode == "glued_bonus_damage") {
+        outText = "粘着状態の敵へのダメージを " + formatDiscoveryNumber(value) + "倍にする";
+        return true;
+    }
+    if (effectCode == "glued_defense_down") {
+        outText = "粘着状態の敵に当てると、防御力を " + formatDiscoveryNumber(value) + "倍にする";
+        return true;
+    }
+    if (effectCode == "bleeding_ring_damage_buff") {
+        outText = "出血状態の敵に当てると、リングのアイテムによるダメージを " +
+            formatDiscoveryNumber(value) + "倍にする";
+        return true;
+    }
+    if (effectCode == "poison_cleanse_heal_percent") {
+        outText = "毒状態の敵に当てると毒を消し、ルネの最大HPの " +
+            formatDiscoveryNumber(value) + "%を回復する";
+        return true;
+    }
+    if (effectCode == "spread_poison") {
+        outText = "毒状態の敵に当てると、近くの敵へ毒を広げる";
+        return true;
+    }
+    if (effectCode == "slow_glue") {
+        outText = "鈍足状態の敵に当てると、粘着状態にする";
+        return true;
+    }
+    if (effectCode == "status_count_bonus_damage") {
+        outText = "敵の状態異常1種類につき、ダメージを " +
+            formatDiscoveryNumber(value * 100.0) + "%増やす";
+        return true;
+    }
+    if (effectCode == "wet_defense_buff") {
+        outText = "水濡れ状態の敵に当てると、ルネの防御力を " +
+            formatDiscoveryNumber(value) + "倍にする";
+        return true;
+    }
+    if (effectCode == "blind_confuse") {
+        outText = "暗闇状態の敵に当てると、混乱状態にする";
+        return true;
+    }
+    if (effectCode == "stunned_bonus_damage") {
+        outText = "気絶状態の敵へのダメージを " + formatDiscoveryNumber(value) + "倍にし、気絶を解除する";
+        return true;
+    }
+    if (effectCode == "giant_fall_damage") {
+        outText = "巨大化状態の敵を跳ね上げると、着地ダメージを " +
+            formatDiscoveryNumber(value) + "倍にする";
         return true;
     }
     if (effectCode == "nonlethal_hit") {
@@ -661,7 +714,7 @@ bool autoTextForEffectCode(
         return true;
     }
     if (effectCode == "cold_air_aura") {
-        outText = "回転中に冷気を吹き出し、浴び続けた敵を凍結させる";
+        outText = "回転中に冷気を吹き出し、敵を冷却させる";
         return true;
     }
     if (effectCode == "slash_power") {

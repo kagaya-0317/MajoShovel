@@ -17,6 +17,7 @@ K.O..mp3	0_Knockout.wav
 キックの素振り3.mp3	0_KickWhoosh3.wav
 キャンセル5.mp3	0_Cancel1.wav
 キャンセル9.mp3	0_Cancel2.wav
+きらーん2.mp3	0_Shine.wav
 ゲージ回復1.mp3	0_Recharge1.wav
 ゲージ回復3.mp3	0_Recharge2.wav
 ゴブリンの鳴き声1.mp3	0_Goblin1.wav
@@ -33,6 +34,7 @@ K.O..mp3	0_Knockout.wav
 スライムの攻撃.mp3	0_Slime.wav
 スローモーション突入.mp3	0_SlowStart.wav
 スローモーション終了.mp3	0_SlowEnd.wav
+ドアを開ける1.mp3	0_Door1.wav
 ドラゴンの羽ばたき.mp3	0_Flap.wav
 ドラゴンの鳴き声1.mp3	0_Dragon1.wav
 ドラゴンの鳴き声2.mp3	0_Dragon2.wav
@@ -41,6 +43,7 @@ K.O..mp3	0_Knockout.wav
 ナイフで突き刺す3.mp3	0_Stab2.wav
 ナイフを投げる.mp3	0_KnifeThrow.wav
 バタンと倒れる.mp3	0_FallThud.wav
+パパッ.mp3	0_Pop.wav
 パワーアップ.mp3	0_PowerUp.wav
 パワーチャージ.mp3	0_Charge.wav
 パンチの衣擦れ1.mp3	0_PunchCloth1.wav
@@ -58,6 +61,8 @@ K.O..mp3	0_Knockout.wav
 ビームガン.mp3	0_Beam.wav
 マントを翻す.mp3	0_Cape.wav
 メッセージ表示音2.mp3	0_Message.wav
+メッセージ表示音3.mp3	0_Message2.wav
+リンゴをかじる.mp3	0_Bite.wav
 ロボットを殴る1.mp3	0_Robot1.wav
 ロボットを殴る2.mp3	0_Robot2.wav
 ロボットを殴る3.mp3	0_Robot3.wav
@@ -74,6 +79,9 @@ K.O..mp3	0_Knockout.wav
 岩にヒビが入る.mp3	0_RockCrack.wav
 弓矢が刺さる.mp3	0_ArrowImpact.wav
 弓矢を放つ.mp3	0_Arrow.wav
+教会の鐘1.mp3	0_Bell.wav
+金属バットで打つ2.mp3	0_MetalBat.wav
+携帯電話の着信音1.mp3	0_Phone1.wav
 軽いキック1.mp3	0_LightKick1.wav
 軽いキック2.mp3	0_LightKick2.wav
 軽いパンチ1.mp3	0_LightPunch1.wav
@@ -100,8 +108,10 @@ K.O..mp3	0_Knockout.wav
 重力魔法1.mp3	0_Gravity.wav
 小キック.mp3	0_SmallKick.wav
 小パンチ.mp3	0_SmallPunch.wav
+水滴2.mp3	0_Drop.wav
 聖魔法.mp3	0_Holy.wav
 石が砕ける.mp3	0_Crumble.wav
+洗濯機に服を入れる.mp3	0_Washer.wav
 打撃1.mp3	0_Strike1.wav
 打撃2.mp3	0_Strike2.wav
 打撃3.mp3	0_Strike3.wav
@@ -115,6 +125,8 @@ K.O..mp3	0_Knockout.wav
 中キック.mp3	0_MediumKick.wav
 中パンチ.mp3	0_MediumPunch.wav
 超必殺技発動.mp3	0_Ultimate.wav
+電話が切れる1.mp3	0_Phone3.wav
+電話をかける.mp3	0_Phone2.wav
 倒れる.mp3	0_Fall.wav
 刀で斬る2.mp3	0_KatanaSlash1.wav
 刀で斬る5.mp3	0_KatanaSlash2.wav
@@ -141,6 +153,7 @@ K.O..mp3	0_Knockout.wav
 鞭を振り回す1.mp3	0_WhipSwing1.wav
 鞭を振り回す2.mp3	0_WhipSwing2.wav
 魔法反射.mp3	0_Reflect.wav
+門を開ける.mp3	0_Door2.wav
 翼竜の鳴き声1.mp3	0_Wyvern1.wav
 翼竜の鳴き声2.mp3	0_Wyvern2.wav
 雷魔法1.mp3	0_Thunder1.wav

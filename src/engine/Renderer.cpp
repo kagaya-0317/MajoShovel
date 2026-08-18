@@ -208,10 +208,18 @@ int textFontRoleCacheValue(TextFontRole role)
     return role == TextFontRole::InputGlyph ? 1 : 0;
 }
 
-float nativeFontSizeForScale(int scale)
+int nativeFontPixelSizeForScale(int scale)
 {
     const int normalizedScale = std::max(1, scale);
-    return static_cast<float>(normalizedScale == 1 ? 12 : normalizedScale * 8);
+    return normalizedScale == 1 ? 12 : normalizedScale * 8;
+}
+
+int fallbackTextScaleForPixelSize(int pixelSize)
+{
+    const int safePixelSize = std::max(1, pixelSize);
+    return safePixelSize <= 14
+        ? 1
+        : std::max(2, static_cast<int>(std::lround(static_cast<float>(safePixelSize) / 8.0f)));
 }
 
 #ifdef _WIN32
@@ -221,10 +229,10 @@ Gdiplus::FontStyle gdiplusFontStyle(TextStyle style)
 }
 #endif
 
-std::string textCacheKey(std::string_view text, Color color, int scale, TextStyle style, TextFontRole role)
+std::string textPixelCacheKey(std::string_view text, Color color, int pixelSize, TextStyle style, TextFontRole role)
 {
     std::ostringstream out;
-    out << textFontRoleCacheValue(role) << ':' << scale << ':' << textStyleCacheValue(style) << ':'
+    out << "pixel:" << textFontRoleCacheValue(role) << ':' << pixelSize << ':' << textStyleCacheValue(style) << ':'
         << static_cast<int>(color.r) << ','
         << static_cast<int>(color.g) << ','
         << static_cast<int>(color.b) << ','
@@ -253,6 +261,13 @@ std::string textMeasureCacheKey(std::string_view text, int scale, TextStyle styl
 {
     std::ostringstream out;
     out << textFontRoleCacheValue(role) << ':' << scale << ':' << textStyleCacheValue(style) << ':' << text;
+    return out.str();
+}
+
+std::string textPixelMeasureCacheKey(std::string_view text, int pixelSize, TextStyle style, TextFontRole role)
+{
+    std::ostringstream out;
+    out << "pixel:" << textFontRoleCacheValue(role) << ':' << pixelSize << ':' << textStyleCacheValue(style) << ':' << text;
     return out.str();
 }
 
@@ -1560,6 +1575,23 @@ void Renderer::drawText(Vec2 pos, std::string_view text, Color color, int scale,
     camera_ = old;
 }
 
+void Renderer::drawTextAtPixelSize(
+    Vec2 pos,
+    std::string_view text,
+    Color color,
+    int pixelSize,
+    TextStyle style,
+    TextFontRole fontRole)
+{
+    const int safePixelSize = std::max(1, pixelSize);
+#ifdef _WIN32
+    if (drawNativeTextAtPixelSize(pos, text, color, safePixelSize, style, fontRole)) {
+        return;
+    }
+#endif
+    drawText(pos, text, color, fallbackTextScaleForPixelSize(safePixelSize), style, fontRole);
+}
+
 void Renderer::drawOutlinedText(Vec2 pos, std::string_view text, Color color, Color outline, int outlinePx, int scale, TextStyle style)
 {
     if (text.empty()) {
@@ -1633,6 +1665,65 @@ Vec2 Renderer::measureText(std::string_view text, int scale, TextStyle style, Te
     return measured;
 }
 
+Vec2 Renderer::measureTextAtPixelSize(
+    std::string_view text,
+    int pixelSize,
+    TextStyle style,
+    TextFontRole fontRole)
+{
+    const int safePixelSize = std::max(1, pixelSize);
+    const std::string key = textPixelMeasureCacheKey(text, safePixelSize, style, fontRole);
+    if (const auto it = textMeasureCache_.find(key); it != textMeasureCache_.end()) {
+        return it->second;
+    }
+
+    Vec2 measured{};
+    bool measuredAtPixelSize = false;
+#ifdef _WIN32
+    measuredAtPixelSize = measureNativeTextAtPixelSize(text, safePixelSize, style, fontRole, measured);
+#endif
+    if (!measuredAtPixelSize) {
+        measured = measureText(text, fallbackTextScaleForPixelSize(safePixelSize), style, fontRole);
+    }
+    if (textMeasureCache_.size() > 2048) {
+        textMeasureCache_.clear();
+    }
+    textMeasureCache_[key] = measured;
+    return measured;
+}
+
+int Renderer::fitTextPixelSize(
+    std::string_view text,
+    float maxWidth,
+    int maxPixelSize,
+    int minPixelSize,
+    TextStyle style,
+    TextFontRole fontRole)
+{
+    const int safeMaxPixelSize = std::max(1, maxPixelSize);
+    const int safeMinPixelSize = std::clamp(minPixelSize, 1, safeMaxPixelSize);
+    if (text.empty()) {
+        return safeMaxPixelSize;
+    }
+    if (maxWidth <= 0.0f) {
+        return safeMinPixelSize;
+    }
+
+    int bestPixelSize = safeMinPixelSize;
+    int low = safeMinPixelSize;
+    int high = safeMaxPixelSize;
+    while (low <= high) {
+        const int candidate = low + (high - low) / 2;
+        if (measureTextAtPixelSize(text, candidate, style, fontRole).x <= maxWidth) {
+            bestPixelSize = candidate;
+            low = candidate + 1;
+        } else {
+            high = candidate - 1;
+        }
+    }
+    return bestPixelSize;
+}
+
 void Renderer::drawWrappedText(Vec2 pos, std::string_view text, float maxWidth, Color color, int scale, TextStyle style)
 {
     drawText(pos, wrappedText(text, maxWidth, scale, style), color, scale, style);
@@ -1701,6 +1792,23 @@ bool Renderer::loadTextFont(std::string_view path, TextFontRole fontRole)
 
 bool Renderer::drawNativeText(Vec2 pos, std::string_view text, Color color, int scale, TextStyle style, TextFontRole fontRole)
 {
+    return drawNativeTextAtPixelSize(
+        pos,
+        text,
+        color,
+        nativeFontPixelSizeForScale(scale),
+        style,
+        fontRole);
+}
+
+bool Renderer::drawNativeTextAtPixelSize(
+    Vec2 pos,
+    std::string_view text,
+    Color color,
+    int pixelSize,
+    TextStyle style,
+    TextFontRole fontRole)
+{
 #ifdef _WIN32
     const NativeTextFont* fontSource =
         fontRole == TextFontRole::InputGlyph && inputGlyphTextFont_ && inputGlyphTextFont_->loaded
@@ -1713,15 +1821,15 @@ bool Renderer::drawNativeText(Vec2 pos, std::string_view text, Color color, int 
     const Color drawColor = transformColor(color);
     Color cacheColor = color;
     cacheColor.a = 255;
-    const int safeScale = std::max(1, scale);
-    const std::string key = textCacheKey(text, cacheColor, safeScale, style, fontRole);
+    const int safePixelSize = std::max(1, pixelSize);
+    const std::string key = textPixelCacheKey(text, cacheColor, safePixelSize, style, fontRole);
     auto it = textCache_.find(key);
     if (it == textCache_.end()) {
         if (textCache_.size() > 2048) {
             clearTextCache();
         }
         TextTexture texture{};
-        if (!renderNativeTextToTexture(text, cacheColor, safeScale, style, fontRole, texture)) {
+        if (!renderNativeTextToTextureAtPixelSize(text, cacheColor, safePixelSize, style, fontRole, texture)) {
             return false;
         }
         it = textCache_.emplace(key, texture).first;
@@ -1740,7 +1848,7 @@ bool Renderer::drawNativeText(Vec2 pos, std::string_view text, Color color, int 
     (void)pos;
     (void)text;
     (void)color;
-    (void)scale;
+    (void)pixelSize;
     (void)style;
     (void)fontRole;
     return false;
@@ -1798,6 +1906,21 @@ bool Renderer::drawNativeOutlinedText(Vec2 pos, std::string_view text, Color col
 
 bool Renderer::measureNativeText(std::string_view text, int scale, TextStyle style, TextFontRole fontRole, Vec2& outSize)
 {
+    return measureNativeTextAtPixelSize(
+        text,
+        nativeFontPixelSizeForScale(scale),
+        style,
+        fontRole,
+        outSize);
+}
+
+bool Renderer::measureNativeTextAtPixelSize(
+    std::string_view text,
+    int pixelSize,
+    TextStyle style,
+    TextFontRole fontRole,
+    Vec2& outSize)
+{
 #ifdef _WIN32
     const NativeTextFont* fontSource =
         fontRole == TextFontRole::InputGlyph && inputGlyphTextFont_ && inputGlyphTextFont_->loaded
@@ -1817,7 +1940,7 @@ bool Renderer::measureNativeText(std::string_view text, int scale, TextStyle sty
         return false;
     }
 
-    const float fontSize = nativeFontSizeForScale(scale);
+    const float fontSize = static_cast<float>(std::max(1, pixelSize));
     Gdiplus::Font font(&family, fontSize, gdiplusFontStyle(style), Gdiplus::UnitPixel);
     Gdiplus::Bitmap measureBitmap(1, 1, PixelFormat32bppARGB);
     Gdiplus::Graphics measureGraphics(&measureBitmap);
@@ -1851,7 +1974,7 @@ bool Renderer::measureNativeText(std::string_view text, int scale, TextStyle sty
     return true;
 #else
     (void)text;
-    (void)scale;
+    (void)pixelSize;
     (void)style;
     (void)fontRole;
     (void)outSize;
@@ -1859,7 +1982,13 @@ bool Renderer::measureNativeText(std::string_view text, int scale, TextStyle sty
 #endif
 }
 
-bool Renderer::renderNativeTextToTexture(std::string_view text, Color color, int scale, TextStyle style, TextFontRole fontRole, TextTexture& outTexture)
+bool Renderer::renderNativeTextToTextureAtPixelSize(
+    std::string_view text,
+    Color color,
+    int pixelSize,
+    TextStyle style,
+    TextFontRole fontRole,
+    TextTexture& outTexture)
 {
 #ifdef _WIN32
     const NativeTextFont* fontSource =
@@ -1881,13 +2010,13 @@ bool Renderer::renderNativeTextToTexture(std::string_view text, Color color, int
     }
 
     Vec2 measured{};
-    if (!measureNativeText(text, scale, style, fontRole, measured)) {
+    if (!measureNativeTextAtPixelSize(text, pixelSize, style, fontRole, measured)) {
         return false;
     }
 
     const int bitmapWidth = std::max(1, static_cast<int>(std::ceil(measured.x)));
     const int bitmapHeight = std::max(1, static_cast<int>(std::ceil(measured.y)));
-    const float fontSize = nativeFontSizeForScale(scale);
+    const float fontSize = static_cast<float>(std::max(1, pixelSize));
     Gdiplus::Font font(&family, fontSize, gdiplusFontStyle(style), Gdiplus::UnitPixel);
     Gdiplus::Bitmap measureBitmap(1, 1, PixelFormat32bppARGB);
     Gdiplus::Graphics measureGraphics(&measureBitmap);
@@ -1962,7 +2091,7 @@ bool Renderer::renderNativeTextToTexture(std::string_view text, Color color, int
 #else
     (void)text;
     (void)color;
-    (void)scale;
+    (void)pixelSize;
     (void)style;
     (void)fontRole;
     (void)outTexture;
@@ -1998,7 +2127,7 @@ bool Renderer::renderNativeOutlinedTextToTexture(
     const int margin = std::max(0, outlinePx) + 2;
     const int bitmapWidth = std::max(1, static_cast<int>(std::ceil(measured.x)) + margin * 2);
     const int bitmapHeight = std::max(1, static_cast<int>(std::ceil(measured.y)) + margin * 2);
-    const float fontSize = nativeFontSizeForScale(scale);
+    const float fontSize = static_cast<float>(nativeFontPixelSizeForScale(scale));
     const Gdiplus::FontStyle fontStyle = gdiplusFontStyle(style);
     Gdiplus::Font font(&family, fontSize, fontStyle, Gdiplus::UnitPixel);
     Gdiplus::Bitmap measureBitmap(1, 1, PixelFormat32bppARGB);

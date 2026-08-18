@@ -1,14 +1,14 @@
 ﻿Sound material conversion summary
-Generated: 2026-07-28 20:18:16 +09:00
+Generated: 2026-08-16 20:27:49 +09:00
 Source: C:\Users\kgygn\Dropbox\ゲーム\MajoShovel\効果音素材
-Output: C:\Users\kgygn\Dropbox\ゲーム\MajoShovel\効果音素材\効果音素材_converted
-Files: 148
-Verified: 148
-Leading silence trimmed: 46
+Output: C:\Users\kgygn\Dropbox\ゲーム\MajoShovel\assets\audio\se
+Files: 161
+Verified: 161
+Leading silence trimmed: 50
 Review candidates: 2
 Silence threshold: -50 dB
 Minimum detected silence: 0.01 seconds
 Preserved lead: 0.005 seconds
-Output: C:\Users\kgygn\Dropbox\ゲーム\MajoShovel\効果音素材\効果音素材_converted
+Output: PCM signed 16-bit WAV, 48000 Hz, source channel count preserved
 FFmpeg: ffmpeg version 8.1.2-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers
 FFprobe: ffprobe version 8.1.2-full_build-www.gyan.dev Copyright (c) 2007-2026 the FFmpeg developers

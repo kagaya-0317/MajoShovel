@@ -607,8 +607,6 @@ struct Enemy {
     double poisonDamageAccumulator = 0.0;
     double hotDamageAccumulator = 0.0;
     double bleedDamageAccumulator = 0.0;
-    float coldExposure = 0.0f;
-    bool coldExposureTouched = false;
     EntityStatus status;
 
     [[nodiscard]] float effectiveSizeMultiplier() const

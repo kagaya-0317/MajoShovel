@@ -262,6 +262,7 @@ public:
             initialized_ = true;
             lastError_.clear();
             voices_.clear();
+            bgmPaused_ = false;
             playClockSeconds_ = 0.0;
             missingCueWarnings_.clear();
         }
@@ -280,6 +281,7 @@ public:
             voices_.clear();
             cues_.clear();
             currentBgmId_.clear();
+            bgmPaused_ = false;
             missingCueWarnings_.clear();
             seCooldownUntil_.clear();
         }
@@ -483,6 +485,12 @@ public:
         currentBgmId_.clear();
     }
 
+    void setBgmPaused(bool paused)
+    {
+        std::scoped_lock lock(mutex_);
+        bgmPaused_ = paused;
+    }
+
     void playSe(std::string_view id, AudioSeParams params)
     {
         if (params.volumeScale <= 0.0f) {
@@ -674,6 +682,9 @@ private:
             for (Voice& voice : voices_) {
                 if (voice.finished || !voice.sound || voice.sound->frames == 0) {
                     voice.finished = true;
+                    continue;
+                }
+                if (bgmPaused_ && voice.type == AudioCueType::Bgm) {
                     continue;
                 }
 
@@ -1035,6 +1046,7 @@ private:
     std::unordered_set<std::string> missingCueWarnings_;
     std::unordered_map<std::string, double> seCooldownUntil_;
     std::string currentBgmId_;
+    bool bgmPaused_ = false;
     double playClockSeconds_ = 0.0;
     float masterVolume_ = 1.0f;
     float bgmVolume_ = 1.0f;
@@ -1109,6 +1121,11 @@ void AudioEngine::playBgm(std::string_view id, float fadeSeconds, bool restart)
 void AudioEngine::stopBgm(float fadeSeconds)
 {
     impl_->stopBgm(fadeSeconds);
+}
+
+void AudioEngine::setBgmPaused(bool paused)
+{
+    impl_->setBgmPaused(paused);
 }
 
 void AudioEngine::playSe(std::string_view id, float volumeScale, float pitchScale)

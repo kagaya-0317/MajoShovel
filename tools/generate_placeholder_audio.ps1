@@ -23,6 +23,15 @@ $SampleRate = 44100
 $Channels = 1
 $TwoPi = [Math]::PI * 2.0
 
+function Get-TemporaryAudioPath([string]$Path) {
+    $fileName = [System.IO.Path]::GetFileName($Path)
+    if ($fileName.StartsWith("zz", [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $Path
+    }
+    $directory = [System.IO.Path]::GetDirectoryName($Path)
+    return Join-Path $directory ("zz_tmp_" + $fileName)
+}
+
 function Clamp-Sample([double]$Value) {
     if ($Value -gt 0.95) { return 0.95 }
     if ($Value -lt -0.95) { return -0.95 }
@@ -560,11 +569,6 @@ function Placeholder-Sample([string]$Kind, [double]$Time, [double]$Duration, [Sy
             $shimmer = 0.5 + 0.5 * [Math]::Sin($TwoPi * 22.0 * $Time)
             return $env * (0.22 * [Math]::Sin($TwoPi * 660.0 * $Time) + 0.18 * $shimmer * [Math]::Sin($TwoPi * 990.0 * $Time))
         }
-        "se.magic.impact" {
-            $env = Decay $Time $Duration 1.6
-            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.12
-            return $env * (0.28 * [Math]::Sin($TwoPi * 240.0 * $Time) + 0.20 * [Math]::Sin($TwoPi * 720.0 * $Time) + $noise)
-        }
         "se.capture.throw" {
             $env = Decay $Time $Duration 1.3
             $sweep = 420.0 + 340.0 * ($Time / $Duration)
@@ -1000,8 +1004,6 @@ public static class MajoPlaceholderAudioHQ
                     0.16 * Burst(t, 0.000, 0.045, 2.2) * S(920.0, t);
             case "se.magic.cast":
                 return Sparkle(t, d, 660.0, 0.18) + 0.15 * Whoosh(t, d, rng, 320.0, 980.0, 0.04);
-            case "se.magic.impact":
-                return Ring(t, d, 240.0, 0.22, 1.4) + Ring(t, d, 720.0, 0.16, 1.55) + 0.13 * Env(t, d, 0.002, 1.8) * N(rng);
             case "se.capture.throw":
                 return Whoosh(t, d, rng, 420.0, 900.0, 0.050) + 0.09 * Ring(t, d, 1180.0, 0.11, 1.2);
             case "se.capture.success":
@@ -1197,7 +1199,6 @@ $clips = @(
     @{ Path = Join-Path $SeRoot "ring_reflect_placeholder.wav"; Kind = "se.ring.reflect"; Duration = 0.22; Seed = 2028 },
     @{ Path = Join-Path $SeRoot "ring_slow_bite_placeholder.wav"; Kind = "se.ring.slow_bite"; Duration = 0.42; Seed = 2100 },
     @{ Path = Join-Path $SeRoot "magic_cast_placeholder.wav"; Kind = "se.magic.cast"; Duration = 0.20; Seed = 2029 },
-    @{ Path = Join-Path $SeRoot "magic_impact_placeholder.wav"; Kind = "se.magic.impact"; Duration = 0.22; Seed = 2030 },
     @{ Path = Join-Path $SeRoot "capture_throw_placeholder.wav"; Kind = "se.capture.throw"; Duration = 0.18; Seed = 2031 },
     @{ Path = Join-Path $SeRoot "capture_success_placeholder.wav"; Kind = "se.capture.success"; Duration = 0.32; Seed = 2032 },
     @{ Path = Join-Path $SeRoot "capture_fail_placeholder.wav"; Kind = "se.capture.fail"; Duration = 0.24; Seed = 2033 },
@@ -1214,6 +1215,7 @@ $clips = @(
 )
 
 foreach ($clip in $clips) {
+    $clip.Path = Get-TemporaryAudioPath ([string]$clip.Path)
     if ($OnlyDialogueText -and -not ([string]$clip.Kind).StartsWith("se.dialogue.text.", [System.StringComparison]::Ordinal)) {
         continue
     }

@@ -5461,16 +5461,40 @@ Game::BaseRingInteractionResult Game::updateBaseRingItemInteraction(
     };
     moveSelection(input.shortcutCursorDelta());
 
-    int pointerPressed = -1;
+    std::vector<RingUiItemInteractionTarget> interactionTargets;
+    interactionTargets.reserve(items.size());
     for (int index = 0; index < itemCount; ++index) {
         const SpellRingItem& item = items[static_cast<std::size_t>(index)];
-        const UiRect hitRect = rectAt(item, index);
-        const UiRect navigationRect = navigationRectAt(item, index);
+        const auto [center, previewScale] = previewCenterAndScale();
+        interactionTargets.push_back({
+            {
+                index,
+                baseRingPreviewItemAnchor(
+                    center,
+                    item,
+                    spellRing_,
+                    balance_,
+                    ringIndex,
+                    index,
+                    itemCount,
+                    previewScale),
+            },
+            rectAt(item, index),
+            navigationRectAt(item, index),
+        });
+    }
+
+    int pointerPressed = -1;
+    const int interactionIndex = frontmostRingUiItemInteractionIndex(interactionTargets, ui);
+    if (interactionIndex >= 0) {
+        const SpellRingItem& interactionItem = items[static_cast<std::size_t>(interactionIndex)];
+        const UiRect hitRect = rectAt(interactionItem, interactionIndex);
+        const UiRect navigationRect = navigationRectAt(interactionItem, interactionIndex);
         if (ui.selectionFocused(hitRect, navigationRect)) {
-            selection = index;
+            selection = interactionIndex;
         }
         if (ui.pressed(hitRect, navigationRect) && !ui.navigationActive()) {
-            pointerPressed = index;
+            pointerPressed = interactionIndex;
         }
     }
 
@@ -9541,7 +9565,8 @@ void Game::buyUpgrade(int index)
             baseHomeScreenDefaultPosition(balance_.playerRadius),
             {0.0f, 1.0f},
             "リング工房を建設したよ",
-            true);
+            true,
+            ScreenTransitionSound::None);
         return;
     }
     openUiResultDialog(
@@ -14514,7 +14539,8 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                     BaseArea::HomeInterior,
                     homeInteriorEntryPosition(homeExitRect, balance_.playerRadius),
                     {0.0f, -1.0f},
-                    "ルネの家に入りました");
+                    "ルネの家に入りました",
+                    ScreenTransitionSound::Home);
             }
             break;
         case BaseFacilityAction::HomeExit:
@@ -14530,7 +14556,8 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                     BaseArea::Outdoor,
                     outdoorPosition,
                     {0.0f, 1.0f},
-                    "魔女の拠点に戻りました");
+                    "魔女の拠点に戻りました",
+                    ScreenTransitionSound::Home);
             }
             break;
         case BaseFacilityAction::MonicaTalk:
@@ -14638,7 +14665,8 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                     BaseArea::HomeInterior,
                     homeInteriorEntryPosition(homeExitRect, balance_.playerRadius),
                     {0.0f, -1.0f},
-                    "ルネの家に入りました");
+                    "ルネの家に入りました",
+                    ScreenTransitionSound::Home);
                 return;
             }
         }
@@ -14655,7 +14683,8 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                     BaseArea::Outdoor,
                     outdoorPosition,
                     {0.0f, 1.0f},
-                    "魔女の拠点に戻りました");
+                    "魔女の拠点に戻りました",
+                    ScreenTransitionSound::Home);
                 return;
             }
         }

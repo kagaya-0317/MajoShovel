@@ -14,6 +14,7 @@ namespace {
 constexpr float NormalHealHpRatio = 0.45f;
 constexpr float DangerHealHpRatio = 0.60f;
 constexpr float EmergencyHealHpRatio = 0.25f;
+constexpr float LowHpReturnRatio = 0.34f;
 constexpr float NormalDesiredHpRatio = 0.65f;
 constexpr float DangerDesiredHpRatio = 0.72f;
 constexpr float EnemyDangerRadius = 260.0f;
@@ -398,6 +399,25 @@ AutoSimulationConsumableProfile autoSimulationConsumableProfile(
     const GameTestObjectEntrySnapshot& item)
 {
     return buildConsumableProfile(item);
+}
+
+bool autoSimulationNeedsLowHpReturn(const GameTestSnapshot& snapshot)
+{
+    if (snapshot.player.hp <= 0 || snapshot.player.maxHp <= 0) {
+        return false;
+    }
+    const float hpRatio = static_cast<float>(snapshot.player.hp) /
+        static_cast<float>(snapshot.player.maxHp);
+    if (hpRatio > LowHpReturnRatio) {
+        return false;
+    }
+    return std::none_of(
+        snapshot.inventory.backpackItems.begin(),
+        snapshot.inventory.backpackItems.end(),
+        [](const GameTestObjectEntrySnapshot& item) {
+            const AutoSimulationConsumableProfile profile = autoSimulationConsumableProfile(item);
+            return profile.heal > 0.0 && usableConsumableItem(item, profile);
+        });
 }
 
 std::optional<GameTestAction> AutoSimulationConsumablePlanner::chooseAction(const GameTestSnapshot& snapshot) const

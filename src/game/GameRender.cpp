@@ -4304,10 +4304,28 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     }
 
     const int previousRingSlotSelection = ringSlotSelection_;
+    std::vector<RingUiItemInteractionTarget> interactionTargets;
+    interactionTargets.reserve(items.size());
     for (int i = 0; i < static_cast<int>(items.size()); ++i) {
-        const UiRect rect = ringItemUiRect(items[static_cast<std::size_t>(i)], spellRing_, balance_, i, static_cast<int>(items.size()));
+        const SpellRingItem& item = items[static_cast<std::size_t>(i)];
+        const UiRect rect = ringItemUiRect(item, spellRing_, balance_, i, static_cast<int>(items.size()));
+        interactionTargets.push_back({
+            {i, ringItemUiCenter(item, spellRing_, balance_, i, static_cast<int>(items.size()))},
+            rect,
+            rect,
+        });
+    }
+    const int interactionIndex = frontmostRingUiItemInteractionIndex(interactionTargets, ui);
+    if (interactionIndex >= 0) {
+        const SpellRingItem& interactionItem = items[static_cast<std::size_t>(interactionIndex)];
+        const UiRect rect = ringItemUiRect(
+            interactionItem,
+            spellRing_,
+            balance_,
+            interactionIndex,
+            static_cast<int>(items.size()));
         if (ui.selectionFocused(rect)) {
-            ringSlotSelection_ = i;
+            ringSlotSelection_ = interactionIndex;
             ringDetailShowsRing_ = false;
         }
         if (ui.pressed(rect)) {
@@ -4315,17 +4333,17 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
             ringCommandItemIndex_ = -1;
             ringCommandPlaceActive_ = false;
             ringEmptyPressActive_ = false;
-            ringSlotSelection_ = i;
+            ringSlotSelection_ = interactionIndex;
             ringDetailShowsRing_ = false;
             if (ui.navigationActive()) {
-                openRingItemCommandMenu(i, uiCommandMenuAnchorForSlot(rect));
+                openRingItemCommandMenu(interactionIndex, uiCommandMenuAnchorForSlot(rect));
                 ui.emitCursorMoveIfChanged(previousRingSlotSelection, ringSlotSelection_);
                 return;
             }
             ringDragPending_ = true;
             ringDragActive_ = false;
-            ringDragItemIndex_ = i;
-            ringDragOriginalAngle_ = items[static_cast<std::size_t>(i)].localAngle;
+            ringDragItemIndex_ = interactionIndex;
+            ringDragOriginalAngle_ = items[static_cast<std::size_t>(interactionIndex)].localAngle;
             ringDragDisplayAngle_ = ringDragOriginalAngle_;
             ringDragStartMouse_ = input.mouseScreen();
             ui.emitCursorMoveIfChanged(previousRingSlotSelection, ringSlotSelection_);
@@ -5437,7 +5455,7 @@ void Game::updateItemAcquisitionNotice(
     const int unlockedRingCount = unlockedRingHudCount();
     if (dungeonActionsEnabled && unlockedRingCount > 1 && input.cycleDelta() != 0) {
         const int previousRingIndex = spellRing_.activeRingIndex();
-        switchActiveRingWithLog(input.cycleDelta());
+        switchActiveRing(input.cycleDelta());
         if (spellRing_.activeRingIndex() != previousRingIndex) {
             ui.emitSound(UiSoundEvent::TabSwitch);
         }
@@ -5448,7 +5466,7 @@ void Game::updateItemAcquisitionNotice(
         }
         if (ringIndex != spellRing_.activeRingIndex()) {
             ui.emitSound(UiSoundEvent::TabSwitch);
-            switchActiveRingWithLog(ringIndex - spellRing_.activeRingIndex());
+            switchActiveRing(ringIndex - spellRing_.activeRingIndex());
         }
         return;
     }
@@ -5605,7 +5623,7 @@ bool Game::updateRingStatusHud(UiContext& ui, float dt)
         if (ringStatusHudRightWindowContains(panel, pointer)) {
             if (!active) {
                 ui.emitSound(UiSoundEvent::TabSwitch);
-                switchActiveRingWithLog(ringIndex - spellRing_.activeRingIndex());
+                switchActiveRing(ringIndex - spellRing_.activeRingIndex());
                 break;
             }
             pauseReturnMode_ = ScreenMode::Playing;
@@ -5618,7 +5636,7 @@ bool Game::updateRingStatusHud(UiContext& ui, float dt)
 
         if (!active) {
             ui.emitSound(UiSoundEvent::TabSwitch);
-            switchActiveRingWithLog(ringIndex - spellRing_.activeRingIndex());
+            switchActiveRing(ringIndex - spellRing_.activeRingIndex());
         } else if (ringStatusHudLeftCircleContains(panel, pointer)) {
             if (!spellRing_.tryThrowActiveRing(player_, balance_)) {
                 ui.rejectAction();

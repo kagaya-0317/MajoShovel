@@ -1,7 +1,7 @@
 MAJO_SHOVEL_SAVE_V1
 durability_unit_scale 3
-money 9731
-play_time_seconds 28736
+money 12339
+play_time_seconds 28789
 astral_high_score 0
 astral_echo_star_count 60
 captured_monster_ring_breaks_before_stage_clear 1 3
@@ -24,25 +24,25 @@ workshop_ring_upgrade 3 0 0 0 0 0 0 0 0 0 2.4
 merchant_refresh_pending 0
 merchant_upgrade_level 4
 merchant_stock_version 4
+merchant_stock item_chipped_pickaxe 220 4
 merchant_stock item_shovel 190 4
-merchant_stock item_drill 630 5
-merchant_stock item_capture_net 130 4
-merchant_stock item_good_torch 240 2
+merchant_stock item_magnifying_glass 130 1
+merchant_stock item_super_capture_net 460 1
+merchant_stock item_apple 40 0
 merchant_stock item_good_apple 90 0
-merchant_stock item_luxury_apple 190 0
-merchant_stock item_hard_bread 190 4
-merchant_stock item_frying_pan 410 4
-merchant_stock item_sleep_apple 120 5
-merchant_stock item_giant_potion 320 2
-merchant_stock item_ice_book 500 4
-merchant_stock item_compass 340 2
-merchant_stock item_spear 540 1
-merchant_stock item_silver_shovel 520 4
-merchant_stock item_wind_book 490 3
-high_value_buy_object treasure_witch_broom
+merchant_stock item_iron_sword 410 5
+merchant_stock item_mineuchi_sword 280 1
+merchant_stock item_soft_cookie 130 5
+merchant_stock item_poison_apple 80 5
+merchant_stock item_rockcrusher_mace 1230 3
+merchant_stock item_ice_book 500 2
+merchant_stock item_bowling_ball 970 1
+merchant_stock item_drill 630 2
+merchant_stock item_great_torch 400 4
+high_value_buy_object treasure_junk_wine_bottle
 high_value_buy_object treasure_haiki_47
-high_value_buy_object treasure_asakou_06
-high_value_buy_object treasure_shinsou_76
+high_value_buy_object treasure_asakou_01
+high_value_buy_object treasure_asakou_04
 warehouse_capacity_level 1
 processing_unlock_level 2
 ring_workshop_unlocked 0
@@ -99,6 +99,7 @@ story_flag story_stage_02_boss_after
 story_flag stage_clear_2
 story_flag story_stage_02_clear
 story_flag story_base_hint_merchant_full
+story_flag story_tutorial_base_merchant
 main_knowledge_v1 1
 main_obtained_object captured_bake_kinoko
 main_obtained_object captured_slime
@@ -5342,7 +5343,7 @@ dungeon_minimap_cell stage_02_junk_magic -145 -105 0
 dungeon_minimap_cell stage_02_junk_magic -52 -60 4
 dungeon_minimap_cell stage_02_junk_magic -65 -89 0
 dungeon_minimap_cell stage_02_junk_magic -37 -69 0
-dungeon_minimap_cell stage_02_junk_magic -263 -234 4
+dungeon_minimap_cell stage_02_junk_magic -263 -234 2
 dungeon_minimap_cell stage_02_junk_magic -152 -105 0
 dungeon_minimap_cell stage_02_junk_magic -72 -89 0
 dungeon_minimap_cell stage_02_junk_magic -36 -69 2
@@ -6302,7 +6303,6 @@ dungeon_minimap_cell stage_02_junk_magic -240 -234 0
 dungeon_minimap_cell stage_02_junk_magic -164 -115 0
 dungeon_minimap_cell stage_02_junk_magic -60 -75 2
 dungeon_minimap_cell stage_02_junk_magic -219 -188 2
-dungeon_minimap_cell stage_02_junk_magic -268 -242 2
 dungeon_minimap_cell stage_02_junk_magic -61 -74 2
 dungeon_minimap_cell stage_02_junk_magic -60 -74 2
 dungeon_minimap_cell stage_02_junk_magic -60 -73 2
@@ -6548,7 +6548,7 @@ dungeon_minimap_cell stage_02_junk_magic -55 -95 2
 dungeon_minimap_cell stage_02_junk_magic -62 -94 2
 dungeon_minimap_cell stage_02_junk_magic -61 -94 3
 dungeon_minimap_cell stage_02_junk_magic -55 -94 2
-dungeon_minimap_cell stage_02_junk_magic -259 -247 0
+dungeon_minimap_cell stage_02_junk_magic -259 -247 2
 dungeon_minimap_cell stage_02_junk_magic -54 -94 2
 dungeon_minimap_cell stage_02_junk_magic -63 -93 2
 dungeon_minimap_cell stage_02_junk_magic -217 -147 2
@@ -7364,7 +7364,6 @@ dungeon_minimap_cell stage_02_junk_magic -81 -83 4
 dungeon_minimap_cell stage_02_junk_magic -86 -92 1
 dungeon_minimap_cell stage_02_junk_magic -244 -230 1
 dungeon_minimap_cell stage_02_junk_magic -86 -91 2
-dungeon_minimap_cell stage_02_junk_magic -268 -244 4
 dungeon_minimap_cell stage_02_junk_magic -212 -136 0
 dungeon_minimap_cell stage_02_junk_magic -154 -94 1
 dungeon_minimap_cell stage_02_junk_magic -86 -90 0
@@ -7875,7 +7874,6 @@ dungeon_minimap_cell stage_02_junk_magic -251 -231 0
 dungeon_minimap_cell stage_02_junk_magic -274 -251 0
 dungeon_minimap_cell stage_02_junk_magic -195 -159 0
 dungeon_minimap_cell stage_02_junk_magic -97 -93 0
-dungeon_minimap_cell stage_02_junk_magic -268 -241 0
 dungeon_minimap_cell stage_02_junk_magic -98 -109 1
 dungeon_minimap_cell stage_02_junk_magic -189 -108 0
 dungeon_minimap_cell stage_02_junk_magic -99 -94 1
@@ -8732,7 +8730,6 @@ dungeon_minimap_cell stage_02_junk_magic -136 -110 0
 dungeon_minimap_cell stage_02_junk_magic -200 -174 2
 dungeon_minimap_cell stage_02_junk_magic -213 -207 1
 dungeon_minimap_cell stage_02_junk_magic -245 -239 0
-dungeon_minimap_cell stage_02_junk_magic -268 -243 2
 dungeon_minimap_cell stage_02_junk_magic -137 -109 0
 dungeon_minimap_cell stage_02_junk_magic -184 -130 2
 dungeon_minimap_cell stage_02_junk_magic -135 -97 0
@@ -10505,7 +10502,6 @@ dungeon_minimap_cell stage_02_junk_magic -186 -144 1
 dungeon_minimap_cell stage_02_junk_magic -204 -140 0
 dungeon_minimap_cell stage_02_junk_magic -205 -139 0
 dungeon_minimap_cell stage_02_junk_magic -243 -253 2
-dungeon_minimap_cell stage_02_junk_magic -266 -237 2
 dungeon_minimap_cell stage_02_junk_magic -204 -141 0
 dungeon_minimap_cell stage_02_junk_magic -205 -140 0
 dungeon_minimap_cell stage_02_junk_magic -205 -141 0
@@ -11082,7 +11078,6 @@ dungeon_minimap_cell stage_02_junk_magic -215 -147 1
 dungeon_minimap_cell stage_02_junk_magic -215 -143 1
 dungeon_minimap_cell stage_02_junk_magic -258 -255 2
 dungeon_minimap_cell stage_02_junk_magic -214 -143 1
-dungeon_minimap_cell stage_02_junk_magic -267 -239 2
 dungeon_minimap_cell stage_02_junk_magic -214 -142 1
 dungeon_minimap_cell stage_02_junk_magic -213 -142 1
 dungeon_minimap_cell stage_02_junk_magic -217 -149 2
@@ -11226,7 +11221,6 @@ dungeon_minimap_cell stage_02_junk_magic -202 -189 0
 dungeon_minimap_cell stage_02_junk_magic -259 -253 0
 dungeon_minimap_cell stage_02_junk_magic -198 -186 2
 dungeon_minimap_cell stage_02_junk_magic -251 -223 3
-dungeon_minimap_cell stage_02_junk_magic -265 -236 1
 dungeon_minimap_cell stage_02_junk_magic -198 -185 2
 dungeon_minimap_cell stage_02_junk_magic -263 -241 2
 dungeon_minimap_cell stage_02_junk_magic -201 -189 2
@@ -11413,7 +11407,6 @@ dungeon_minimap_cell stage_02_junk_magic -242 -245 2
 dungeon_minimap_cell stage_02_junk_magic -281 -247 2
 dungeon_minimap_cell stage_02_junk_magic -219 -197 0
 dungeon_minimap_cell stage_02_junk_magic -233 -215 0
-dungeon_minimap_cell stage_02_junk_magic -264 -235 2
 dungeon_minimap_cell stage_02_junk_magic -216 -200 0
 dungeon_minimap_cell stage_02_junk_magic -221 -189 2
 dungeon_minimap_cell stage_02_junk_magic -221 -185 2
@@ -12208,7 +12201,6 @@ dungeon_minimap_cell stage_02_junk_magic -259 -255 0
 dungeon_minimap_cell stage_02_junk_magic -257 -255 2
 dungeon_minimap_cell stage_02_junk_magic -257 -256 2
 dungeon_minimap_cell stage_02_junk_magic -256 -256 2
-dungeon_minimap_cell stage_02_junk_magic -267 -238 2
 dungeon_minimap_cell stage_02_junk_magic -255 -256 2
 dungeon_minimap_cell stage_02_junk_magic -261 -255 0
 dungeon_minimap_cell stage_02_junk_magic -260 -255 2
@@ -12618,7 +12610,6 @@ dungeon_tile_edit stage_02_junk_magic -260 -245 0
 dungeon_tile_edit stage_02_junk_magic -260 -243 0
 dungeon_tile_edit stage_02_junk_magic -259 -254 0
 dungeon_tile_edit stage_02_junk_magic -259 -253 0
-dungeon_tile_edit stage_02_junk_magic -259 -247 0
 dungeon_tile_edit stage_02_junk_magic -259 -246 0
 dungeon_tile_edit stage_02_junk_magic -258 -249 0
 dungeon_tile_edit stage_02_junk_magic -258 -248 0
@@ -16833,250 +16824,251 @@ dungeon_event_instance stage_02_junk_magic fixed_2_2_electric_circuit_room elect
 dungeon_event_instance stage_02_junk_magic fixed_2_3_item_request_witch item_request_witch -210 -126 -210 -126 5 0 0 3 fixed_section_2 0 - source=fixed_section_2;reward=-210:-126;encounter=1;activated=0;bossDefeated=0;npcRequestKnown=0;objectiveResolved=0;rewardClaimed=0;bossId=0;spawnCount=0;request=tool;guideTarget=-1;guideRemaining=0.000000
 dungeon_event_instance stage_02_junk_magic fixed_3_4_surrounded_witch surrounded_witch -207 -200 -207 -200 5 0 0 3 fixed_section_3 0 - source=fixed_section_3;reward=-207:-200;encounter=1;activated=0;bossDefeated=0;npcRequestKnown=0;objectiveResolved=0;rewardClaimed=0;bossId=0;spawnCount=3;guideTarget=-1;guideRemaining=0.000000
 dungeon_event_instance stage_02_junk_magic fixed_3_5_boss_monster_room boss_monster_room -241 -232 -241 -232 7 1 0 4.5 fixed_section_3 0 - source=fixed_section_3;reward=-241:-235;encounter=1;activated=1;bossDefeated=0;npcRequestKnown=0;objectiveResolved=0;rewardClaimed=0;bossId=301;spawnCount=4;guideTarget=-1;guideRemaining=0.000000
-dungeon_world_drop stage_02_junk_magic object item_shovel 1 -8665.24 -4579.21 0 1267.74 1
-dungeon_world_drop stage_02_junk_magic object item_shovel 1 -5214.22 -6073.31 0 1267.74 1
-dungeon_world_drop stage_02_junk_magic money money 8 -2715.35 -4390.37 0 1267.74 1
-dungeon_world_drop stage_02_junk_magic money money 11 -3532.78 -4723.96 0 1267.74 1
-dungeon_world_drop stage_02_junk_magic money money 10 -9044.92 -5352.73 0 1267.74 1
-dungeon_world_drop stage_02_junk_magic money money 10 -10301.1 -8181.44 0 1267.74 1
-dungeon_world_drop stage_02_junk_magic money money 8 -3771.66 -4439.22 0 1267.74 1
-dungeon_world_drop stage_02_junk_magic money money 8 -10198.9 -9809.43 0 1267.74 1
-dungeon_world_drop stage_02_junk_magic money money 10 -2859.18 -5930.17 0 1267.74 1
-dungeon_world_drop stage_02_junk_magic money money 15 -2754.85 -5837.17 0 1267.74 1
-dungeon_world_drop stage_02_junk_magic money money 11 -2809.14 -5691.44 0 1267.74 1
-dungeon_world_drop stage_02_junk_magic money money 12 -2897.38 -5636.69 0 1267.74 1
-dungeon_world_drop stage_02_junk_magic money money 11 -3043.78 -5736.37 0 1267.74 1
-dungeon_world_drop stage_02_junk_magic money money 14 -3001.44 -5883.66 0 1267.74 1
-dungeon_world_drop stage_02_junk_magic material moon_fragment 1 -2034.41 -3623.23 0 1267.74 1
-dungeon_world_drop stage_02_junk_magic material moon_fragment 1 -2324.62 -3578.49 0 1267.74 1
-dungeon_world_drop stage_02_junk_magic material moon_fragment 1 -5879.77 -5011.07 0 1267.74 1
-dungeon_world_drop stage_02_junk_magic material moon_fragment 1 -9867.56 -8907.24 0 1267.74 1
-dungeon_world_drop stage_02_junk_magic material moon_fragment 1 -12267.6 -11495.2 0 1267.74 1
-dungeon_world_drop stage_02_junk_magic material moon_fragment 1 -8565.37 -4925.68 0 1267.74 1
-dungeon_world_drop stage_02_junk_magic material moon_fragment 1 -9092.62 -4492.69 0 1267.74 1
-dungeon_world_drop stage_02_junk_magic material moon_fragment 1 -13177.9 -12981.5 0 1267.74 1
-dungeon_world_drop stage_02_junk_magic object item_shovel 1 -9717.38 -9099.27 0 1267.74 1
-dungeon_world_drop stage_02_junk_magic object item_shovel 1 -10053.3 -5974.34 0 1267.74 1
-dungeon_world_drop stage_02_junk_magic money money 6 -8754.92 -4869.73 0 1267.74 1
-dungeon_world_drop stage_02_junk_magic object treasure_asakou_07 1 -486.424 -411.885 21.19 1239.04 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 2 -170.787 -809.783 24.6733 1232.81 0
-dungeon_world_drop stage_02_junk_magic object item_magic_lantern 1 -161.296 -919.295 34.1231 1223.36 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 3 -297.772 -1379.03 41.5563 1215.93 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 3 -681.242 -1263.61 53.0728 1204.41 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 4 -582.525 -1795.69 62.506 1194.98 0
-dungeon_world_drop stage_02_junk_magic material mana_drop 1 -1290.71 -2628.35 103.481 1154.01 0
-dungeon_world_drop stage_02_junk_magic material old_wood_building_material 4 -847.671 -2215.72 116.05 1141.46 0
-dungeon_world_drop stage_02_junk_magic object item_good_apple 1 -779.39 -1163.16 137.484 1120.03 0
-dungeon_world_drop stage_02_junk_magic object item_compass 1 -1447.95 -2240.14 168.81 1088.71 0
-dungeon_world_drop stage_02_junk_magic object item_antigravity_stone 1 -1610.72 -2345.79 173.892 1083.62 0
-dungeon_world_drop stage_02_junk_magic object item_hammer 1 -2004.62 -2699.17 176.724 1080.79 0
-dungeon_world_drop stage_02_junk_magic material old_wood_building_material 3 -1621.36 -2843.94 185.539 1071.98 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 2 -1596.22 -2821.61 185.906 1071.61 0
-dungeon_world_drop stage_02_junk_magic object item_small_drill 1 -1717.93 -2867.4 188.255 1069.26 0
-dungeon_world_drop stage_02_junk_magic object treasure_asakou_13 1 -1784.6 -2913.32 190.005 1067.51 0
-dungeon_world_drop stage_02_junk_magic object item_gravity_stone 1 -1739.86 -3253.29 194.403 1063.11 0
-dungeon_world_drop stage_02_junk_magic material mana_drop 1 -1759.79 -3160.37 195.253 1062.25 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 3 -1834.91 -3091.85 197.519 1060 0
-dungeon_world_drop stage_02_junk_magic material mana_drop 1 -1875.72 -3183.42 198.436 1059.06 0
-dungeon_world_drop stage_02_junk_magic material old_wood_building_material 4 -2027.19 -3707.36 206.067 1048.35 0
-dungeon_world_drop stage_02_junk_magic object treasure_haiki_31 1 -2041.31 -3414.05 210.233 1044.18 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 2 -2175.5 -2936.14 214.282 1040.13 0
-dungeon_world_drop stage_02_junk_magic object treasure_haiki_37 1 -2555.67 -3589.11 223.663 1030.75 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 4 -2343.45 -3873.24 230.728 1023.69 0
-dungeon_world_drop stage_02_junk_magic object item_spike_shield 1 -2872.09 -4064.07 248.774 1005.64 0
-dungeon_world_drop stage_02_junk_magic object item_speed_candy 1 -3034.71 -4260.14 257.171 994.133 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 4 -3044.29 -4230.39 257.171 994.133 0
-dungeon_world_drop stage_02_junk_magic object item_speed_candy 1 -3447.55 -4785.06 270.218 981.086 0
-dungeon_world_drop stage_02_junk_magic object item_soft_cookie 1 -3635.43 -4426.1 273.118 978.187 0
-dungeon_world_drop stage_02_junk_magic material old_wood_building_material 2 -3736.71 -4433.31 274.784 976.521 0
-dungeon_world_drop stage_02_junk_magic object item_compass 1 -3635.26 -4377.96 279.549 971.755 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 2 -3462.33 -4052.57 291.613 959.691 0
-dungeon_world_drop stage_02_junk_magic object treasure_haiki_31 1 -3672.39 -4134 295.595 955.709 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 4 -3579.45 -4169.67 295.962 955.342 0
-dungeon_world_drop stage_02_junk_magic object item_silver_shovel 1 -3974.03 -4332.09 305.893 945.411 0
-dungeon_world_drop stage_02_junk_magic object treasure_alarm_clock 1 -4256.75 -4695.73 310.242 941.063 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 3 -3895.71 -4864.34 312.825 938.48 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 3 -4483.9 -4745.53 331.487 919.818 0
-dungeon_world_drop stage_02_junk_magic object item_super_capture_net 1 -5551.64 -4663.7 355.214 892.974 0
-dungeon_world_drop stage_02_junk_magic object item_sleep_apple 1 -5432.93 -4862.16 357.68 890.508 0
-dungeon_world_drop stage_02_junk_magic object item_good_apple 1 -5701.39 -5051.97 365.628 882.56 0
-dungeon_world_drop stage_02_junk_magic object item_spiked_bat 1 -6486.15 -5210.3 383.674 861.415 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 2 -6434.34 -5545.45 388.573 856.5 0
-dungeon_world_drop stage_02_junk_magic object item_flameblade_sword 1 -6860.25 -5431.72 392.388 852.701 0
-dungeon_world_drop stage_02_junk_magic object item_great_torch 1 -7337.87 -5306.16 408.784 836.305 0
-dungeon_world_drop stage_02_junk_magic object treasure_junk_fan 1 -7960.03 -5103.82 425.147 819.942 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 4 -8103.66 -5603.39 430.896 814.194 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 5 -7937.21 -5671.33 432.812 812.277 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 4 -8367.44 -5319.83 444.326 800.763 0
-dungeon_world_drop stage_02_junk_magic object treasure_haiki_32 1 -8199.46 -5745.21 447.175 797.914 0
-dungeon_world_drop stage_02_junk_magic object treasure_junk_bed 1 -7835.17 -5579.37 453.807 791.282 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 4 -7785.76 -5532.99 453.873 791.216 0
-dungeon_world_drop stage_02_junk_magic object treasure_glue_bottle 1 -8463.81 -5848.03 470.636 774.453 0
-dungeon_world_drop stage_02_junk_magic object item_good_apple 1 -8965.44 -5939.97 474.435 770.654 0
-dungeon_world_drop stage_02_junk_magic object treasure_junk_fan 1 -8984.85 -5630.28 484.449 760.64 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 2 -7831.76 -5440.24 496.346 748.743 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 5 -7782.02 -5448.83 497.729 747.36 0
-dungeon_world_drop stage_02_junk_magic object treasure_haiki_48 1 -6973.52 -5510.63 504.378 740.711 0
-dungeon_world_drop stage_02_junk_magic object treasure_junk_bed 1 -6777.35 -4930.46 517.391 727.697 0
-dungeon_world_drop stage_02_junk_magic object item_luxury_apple 1 -6746.18 -4937.87 523.023 722.065 0
-dungeon_world_drop stage_02_junk_magic object item_luxury_apple 1 -7263.88 -5032.06 553.166 691.923 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 5 -7142.43 -4765.24 555.165 689.923 0
-dungeon_world_drop stage_02_junk_magic object item_great_torch 1 -8290.66 -5001.49 578.86 666.229 0
-dungeon_world_drop stage_02_junk_magic object item_steel_pickaxe 1 -8478.95 -5285.25 582.092 662.996 0
-dungeon_world_drop stage_02_junk_magic material mana_drop 2 -8500.03 -5233.41 583.075 662.013 0
-dungeon_world_drop stage_02_junk_magic object item_super_capture_net 1 -8459.79 -5051.82 584.042 661.03 0
-dungeon_world_drop stage_02_junk_magic material mana_drop 1 -8515.61 -5080.82 585.858 659.214 0
-dungeon_world_drop stage_02_junk_magic material mana_drop 1 -8754.38 -5178.77 589.94 655.131 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 3 -8520.99 -5385.74 596.522 648.549 0
-dungeon_world_drop stage_02_junk_magic object treasure_haiki_52 1 -8776.76 -5585.44 597.855 647.232 0
-dungeon_world_drop stage_02_junk_magic object item_shovel 1 -9051.13 -5592.63 605.12 639.967 1
-dungeon_world_drop stage_02_junk_magic object item_orbit_stake 1 -9080.39 -5631.03 613.301 631.786 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 5 -9591.04 -5822.69 621.849 623.239 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 5 -9224.97 -6446.09 642.144 599.845 0
-dungeon_world_drop stage_02_junk_magic object item_magic_lantern 1 -9287.78 -6612 642.611 599.378 0
-dungeon_world_drop stage_02_junk_magic object item_magic_lantern 1 -9254.97 -6662.32 642.611 599.378 0
-dungeon_world_drop stage_02_junk_magic object item_soft_cookie 1 -9174.77 -6450.08 642.677 599.295 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 3 -9236.37 -6417.23 645.077 596.896 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 2 -9596.26 -6590.66 648.759 593.213 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 1 -9655.59 -6683.15 649.759 592.214 0
-dungeon_world_drop stage_02_junk_magic object item_spike_shield 1 -9640.18 -6943.88 652.875 589.114 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 5 -9827.01 -7449.76 665.055 576.935 0
-dungeon_world_drop stage_02_junk_magic material old_wood_building_material 5 -9349.17 -7812.26 672.503 569.487 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 2 -9373.15 -7632.12 678.885 563.089 0
-dungeon_world_drop stage_02_junk_magic object item_super_capture_net 1 -9250.93 -7641.7 679.218 562.773 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 2 -9176.16 -7472.55 681.801 560.19 0
-dungeon_world_drop stage_02_junk_magic object treasure_haiki_48 1 -9463.77 -8047.78 689.283 552.709 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 4 -9709.53 -8006.64 690.166 551.825 0
-dungeon_world_drop stage_02_junk_magic object item_hard_cookie 1 -9974.91 -7981.91 692.882 549.109 0
-dungeon_world_drop stage_02_junk_magic material old_wood_building_material 5 -10161.8 -8264.91 705.862 536.13 0
-dungeon_world_drop stage_02_junk_magic object item_good_apple 1 -9778.92 -7833.69 726.14 515.852 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 2 -9921.85 -7064.93 734.905 507.086 0
-dungeon_world_drop stage_02_junk_magic money money 12 -9859.53 -7325.8 737.071 504.92 1
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 2 -9502.68 -6970.9 749.735 492.24 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 3 -9280.27 -6857.05 754.467 487.508 0
-dungeon_world_drop stage_02_junk_magic material mana_drop 1 -9195.44 -6880.09 754.567 487.408 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 5 -9853.46 -6969.41 790.625 451.367 0
-dungeon_world_drop stage_02_junk_magic object item_drill 1 -10169.7 -6987.49 792.757 449.234 0
-dungeon_world_drop stage_02_junk_magic material mana_drop 1 -9995.71 -6814.44 793.491 448.484 0
-dungeon_world_drop stage_02_junk_magic material moon_fragment 1 -10021 -6800.26 793.491 448.484 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 1 -10082.1 -7298.98 802.472 439.503 0
-dungeon_world_drop stage_02_junk_magic material old_wood_building_material 4 -10257.6 -7832.77 808.703 433.288 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 4 -10255.3 -7641.34 808.87 433.121 0
-dungeon_world_drop stage_02_junk_magic material mana_drop 1 -10105.2 -7792.11 813.069 428.905 0
-dungeon_world_drop stage_02_junk_magic material old_wood_building_material 3 -9762.78 -8777.23 822.467 419.524 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 5 -10116.6 -8628.88 829.515 409.376 0
-dungeon_world_drop stage_02_junk_magic object item_flameblade_sword 1 -10165.1 -8628.29 830.115 408.776 0
-dungeon_world_drop stage_02_junk_magic object treasure_haiki_45 1 -10209.1 -8631.51 833.297 405.593 0
-dungeon_world_drop stage_02_junk_magic object treasure_haiki_60 1 -10025.4 -9052.48 849.344 389.547 0
-dungeon_world_drop stage_02_junk_magic object item_luxury_apple 1 -10187.2 -9252.65 851.91 386.981 0
-dungeon_world_drop stage_02_junk_magic money money 7 -10202.1 -9292.27 865.906 372.982 1
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 5 -10572.1 -9205.52 866.873 372.016 0
-dungeon_world_drop stage_02_junk_magic material old_wood_building_material 7 -10600 -9152.33 867.223 371.665 0
-dungeon_world_drop stage_02_junk_magic material old_wood_building_material 3 -10304 -9463.88 872.555 366.331 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 7 -10265.8 -9477.47 872.938 365.948 0
-dungeon_world_drop stage_02_junk_magic object treasure_haiki_58 1 -10313.6 -9579.7 873.588 365.297 0
-dungeon_world_drop stage_02_junk_magic material mana_drop 1 -10328.8 -9438.64 877.003 361.863 0
-dungeon_world_drop stage_02_junk_magic object item_magic_lantern 1 -10888.3 -9568.3 888.267 350.611 0
-dungeon_world_drop stage_02_junk_magic object item_super_capture_net 1 -10624.3 -10024.3 899.015 339.859 0
-dungeon_world_drop stage_02_junk_magic object item_super_capture_net 1 -10554 -10009.2 900.181 338.692 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 5 -10429.7 -10022.8 900.531 338.342 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 7 -11000.9 -10238.2 922.709 316.154 0
-dungeon_world_drop stage_02_junk_magic object item_shovel 1 -11108 -10631.1 930.39 308.47 1
-dungeon_world_drop stage_02_junk_magic object treasure_haiki_36 1 -11622 -10487.3 941.504 297.353 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 3 -11966.3 -10551.2 944.287 294.569 0
-dungeon_world_drop stage_02_junk_magic object treasure_trampoline 1 -11660.3 -10614.5 944.487 294.353 0
-dungeon_world_drop stage_02_junk_magic object item_thunder_book 1 -11714.5 -10472.2 945.653 293.186 0
-dungeon_world_drop stage_02_junk_magic object item_steel_pickaxe 1 -11748.8 -10955.4 949.719 289.136 0
-dungeon_world_drop stage_02_junk_magic object item_drill 1 -11856.9 -11167.9 964.116 271.969 0
-dungeon_world_drop stage_02_junk_magic object item_steel_drill 1 -12131.3 -11299.8 969.164 266.919 0
-dungeon_world_drop stage_02_junk_magic material mana_drop 1 -11800.8 -11758.5 977.912 258.17 0
-dungeon_world_drop stage_02_junk_magic material enhancement_ore 5 -12085.4 -11748.1 982.894 253.203 0
-dungeon_world_drop stage_02_junk_magic material old_wood_building_material 7 -12169.8 -11753.9 984.944 251.153 0
-dungeon_world_drop stage_02_junk_magic material old_wood_building_material 3 -12469.6 -11699.8 0.0165692 241.474 0
-dungeon_world_drop stage_02_junk_magic object item_steel_pickaxe 1 -12439.5 -11695.1 0.0165692 241.474 0
-dungeon_world_drop stage_02_junk_magic object item_gale_book 1 -12411.1 -12021.2 10.4302 231.043 0
-dungeon_world_drop stage_02_junk_magic object treasure_haiki_49 1 -12401.7 -12184.8 10.5495 230.951 0
-dungeon_world_drop stage_02_junk_magic object item_gale_book 1 -12744.7 -12042 12.6501 228.857 0
-dungeon_world_drop stage_02_junk_magic object item_mirror_shield 1 -12645 -12100.7 13.5896 227.884 0
-dungeon_world_drop stage_02_junk_magic material mana_drop 1 -12627.4 -12071.8 13.5896 227.884 0
-dungeon_world_drop stage_02_junk_magic material mana_drop 1 -12898.5 -12275.5 24.9719 59.0552 0
-dungeon_world_drop stage_02_junk_magic object item_mirror_shield 1 -13187.3 -12662 25.9166 58.1452 0
-dungeon_world_drop stage_02_junk_magic material mana_drop 1 -13058.8 -12353.3 29.0807 54.9464 0
-object item_good_apple 2
-object item_luxury_apple 6
-object_instance iteminst_154 item_staff_magnetic 480 480 0 0 0 0 1 1 0 0 0 0 0
+dungeon_world_drop stage_02_junk_magic object item_shovel 1 -8665.24 -4579.21 0 1263 1
+dungeon_world_drop stage_02_junk_magic object item_shovel 1 -5214.22 -6073.31 0 1263 1
+dungeon_world_drop stage_02_junk_magic money money 8 -2715.35 -4390.37 0 1263 1
+dungeon_world_drop stage_02_junk_magic money money 11 -3532.78 -4723.96 0 1263 1
+dungeon_world_drop stage_02_junk_magic money money 10 -9044.92 -5352.73 0 1263 1
+dungeon_world_drop stage_02_junk_magic money money 10 -10301.1 -8181.44 0 1263 1
+dungeon_world_drop stage_02_junk_magic money money 8 -3771.66 -4439.22 0 1263 1
+dungeon_world_drop stage_02_junk_magic money money 8 -10198.9 -9809.43 0 1263 1
+dungeon_world_drop stage_02_junk_magic money money 10 -2859.18 -5930.17 0 1263 1
+dungeon_world_drop stage_02_junk_magic money money 15 -2754.85 -5837.17 0 1263 1
+dungeon_world_drop stage_02_junk_magic money money 11 -2809.14 -5691.44 0 1263 1
+dungeon_world_drop stage_02_junk_magic money money 12 -2897.38 -5636.69 0 1263 1
+dungeon_world_drop stage_02_junk_magic money money 11 -3043.78 -5736.37 0 1263 1
+dungeon_world_drop stage_02_junk_magic money money 14 -3001.44 -5883.66 0 1263 1
+dungeon_world_drop stage_02_junk_magic material moon_fragment 1 -2034.41 -3623.23 0 1263 1
+dungeon_world_drop stage_02_junk_magic material moon_fragment 1 -2324.62 -3578.49 0 1263 1
+dungeon_world_drop stage_02_junk_magic material moon_fragment 1 -5879.77 -5011.07 0 1263 1
+dungeon_world_drop stage_02_junk_magic material moon_fragment 1 -9867.56 -8907.24 0 1263 1
+dungeon_world_drop stage_02_junk_magic material moon_fragment 1 -12267.6 -11495.2 0 1263 1
+dungeon_world_drop stage_02_junk_magic material moon_fragment 1 -8565.37 -4925.68 0 1263 1
+dungeon_world_drop stage_02_junk_magic material moon_fragment 1 -9092.62 -4492.69 0 1263 1
+dungeon_world_drop stage_02_junk_magic material moon_fragment 1 -13177.9 -12981.5 0 1263 1
+dungeon_world_drop stage_02_junk_magic object item_shovel 1 -9717.38 -9099.27 0 1263 1
+dungeon_world_drop stage_02_junk_magic object item_shovel 1 -10053.3 -5974.34 0 1263 1
+dungeon_world_drop stage_02_junk_magic money money 6 -8754.92 -4869.73 0 1263 1
+dungeon_world_drop stage_02_junk_magic object treasure_asakou_07 1 -486.424 -411.885 21.19 1234.3 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 2 -170.787 -809.783 24.6733 1228.07 0
+dungeon_world_drop stage_02_junk_magic object item_magic_lantern 1 -161.296 -919.295 34.1231 1218.62 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 3 -297.772 -1379.03 41.5563 1211.19 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 3 -681.242 -1263.61 53.0728 1199.67 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 4 -582.525 -1795.69 62.506 1190.24 0
+dungeon_world_drop stage_02_junk_magic material mana_drop 1 -1290.71 -2628.35 103.481 1149.27 0
+dungeon_world_drop stage_02_junk_magic material old_wood_building_material 4 -847.671 -2215.72 116.05 1136.72 0
+dungeon_world_drop stage_02_junk_magic object item_good_apple 1 -779.39 -1163.16 137.484 1115.29 0
+dungeon_world_drop stage_02_junk_magic object item_compass 1 -1447.95 -2240.14 168.81 1083.97 0
+dungeon_world_drop stage_02_junk_magic object item_antigravity_stone 1 -1610.72 -2345.79 173.892 1078.88 0
+dungeon_world_drop stage_02_junk_magic object item_hammer 1 -2004.62 -2699.17 176.724 1076.05 0
+dungeon_world_drop stage_02_junk_magic material old_wood_building_material 3 -1621.36 -2843.94 185.539 1067.24 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 2 -1596.22 -2821.61 185.906 1066.87 0
+dungeon_world_drop stage_02_junk_magic object item_small_drill 1 -1717.93 -2867.4 188.255 1064.52 0
+dungeon_world_drop stage_02_junk_magic object treasure_asakou_13 1 -1784.6 -2913.32 190.005 1062.77 0
+dungeon_world_drop stage_02_junk_magic object item_gravity_stone 1 -1739.86 -3253.29 194.403 1058.37 0
+dungeon_world_drop stage_02_junk_magic material mana_drop 1 -1759.79 -3160.37 195.253 1057.51 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 3 -1834.91 -3091.85 197.519 1055.26 0
+dungeon_world_drop stage_02_junk_magic material mana_drop 1 -1875.72 -3183.42 198.436 1054.32 0
+dungeon_world_drop stage_02_junk_magic material old_wood_building_material 4 -2027.19 -3707.36 206.067 1043.61 0
+dungeon_world_drop stage_02_junk_magic object treasure_haiki_31 1 -2041.31 -3414.05 210.233 1039.44 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 2 -2175.5 -2936.14 214.282 1035.39 0
+dungeon_world_drop stage_02_junk_magic object treasure_haiki_37 1 -2555.67 -3589.11 223.663 1026.01 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 4 -2343.45 -3873.24 230.728 1018.95 0
+dungeon_world_drop stage_02_junk_magic object item_spike_shield 1 -2872.09 -4064.07 248.774 1000.9 0
+dungeon_world_drop stage_02_junk_magic object item_speed_candy 1 -3034.71 -4260.14 257.171 989.388 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 4 -3044.29 -4230.39 257.171 989.388 0
+dungeon_world_drop stage_02_junk_magic object item_speed_candy 1 -3447.55 -4785.06 270.218 976.341 0
+dungeon_world_drop stage_02_junk_magic object item_soft_cookie 1 -3635.43 -4426.1 273.118 973.442 0
+dungeon_world_drop stage_02_junk_magic material old_wood_building_material 2 -3736.71 -4433.31 274.784 971.776 0
+dungeon_world_drop stage_02_junk_magic object item_compass 1 -3635.26 -4377.96 279.549 967.01 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 2 -3462.33 -4052.57 291.613 954.946 0
+dungeon_world_drop stage_02_junk_magic object treasure_haiki_31 1 -3672.39 -4134 295.595 950.964 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 4 -3579.45 -4169.67 295.962 950.597 0
+dungeon_world_drop stage_02_junk_magic object item_silver_shovel 1 -3974.03 -4332.09 305.893 940.666 0
+dungeon_world_drop stage_02_junk_magic object treasure_alarm_clock 1 -4256.75 -4695.73 310.242 936.318 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 3 -3895.71 -4864.34 312.825 933.735 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 3 -4483.9 -4745.53 331.487 915.073 0
+dungeon_world_drop stage_02_junk_magic object item_super_capture_net 1 -5551.64 -4663.7 355.214 888.229 0
+dungeon_world_drop stage_02_junk_magic object item_sleep_apple 1 -5432.93 -4862.16 357.68 885.763 0
+dungeon_world_drop stage_02_junk_magic object item_good_apple 1 -5701.39 -5051.97 365.628 877.815 0
+dungeon_world_drop stage_02_junk_magic object item_spiked_bat 1 -6486.15 -5210.3 383.674 856.67 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 2 -6434.34 -5545.45 388.573 851.755 0
+dungeon_world_drop stage_02_junk_magic object item_flameblade_sword 1 -6860.25 -5431.72 392.388 847.956 0
+dungeon_world_drop stage_02_junk_magic object item_great_torch 1 -7337.87 -5306.16 408.784 831.56 0
+dungeon_world_drop stage_02_junk_magic object treasure_junk_fan 1 -7960.03 -5103.82 425.147 815.197 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 4 -8103.66 -5603.39 430.896 809.449 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 5 -7937.21 -5671.33 432.812 807.532 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 4 -8367.44 -5319.83 444.326 796.018 0
+dungeon_world_drop stage_02_junk_magic object treasure_haiki_32 1 -8199.46 -5745.21 447.175 793.169 0
+dungeon_world_drop stage_02_junk_magic object treasure_junk_bed 1 -7835.17 -5579.37 453.807 786.537 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 4 -7785.76 -5532.99 453.873 786.471 0
+dungeon_world_drop stage_02_junk_magic object treasure_glue_bottle 1 -8463.81 -5848.03 470.636 769.708 0
+dungeon_world_drop stage_02_junk_magic object item_good_apple 1 -8965.44 -5939.97 474.435 765.909 0
+dungeon_world_drop stage_02_junk_magic object treasure_junk_fan 1 -8984.85 -5630.28 484.449 755.895 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 2 -7831.76 -5440.24 496.346 743.998 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 5 -7782.02 -5448.83 497.729 742.615 0
+dungeon_world_drop stage_02_junk_magic object treasure_haiki_48 1 -6973.52 -5510.63 504.378 735.966 0
+dungeon_world_drop stage_02_junk_magic object treasure_junk_bed 1 -6777.35 -4930.46 517.391 722.952 0
+dungeon_world_drop stage_02_junk_magic object item_luxury_apple 1 -6746.18 -4937.87 523.023 717.32 0
+dungeon_world_drop stage_02_junk_magic object item_luxury_apple 1 -7263.88 -5032.06 553.166 687.178 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 5 -7142.43 -4765.24 555.165 685.178 0
+dungeon_world_drop stage_02_junk_magic object item_great_torch 1 -8290.66 -5001.49 578.86 661.484 0
+dungeon_world_drop stage_02_junk_magic object item_steel_pickaxe 1 -8478.95 -5285.25 582.092 658.251 0
+dungeon_world_drop stage_02_junk_magic material mana_drop 2 -8500.03 -5233.41 583.075 657.268 0
+dungeon_world_drop stage_02_junk_magic object item_super_capture_net 1 -8459.79 -5051.82 584.042 656.285 0
+dungeon_world_drop stage_02_junk_magic material mana_drop 1 -8515.61 -5080.82 585.858 654.469 0
+dungeon_world_drop stage_02_junk_magic material mana_drop 1 -8754.38 -5178.77 589.94 650.386 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 3 -8520.99 -5385.74 596.522 643.804 0
+dungeon_world_drop stage_02_junk_magic object treasure_haiki_52 1 -8776.76 -5585.44 597.855 642.487 0
+dungeon_world_drop stage_02_junk_magic object item_shovel 1 -9051.13 -5592.63 605.12 635.222 1
+dungeon_world_drop stage_02_junk_magic object item_orbit_stake 1 -9080.39 -5631.03 613.301 627.041 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 5 -9591.04 -5822.69 621.849 618.494 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 5 -9224.97 -6446.09 642.144 595.1 0
+dungeon_world_drop stage_02_junk_magic object item_magic_lantern 1 -9287.78 -6612 642.611 594.633 0
+dungeon_world_drop stage_02_junk_magic object item_magic_lantern 1 -9254.97 -6662.32 642.611 594.633 0
+dungeon_world_drop stage_02_junk_magic object item_soft_cookie 1 -9174.77 -6450.08 642.677 594.55 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 3 -9236.37 -6417.23 645.077 592.151 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 2 -9596.26 -6590.66 648.759 588.468 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 1 -9655.59 -6683.15 649.759 587.469 0
+dungeon_world_drop stage_02_junk_magic object item_spike_shield 1 -9640.18 -6943.88 652.875 584.369 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 5 -9827.01 -7449.76 665.055 572.19 0
+dungeon_world_drop stage_02_junk_magic material old_wood_building_material 5 -9349.17 -7812.26 672.503 564.742 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 2 -9373.15 -7632.12 678.885 558.344 0
+dungeon_world_drop stage_02_junk_magic object item_super_capture_net 1 -9250.93 -7641.7 679.218 558.028 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 2 -9176.16 -7472.55 681.801 555.445 0
+dungeon_world_drop stage_02_junk_magic object treasure_haiki_48 1 -9463.77 -8047.78 689.283 547.964 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 4 -9709.53 -8006.64 690.166 547.08 0
+dungeon_world_drop stage_02_junk_magic object item_hard_cookie 1 -9974.91 -7981.91 692.882 544.364 0
+dungeon_world_drop stage_02_junk_magic material old_wood_building_material 5 -10161.8 -8264.91 705.862 531.385 0
+dungeon_world_drop stage_02_junk_magic object item_good_apple 1 -9778.92 -7833.69 726.14 511.107 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 2 -9921.85 -7064.93 734.905 502.342 0
+dungeon_world_drop stage_02_junk_magic money money 12 -9859.53 -7325.8 737.071 500.176 1
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 2 -9502.68 -6970.9 749.735 487.496 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 3 -9280.27 -6857.05 754.467 482.764 0
+dungeon_world_drop stage_02_junk_magic material mana_drop 1 -9195.44 -6880.09 754.567 482.664 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 5 -9853.46 -6969.41 790.625 446.623 0
+dungeon_world_drop stage_02_junk_magic object item_drill 1 -10169.7 -6987.49 792.757 444.49 0
+dungeon_world_drop stage_02_junk_magic material mana_drop 1 -9995.71 -6814.44 793.491 443.74 0
+dungeon_world_drop stage_02_junk_magic material moon_fragment 1 -10021 -6800.26 793.491 443.74 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 1 -10082.1 -7298.98 802.472 434.759 0
+dungeon_world_drop stage_02_junk_magic material old_wood_building_material 4 -10257.6 -7832.77 808.703 428.544 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 4 -10255.3 -7641.34 808.87 428.377 0
+dungeon_world_drop stage_02_junk_magic material mana_drop 1 -10105.2 -7792.11 813.069 424.161 0
+dungeon_world_drop stage_02_junk_magic material old_wood_building_material 3 -9762.78 -8777.23 822.467 414.78 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 5 -10116.6 -8628.88 829.515 404.632 0
+dungeon_world_drop stage_02_junk_magic object item_flameblade_sword 1 -10165.1 -8628.29 830.115 404.032 0
+dungeon_world_drop stage_02_junk_magic object treasure_haiki_45 1 -10209.1 -8631.51 833.297 400.849 0
+dungeon_world_drop stage_02_junk_magic object treasure_haiki_60 1 -10025.4 -9052.48 849.344 384.803 0
+dungeon_world_drop stage_02_junk_magic object item_luxury_apple 1 -10187.2 -9252.65 851.91 382.237 0
+dungeon_world_drop stage_02_junk_magic money money 7 -10202.1 -9292.27 865.906 368.238 1
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 5 -10572.1 -9205.52 866.873 367.272 0
+dungeon_world_drop stage_02_junk_magic material old_wood_building_material 7 -10600 -9152.33 867.223 366.921 0
+dungeon_world_drop stage_02_junk_magic material old_wood_building_material 3 -10304 -9463.88 872.555 361.587 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 7 -10265.8 -9477.47 872.938 361.204 0
+dungeon_world_drop stage_02_junk_magic object treasure_haiki_58 1 -10313.6 -9579.7 873.588 360.553 0
+dungeon_world_drop stage_02_junk_magic material mana_drop 1 -10328.8 -9438.64 877.003 357.119 0
+dungeon_world_drop stage_02_junk_magic object item_magic_lantern 1 -10888.3 -9568.3 888.267 345.867 0
+dungeon_world_drop stage_02_junk_magic object item_super_capture_net 1 -10624.3 -10024.3 899.015 335.115 0
+dungeon_world_drop stage_02_junk_magic object item_super_capture_net 1 -10554 -10009.2 900.181 333.948 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 5 -10429.7 -10022.8 900.531 333.598 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 7 -11000.9 -10238.2 922.709 311.41 0
+dungeon_world_drop stage_02_junk_magic object item_shovel 1 -11108 -10631.1 930.39 303.726 1
+dungeon_world_drop stage_02_junk_magic object treasure_haiki_36 1 -11622 -10487.3 941.504 292.609 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 3 -11966.3 -10551.2 944.287 289.825 0
+dungeon_world_drop stage_02_junk_magic object treasure_trampoline 1 -11660.3 -10614.5 944.487 289.609 0
+dungeon_world_drop stage_02_junk_magic object item_thunder_book 1 -11714.5 -10472.2 945.653 288.442 0
+dungeon_world_drop stage_02_junk_magic object item_steel_pickaxe 1 -11748.8 -10955.4 949.719 284.392 0
+dungeon_world_drop stage_02_junk_magic object item_drill 1 -11856.9 -11167.9 964.116 267.225 0
+dungeon_world_drop stage_02_junk_magic object item_steel_drill 1 -12131.3 -11299.8 969.164 262.175 0
+dungeon_world_drop stage_02_junk_magic material mana_drop 1 -11800.8 -11758.5 977.912 253.425 0
+dungeon_world_drop stage_02_junk_magic material enhancement_ore 5 -12085.4 -11748.1 982.894 248.459 0
+dungeon_world_drop stage_02_junk_magic material old_wood_building_material 7 -12169.8 -11753.9 984.944 246.409 0
+dungeon_world_drop stage_02_junk_magic material old_wood_building_material 3 -12469.6 -11699.8 0.0165692 236.73 0
+dungeon_world_drop stage_02_junk_magic object item_steel_pickaxe 1 -12439.5 -11695.1 0.0165692 236.73 0
+dungeon_world_drop stage_02_junk_magic object item_gale_book 1 -12411.1 -12021.2 10.4302 226.299 0
+dungeon_world_drop stage_02_junk_magic object treasure_haiki_49 1 -12401.7 -12184.8 10.5495 226.207 0
+dungeon_world_drop stage_02_junk_magic object item_gale_book 1 -12744.7 -12042 12.6501 224.113 0
+dungeon_world_drop stage_02_junk_magic object item_mirror_shield 1 -12645 -12100.7 13.5896 223.14 0
+dungeon_world_drop stage_02_junk_magic material mana_drop 1 -12627.4 -12071.8 13.5896 223.14 0
+dungeon_world_drop stage_02_junk_magic material mana_drop 1 -12898.5 -12275.5 24.9719 54.3107 0
+dungeon_world_drop stage_02_junk_magic object item_mirror_shield 1 -13187.3 -12662 25.9166 53.4007 0
+dungeon_world_drop stage_02_junk_magic material mana_drop 1 -13058.8 -12353.3 29.0807 50.2019 0
+object item_luxury_apple 1
+object item_apple 4
+object item_good_apple 5
 object_instance iteminst_90 item_super_capture_net 45 45 0 0 0 0 1 1 0 0 0 0 0
-warehouse_object_instance iteminst_55 item_staff_scrap_iron 525 525 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_111 item_staff_scrap_iron 525 525 0 0 0 0 1 1 1 0 0 0 0
+object_instance iteminst_154 item_staff_magnetic 480 480 0 0 0 0 1 1 0 0 0 0 0
+warehouse_object_instance iteminst_4 item_iron_sword 225 225 0 0 0 0 1 1 1 0 0 0 0
 warehouse_object_instance iteminst_17 item_shovel 315 315 1 0 1 0 1 1 1 0 0 1 0
 warehouse_object_instance iteminst_18 item_shovel 315 315 0 0 0 0 1 1 1 0 0 0 0
 warehouse_object_instance iteminst_6 item_shovel 315 315 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_70 item_shovel 315 315 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_125 item_shovel 315 315 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_134 item_shovel 315 315 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_147 item_shovel 315 315 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_24 item_hard_bread 45 45 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_43 item_hammer 285 285 2 5 0 0 1 1 1 0 2 0 0
+warehouse_object_instance iteminst_52 item_hammer 285 285 1 2 0 0 1 1 1 0 1 0 0
+warehouse_object_instance iteminst_51 treasure_asakou_14 255 255 0 0 0 0 1 1 1 0 0 0 0
 warehouse_object_instance iteminst_59 item_silver_shovel 450 450 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_142 item_silver_shovel 450 450 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_131 item_pickaxe 435 435 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_99 item_steel_pickaxe 540 540 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_118 item_steel_pickaxe 540 540 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_120 item_steel_pickaxe 540 540 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_122 item_steel_pickaxe 540 540 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_140 item_steel_pickaxe 540 540 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_62 item_silver_sword 270 270 0 0 0 0 1 1 1 0 0 0 0
 warehouse_object_instance iteminst_56 item_small_drill 240 240 1 0 1 0 1 1 1 0 0 1 0
 warehouse_object_instance iteminst_60 item_small_drill 240 240 0 0 0 0 1 1 1 0 0 0 0
 warehouse_object_instance iteminst_67 item_drill 435 435 1 0 2 0 1 1 1 0 0 1 0
-warehouse_object_instance iteminst_86 item_drill 435 435 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_92 item_drill 435 435 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_138 item_drill 435 435 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_141 item_steel_drill 450 450 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_116 item_great_torch 315 315 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_73 item_silver_sword 270 270 1 2 0 0 1 1 1 0 1 0 0
+warehouse_object_instance iteminst_72 item_earth_book 135 135 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_70 item_shovel 315 315 0 0 0 0 1 1 1 0 0 0 0
 warehouse_object_instance iteminst_69 item_lantern 225 225 0 0 0 0 1 1 1 0 0 0 0
 warehouse_object_instance iteminst_71 item_lantern 225 225 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_98 item_magic_lantern 345 345 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_88 item_orbit_stake 300 300 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_110 item_orbit_stake 300 300 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_127 item_orbit_stake 300 300 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_72 item_earth_book 135 135 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_103 item_earth_book 135 135 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_105 item_earth_book 135 135 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_4 item_iron_sword 225 225 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_145 item_ice_sword 285 285 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_62 item_silver_sword 270 270 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_73 item_silver_sword 270 270 1 2 0 0 1 1 1 0 1 0 0
-warehouse_object_instance iteminst_106 item_silver_sword 270 270 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_132 item_silver_sword 270 270 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_89 item_flameblade_sword 300 300 1 3 0 0 1 1 1 0 1 0 0
-warehouse_object_instance iteminst_114 item_great_sword 360 360 3 8 0 0 1 1 1 0 3 0 0
-warehouse_object_instance iteminst_129 item_great_sword 360 360 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_136 item_great_sword 360 360 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_109 item_spear 240 240 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_43 item_hammer 285 285 2 5 0 0 1 1 1 0 2 0 0
-warehouse_object_instance iteminst_52 item_hammer 285 285 1 2 0 0 1 1 1 0 1 0 0
-warehouse_object_instance iteminst_93 item_spiked_bat 285 285 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_101 item_spiked_bat 285 285 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_24 item_hard_bread 45 45 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_80 item_spike_shield 315 315 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_104 item_spike_shield 315 315 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_51 treasure_asakou_14 255 255 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_78 treasure_asakou_14 255 255 0 0 0 0 1 1 1 0 0 0 0
 warehouse_object_instance iteminst_63 treasure_asakou_28 195 195 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_78 treasure_asakou_14 255 255 0 0 0 0 1 1 1 0 0 0 0
 warehouse_object_instance iteminst_64 treasure_haiki_33 165 165 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_96 treasure_haiki_33 165 165 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_89 item_flameblade_sword 300 300 1 3 0 0 1 1 1 0 1 0 0
+warehouse_object_instance iteminst_86 item_drill 435 435 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_80 item_spike_shield 315 315 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_91 treasure_junk_game_console 135 135 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_88 item_orbit_stake 300 300 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_92 item_drill 435 435 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_93 item_spiked_bat 285 285 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_98 item_magic_lantern 345 345 0 0 0 0 1 1 1 0 0 0 0
 warehouse_object_instance iteminst_94 treasure_haiki_37 165 165 0 0 0 0 1 1 1 0 0 0 0
 warehouse_object_instance iteminst_87 treasure_haiki_40 135 135 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_96 treasure_haiki_33 165 165 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_99 item_steel_pickaxe 540 540 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_101 item_spiked_bat 285 285 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_103 item_earth_book 135 135 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_114 item_great_sword 360 360 3 8 0 0 1 1 1 0 3 0 0
+warehouse_object_instance iteminst_106 item_silver_sword 270 270 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_109 item_spear 240 240 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_105 item_earth_book 135 135 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_104 item_spike_shield 315 315 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_55 item_staff_scrap_iron 525 525 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_102 treasure_junk_wardrobe 315 315 0 0 0 0 1 1 1 0 0 0 0
 warehouse_object_instance iteminst_100 treasure_haiki_44 240 240 0 0 0 0 1 1 1 0 0 0 0
 warehouse_object_instance iteminst_112 treasure_haiki_44 240 240 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_119 treasure_haiki_46 150 150 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_102 treasure_junk_wardrobe 315 315 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_133 treasure_junk_washing_machine 315 315 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_117 treasure_junk_fan 180 180 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_126 treasure_junk_hair_dryer 135 135 0 0 0 0 1 1 1 0 0 0 0
-warehouse_object_instance iteminst_91 treasure_junk_game_console 135 135 0 0 0 0 1 1 1 0 0 0 0
 warehouse_object_instance iteminst_113 treasure_junk_game_console 135 135 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_110 item_orbit_stake 300 300 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_116 item_great_torch 315 315 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_118 item_steel_pickaxe 540 540 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_120 item_steel_pickaxe 540 540 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_122 item_steel_pickaxe 540 540 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_129 item_great_sword 360 360 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_132 item_silver_sword 270 270 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_131 item_pickaxe 435 435 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_125 item_shovel 315 315 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_119 treasure_haiki_46 150 150 0 0 0 0 1 1 1 0 0 0 0
 warehouse_object_instance iteminst_128 treasure_junk_game_console 135 135 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_117 treasure_junk_fan 180 180 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_127 item_orbit_stake 300 300 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_126 treasure_junk_hair_dryer 135 135 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_134 item_shovel 315 315 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_136 item_great_sword 360 360 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_138 item_drill 435 435 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_140 item_steel_pickaxe 540 540 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_141 item_steel_drill 450 450 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_142 item_silver_shovel 450 450 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_145 item_ice_sword 285 285 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_147 item_shovel 315 315 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_133 treasure_junk_washing_machine 315 315 0 0 0 0 1 1 1 0 0 0 0
+warehouse_object_instance iteminst_111 item_staff_scrap_iron 525 525 0 0 0 0 1 1 1 0 0 0 0
 material old_wood_building_material 1
-material enhancement_ore 223
+material enhancement_ore 255
 material moon_fragment 9
 material mana_drop 4
 ring 4 item_torch 4 fire 0 135 135 0.7 11 0.26 4.62512 iteminst_21 0 0 0 0 1 1 1 0 0 0 0 0
@@ -17086,16 +17078,16 @@ ring 4 item_shovel 6 blunt 13 315 315 1.2 11 0.26 4.18879 iteminst_27 1 0 1 0 1 
 ring 4 item_lantern 4 fire 0 225 225 1 11 0.26 5.41052 iteminst_30 0 0 0 0 1 1 1 0 0 0 0 0
 ring 4 item_wind_book 11 wind 0 96 96 0.5 11 0.26 4.97419 iteminst_32 0 0 0 0 1 1 1 0 0 0 0 0
 ring 4 item_small_drill 8 pierce 19 240 240 1.6 11 0.26 0.698132 iteminst_26 1 0 1 0 1 1 1 0 0 0 1 0
-ring 4 item_forged_shovel 9 blunt 18 390 390 1.25 11 0.26 3.40339 iteminst_33 1 0 2 0 1 1 1 0 0 0 1 0
+ring 4 item_forged_shovel 9 blunt 16 390 390 1.25 11 0.26 3.40339 iteminst_33 0 0 0 0 1 1 1 0 0 0 0 0
 ring 4 treasure_asakou_30 2 magic 1 33 33 0.18 11 0.26 0.261799 iteminst_36 0 0 0 0 1 1 1 0 0 0 0 0
-ring 4 item_spear 35 pierce 0 240 240 1.8 11 0.26 1.8326 iteminst_44 4 11 0 0 1 1 1 0 0 4 0 0
+ring 4 item_spear 26 pierce 0 240 240 1.8 11 0.26 1.8326 iteminst_44 1 2 0 0 1 1 1 0 0 1 0 0
 ring 4 item_great_torch 6 fire 0 315 315 0.85 11 0.26 6.19592 iteminst_54 0 0 0 0 1 1 1 0 0 0 0 0
 ring 4 item_wind_book 11 wind 0 96 96 0.5 11 0.26 1.48353 iteminst_68 0 0 0 0 1 1 1 0 0 0 0 0
 ring 4 treasure_haiki_46 8 slash 2 150 150 0.45 11 0.26 1.0472 iteminst_107 0 0 0 0 1 1 1 0 0 0 0 0
 ring 4 treasure_haiki_52 3 blunt 1 36 36 0.18 11 0.26 2.26893 iteminst_146 0 0 0 0 1 1 1 0 0 0 0 0
 ring 4 treasure_haiki_57 5 fire 4 180 180 0.32 11 0.26 3.83972 iteminst_152 0 0 0 0 1 1 0 0 0 0 0 0
 ring 4 treasure_haiki_33 4 thunder 4 165 165 0.45 11 0.26 3.05433 iteminst_148 0 0 0 0 1 1 0 0 0 0 0 0
-ring 4 item_pickaxe 21 pierce 31 435 435 1.8 11 0.26 0 iteminst_40 10 11 11 0 1 1 1 0 1 5 5 0
+ring 4 item_pickaxe 11 pierce 31 435 435 1.8 11 0.26 0 iteminst_40 6 1 11 0 1 1 1 0 1 1 5 0
 ring 4 item_torch 4 fire 0 135 135 0.7 11 0.26 4.45059 iteminst_2 0 0 0 0 1 1 1 0 1 0 0 0
 ring 4 item_shovel 6 blunt 13 315 315 1.2 11 0.26 1.74533 iteminst_9 1 0 1 0 1 1 1 0 1 0 1 0
 ring 4 item_shovel 6 blunt 12 315 315 1.2 11 0.26 0.872665 iteminst_35 0 0 0 0 1 1 1 0 1 0 0 0

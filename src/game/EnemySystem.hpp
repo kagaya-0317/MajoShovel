@@ -157,6 +157,7 @@ struct EnemyMagicHitSpec {
     Vec2 position{};
     float radius = 0.0f;
     int damage = 0;
+    double ringItemDamageMultiplier = 1.0;
     std::string damageType;
     std::string effectId;
     std::string statusEffect;
@@ -342,7 +343,8 @@ public:
         int damage,
         std::string_view damageType,
         std::string_view effectId,
-        SpellRingSystem& spellRing);
+        SpellRingSystem& spellRing,
+        double ringItemDamageMultiplier = 1.0);
     int applyColdAirAura(
         Vec2 position,
         float radius,

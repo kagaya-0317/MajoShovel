@@ -24,14 +24,11 @@ enum class MagicElement {
     Earth,
 };
 
-enum class MagicSoundKind {
-    Cast,
-    Impact,
-};
-
 struct MagicSoundEvent {
-    MagicSoundKind kind = MagicSoundKind::Cast;
+    std::string_view cueId{};
     Vec2 position{};
+    float volumeScale = 1.0f;
+    float pitchScale = 1.0f;
 };
 
 std::string_view magicElementDamageType(MagicElement element);
@@ -117,9 +114,9 @@ private:
     void castThunder(Vec2 origin, int power);
     void castWind(Vec2 origin, Vec2 direction, int power);
     void castEarth(Vec2 origin, Vec2 direction, int power);
-    void updateProjectiles(EnemySystem& enemies, SpellRingSystem& spellRing, TileMap& map, float dt);
-    void updateGroundAreas(EnemySystem& enemies, SpellRingSystem& spellRing, float dt);
-    void updateThunder(EnemySystem& enemies, SpellRingSystem& spellRing);
+    void updateProjectiles(EnemySystem& enemies, SpellRingSystem& spellRing, TileMap& map, float dt, double ringItemDamageMultiplier);
+    void updateGroundAreas(EnemySystem& enemies, SpellRingSystem& spellRing, float dt, double ringItemDamageMultiplier);
+    void updateThunder(EnemySystem& enemies, SpellRingSystem& spellRing, double ringItemDamageMultiplier);
     void updateTransientLights(float dt);
     void updateItemAuras(SpellRingSystem& spellRing, float dt);
     void stopOrphanedAuraFxEmitters(const std::vector<SpellRingItem*>& runtimeItems);
@@ -127,8 +124,14 @@ private:
     void stopAuraFxEmitter(std::uint32_t& emitterId);
     std::uint32_t startProjectileFxEmitter(const MagicProjectile& projectile);
     void updateProjectileFx(MagicProjectile& projectile);
-    void playProjectileImpactFx(const MagicProjectile& projectile);
+    void emitProjectileImpact(const MagicProjectile& projectile);
     void stopProjectileFx(MagicProjectile& projectile);
+    void queueCastSounds(MagicElement element, Vec2 position);
+    void queueImpactSound(
+        MagicElement element,
+        Vec2 position,
+        float volumeScale = 1.0f,
+        float pitchScale = 1.0f);
     void spawnFirePatch(Vec2 position, float radius, int damage);
     void addTransientLight(Vec2 position, float radius, float lifetime);
     void addProjectile(MagicProjectile projectile);
