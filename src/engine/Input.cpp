@@ -378,6 +378,11 @@ void Input::update(const Renderer* renderer)
         : Vec2{mx, my};
 }
 
+bool Input::ctrlHeld() const
+{
+    return (SDL_GetModState() & SDL_KMOD_CTRL) != 0;
+}
+
 void Input::applyAutomation(const InputAutomationFrame& frame)
 {
     if (!frame.active) {

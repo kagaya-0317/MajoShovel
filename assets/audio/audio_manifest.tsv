@@ -1,6 +1,7 @@
-﻿id	type	path	volume	loop	cooldown_ms	pitch	display_name	loop_start_frame	loop_end_frame	loop_crossfade_frames
+﻿id	type	path	volume	loop	cooldown_ms	pitch	display_name	loop_start_frame	loop_end_frame	loop_crossfade_frames	artist_name
 bgm.title	bgm	bgm/zz_tmp_title_placeholder.wav	0.44	true	0	0	タイトルBGM	0	0	0
 bgm.base	bgm	bgm/first_village.wav	1	true	0	0	拠点BGM	0	0	48000
+bgm.dungeon.tutorial	bgm	bgm/small_cave.wav	1	true	0	0	チュートリアルダンジョンBGM	0	0	0
 bgm.dungeon.1	bgm	bgm/small_cave.wav	1	true	0	0	ダンジョン1 BGM	0	0	0
 bgm.dungeon.2	bgm	bgm/zz_tmp_dungeon_placeholder.wav	0.42	true	0	0	ダンジョン2 BGM	0	0	0
 bgm.dungeon.3	bgm	bgm/zz_tmp_dungeon_placeholder.wav	0.42	true	0	0	ダンジョン3 BGM	0	0	0
@@ -8,26 +9,26 @@ bgm.dungeon.4	bgm	bgm/zz_tmp_dungeon_placeholder.wav	0.42	true	0	0	ダンジョ�
 bgm.boss	bgm	bgm/zz_tmp_boss_placeholder.wav	0.48	true	0	0	ボス戦BGM	0	0	0
 bgm.boss.final	bgm	bgm/zz_tmp_boss_placeholder.wav	0.48	true	0	0	ラスボス戦BGM	0	0	0
 bgm.ending	bgm	bgm/zz_tmp_title_placeholder.wav	0.44	true	0	0	エンディング用BGM	0	0	0
-bgm.asset.first_village	bgm	bgm/first_village.wav	0.42	true	0	0	First village	0	0	48000
-bgm.asset.a_letter	bgm	bgm/a_letter.wav	0.42	true	0	0	A letter	0	0	0
-bgm.asset.cunning_monsters	bgm	bgm/cunning_monsters.wav	0.42	true	0	0	Cunning Monsters	360000	4768200	960
-bgm.asset.dot_snow	bgm	bgm/dot_snow.wav	0.42	true	0	0	Dot Snow	0	0	0
-bgm.asset.god_only_knows	bgm	bgm/god_only_knows.wav	0.42	true	0	0	God only knows	0	0	0
-bgm.asset.grumpy_witch	bgm	bgm/grumpy_witch.wav	0.42	true	0	0	Grumpy Witch	0	5703744	0
-bgm.asset.immortal_hotel	bgm	bgm/immortal_hotel.wav	0.42	true	0	0	Immortal Hotel	138720	9333840	24000
-bgm.asset.in_the_ruins	bgm	bgm/in_the_ruins.wav	0.42	true	0	0	In the Ruins	0	0	0
-bgm.asset.legacy_battle	bgm	bgm/legacy_battle.wav	0.42	true	0	0	Legacy Battle	0	3054528	0
-bgm.asset.old_blood	bgm	bgm/old_blood.wav	0.42	true	0	0	Old Blood	762720	6583584	0
-bgm.asset.pleasurable_grave	bgm	bgm/pleasurable_grave.wav	0.42	true	0	0	Pleasurable Grave	1559040	4779408	0
-bgm.asset.puppet_skeleton	bgm	bgm/puppet_skeleton.wav	0.42	true	0	0	Puppet Skeleton	0	5020320	960
-bgm.asset.small_cave	bgm	bgm/small_cave.wav	0.42	true	0	0	Small Cave	0	0	0
-bgm.asset.vivid_spooky	bgm	bgm/vivid_spooky.wav	0.42	true	0	0	Vivid Spooky	0	5724000	960
-bgm.asset.wave_scope	bgm	bgm/wave_scope.wav	0.42	true	0	0	WaveScope	0	5463840	4800
-bgm.asset.devil_ghost_celesta	bgm	bgm/devil_ghost_celesta.wav	0.42	true	0	0	あくまおばけのチェレスタ	0	5036976	0
-bgm.asset.devil_organ	bgm	bgm/devil_organ.wav	0.42	true	0	0	あくまのオルガン	0	5481984	0
-bgm.asset.devil_march	bgm	bgm/devil_march.wav	0.42	true	0	0	あくまの行進	0	5233536	0
-bgm.asset.moonlight_butterfly	bgm	bgm/moonlight_butterfly.wav	0.42	true	0	0	月光蝶	0	0	0
-bgm.asset.purgatory_road	bgm	bgm/purgatory_road.wav	0.42	true	0	0	煉獄道	0	4289328	0
+bgm.asset.first_village	bgm	bgm/first_village.wav	0.42	true	0	0	First village	0	0	48000	こおろぎ
+bgm.asset.a_letter	bgm	bgm/a_letter.wav	0.42	true	0	0	A letter	0	0	0	こおろぎ
+bgm.asset.cunning_monsters	bgm	bgm/cunning_monsters.wav	0.42	true	0	0	Cunning Monsters	360000	4768200	960	こおろぎ
+bgm.asset.dot_snow	bgm	bgm/dot_snow.wav	0.42	true	0	0	Dot Snow	0	0	0	こおろぎ
+bgm.asset.god_only_knows	bgm	bgm/god_only_knows.wav	0.42	true	0	0	God only knows	0	0	0	こおろぎ
+bgm.asset.grumpy_witch	bgm	bgm/grumpy_witch.wav	0.42	true	0	0	Grumpy Witch	0	5703744	0	こおろぎ
+bgm.asset.immortal_hotel	bgm	bgm/immortal_hotel.wav	0.42	true	0	0	Immortal Hotel	138720	9333840	24000	こおろぎ
+bgm.asset.in_the_ruins	bgm	bgm/in_the_ruins.wav	0.42	true	0	0	In the Ruins	0	0	0	こおろぎ
+bgm.asset.legacy_battle	bgm	bgm/legacy_battle.wav	0.42	true	0	0	Legacy Battle	0	3054528	0	こおろぎ
+bgm.asset.old_blood	bgm	bgm/old_blood.wav	0.42	true	0	0	Old Blood	762720	6583584	0	こおろぎ
+bgm.asset.pleasurable_grave	bgm	bgm/pleasurable_grave.wav	0.42	true	0	0	Pleasurable Grave	1559040	4779408	0	こおろぎ
+bgm.asset.puppet_skeleton	bgm	bgm/puppet_skeleton.wav	0.42	true	0	0	Puppet Skeleton	0	5020320	960	こおろぎ
+bgm.asset.small_cave	bgm	bgm/small_cave.wav	0.42	true	0	0	Small Cave	0	0	0	こおろぎ
+bgm.asset.vivid_spooky	bgm	bgm/vivid_spooky.wav	0.42	true	0	0	Vivid Spooky	0	5724000	960	こおろぎ
+bgm.asset.wave_scope	bgm	bgm/wave_scope.wav	0.42	true	0	0	WaveScope	0	5463840	4800	こおろぎ
+bgm.asset.devil_ghost_celesta	bgm	bgm/devil_ghost_celesta.wav	0.42	true	0	0	あくまおばけのチェレスタ	0	5036976	0	こおろぎ
+bgm.asset.devil_organ	bgm	bgm/devil_organ.wav	0.42	true	0	0	あくまのオルガン	0	5481984	0	こおろぎ
+bgm.asset.devil_march	bgm	bgm/devil_march.wav	0.42	true	0	0	あくまの行進	0	5233536	0	こおろぎ
+bgm.asset.moonlight_butterfly	bgm	bgm/moonlight_butterfly.wav	0.42	true	0	0	月光蝶	0	0	0	こおろぎ
+bgm.asset.purgatory_road	bgm	bgm/purgatory_road.wav	0.42	true	0	0	煉獄道	0	4289328	0	こおろぎ
 se.ui.confirm	se	se/0_Confirm1.wav	1	false	60	32.193	UI 決定	0	0	0
 se.ui.cancel	se	se/0_Cancel1.wav	1	false	60	32.193	UI キャンセル	0	0	0
 se.ui.error	se	se/0_Beep.wav	1	false	80	26.303	UI エラー	0	0	0
@@ -162,14 +163,14 @@ se.ring.slow_bite	se	se/zz_tmp_ring_slow_bite_placeholder.wav	0.72	false	160	0	�
 se.magic.cast	se	se/magic5.wav	0.31	false	90	100	魔法発動	0	0	0
 se.magic.fire.cast	se	se/0_Fire.wav	0.48	false	90	72.247	魔法 火 発動	0	0	0
 se.magic.fire.impact	se	se/0_Explosion1.wav	0.42	false	90	88.753	魔法 火 着弾	0	0	0
-se.magic.ice.cast	se	se/0_Ice1.wav	0.48	false	90	72.247	魔法 氷 発動	0	0	0
-se.magic.ice.impact	se	se/0_Ice2.wav	0.48	false	80	72.247	魔法 氷 着弾	0	0	0
-se.magic.thunder.cast	se	se/0_Thunder1.wav	0.52	false	90	72.247	魔法 雷 発動	0	0	0
-se.magic.thunder.impact	se	se/0_Thunder3.wav	0.58	false	110	63.227	魔法 雷 着弾	0	0	0
-se.magic.wind.cast	se	se/0_Wind.wav	0.52	false	90	72.247	魔法 風 発動	0	0	0
-se.magic.wind.impact	se	se/wind.wav	0.44	false	90	7.039	魔法 風 着弾	0	0	0
-se.magic.earth.cast	se	se/0_RockCrack.wav	0.44	false	90	72.247	魔法 土 発動	0	0	0
-se.magic.earth.impact	se	se/0_RockSplit.wav	0.46	false	90	72.247	魔法 土 着弾	0	0	0
+se.magic.ice.cast	se	se/0_Swing2.wav	0.3	false	80	48.543	魔法 氷 発動	0	0	0
+se.magic.ice.impact	se	se/0_Ice2.wav	0.4	false	80	100	魔法 氷 着弾	0	0	0
+se.magic.thunder.cast	se	se/0_Thunder1.wav	0	false	90	72.247	魔法 雷 発動	0	0	0
+se.magic.thunder.impact	se	se/0_Thunder3.wav	0.58	false	110	84.8	魔法 雷 着弾	0	0	0
+se.magic.wind.cast	se	se/wind.wav	0.44	false	90	7.039	魔法 風 発動	0	0	0
+se.magic.wind.impact	se	se/0_Shot.wav	0.25	false	90	-51.457	魔法 風 着弾	0	0	0
+se.magic.earth.cast	se	se/0_RockSplit.wav	0.35	false	90	88.753	魔法 土 発動	0	0	0
+se.magic.earth.impact	se	se/0_Cape.wav	0.7	false	90	0	魔法 土 着弾	0	0	0
 se.capture.throw	se	se/zz_tmp_capture_throw_placeholder.wav	0.66	false	120	0	捕獲投げ	0	0	0
 se.capture.success	se	se/zz_tmp_capture_success_placeholder.wav	0.78	false	220	0	捕獲成功	0	0	0
 se.capture.fail	se	se/0_KickWhoosh1.wav	0.68	false	160	0	捕獲失敗	0	0	0

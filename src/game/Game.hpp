@@ -251,6 +251,7 @@ struct EnemyPlacementEditSnapshot {
 struct AudioCueEditEntry {
     std::string id;
     std::string displayName;
+    std::string artistName;
     std::string type;
     std::string path;
     float volume = 1.0f;
@@ -472,6 +473,22 @@ private:
         float remainingSeconds = 0.0f;
         float resumeFadeSeconds = 0.25f;
         std::string resumeBgmCue;
+        std::string suspendedBgmCue;
+    };
+
+    struct BgmNowPlayingNoticeState {
+        static constexpr float EnterSeconds = 0.45f;
+        static constexpr float ExitStartSeconds = 4.30f;
+        static constexpr float LifetimeSeconds = 5.00f;
+
+        std::string title;
+        std::string artist;
+        float elapsedSeconds = 0.0f;
+
+        [[nodiscard]] bool active() const
+        {
+            return !title.empty() && elapsedSeconds < LifetimeSeconds;
+        }
     };
 
     struct LevelUpPresentationState {
@@ -1151,6 +1168,13 @@ private:
         WarpPoint,
         Home,
     };
+    struct ScreenTransitionBgmRequest {
+        std::string cueId;
+        float fadeSeconds = 0.0f;
+        bool restart = false;
+
+        [[nodiscard]] bool pending() const { return !cueId.empty(); }
+    };
     struct ScreenTransitionState {
         ScreenTransitionTarget target = ScreenTransitionTarget::None;
         ScreenTransitionPhase phase = ScreenTransitionPhase::Idle;
@@ -1168,6 +1192,7 @@ private:
         Vec2 targetBasePlayerPosition{};
         Vec2 targetBasePlayerFacing{0.0f, 1.0f};
         std::string targetBaseStatus;
+        ScreenTransitionBgmRequest pendingBgm;
 
         bool closeBaseUi = false;
 
@@ -1298,6 +1323,9 @@ private:
     std::string worldBuildStatusText() const;
     void playAudioBgm(std::string_view id, float fadeSeconds = 0.0f, bool restart = false);
     void playCurrentDungeonBgm(float fadeSeconds = 0.0f, bool restart = false);
+    void requestSceneBgm(std::string_view id, float fadeSeconds = 0.0f, bool restart = false);
+    void requestCurrentDungeonSceneBgm(float fadeSeconds = 0.0f, bool restart = false);
+    void flushPendingScreenTransitionBgm();
     void stopAudioBgm(float fadeSeconds = 0.0f);
     void playAudioSe(std::string_view id, float volumeScale = 1.0f, float pitchScale = 1.0f);
     void playAudioSeAt(std::string_view id, Vec2 worldPosition, float volumeScale = 1.0f, float pitchScale = 1.0f);
@@ -1310,6 +1338,8 @@ private:
         float volumeScale = 1.0f,
         float pitchScale = 1.0f);
     void updateAudioJingle(float dt);
+    void showBgmNowPlayingNotice(std::string title, std::string artist);
+    void updateBgmNowPlayingNotice(float dt);
     void playUiSoundEvents(const UiContext& ui);
     void enterBase();
     void placeBasePlayerAtMineExitReturnPoint();
@@ -1402,13 +1432,13 @@ private:
     void syncWarpStateForCurrentStage();
     void applyDebugStageUnlockState(int unlockedStoryStages);
     void resolveCurrentStageDefinition();
-    void refreshOrbitEffects();
+    void refreshOrbitEffects(std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr);
     void updatePlayerRegen(float dt, std::vector<EffectDiscoveryEvent>& discoveryEvents);
     DungeonGenerationContext makeDungeonGenerationContext() const;
     void generateDungeonLayoutForRun();
     struct CaptureAbsorbAnimation;
-    void updateCapturedProjectileBehaviors(float dt);
-    void updateCapturedUtilityBehaviors(float dt);
+    void updateCapturedProjectileBehaviors(float dt, std::vector<EffectDiscoveryEvent>* discoveryEvents);
+    void updateCapturedUtilityBehaviors(float dt, std::vector<EffectDiscoveryEvent>* discoveryEvents);
     void updateWetGroundFromStatus();
     void updateAmbientParticleEffects(float dt);
     bool handleCaptureResult(const CaptureResult& capture);
@@ -2451,6 +2481,7 @@ private:
     void renderEndingKamishibai(Renderer& renderer) const;
     void renderTitleScreen(Renderer& renderer) const;
     void renderScreenTransitionOverlay(Renderer& renderer);
+    void renderBgmNowPlayingNotice(Renderer& renderer) const;
     void renderFinalScreenOverlays(Renderer& renderer);
     void renderDevBuildNotice(Renderer& renderer) const;
     bool basePanelUiActive() const;
@@ -3177,6 +3208,7 @@ private:
     AudioEngine* audio_ = nullptr;
     std::string activeAudioBgmCue_;
     AudioJingleState audioJingle_{};
+    BgmNowPlayingNoticeState bgmNowPlayingNotice_{};
     struct RingStatusHudAnimation {
         float previousCooldownRatio = 0.0f;
         float readyHoldTimer = 0.0f;
@@ -3187,6 +3219,7 @@ private:
     std::array<RingStatusHudAnimation, SpellRingCount> ringStatusHudAnimations_{};
     float ringTrailEffectTimer_ = 0.0f;
     float ambientParticleTimer_ = 0.0f;
+    float warpPointPulseTimer_ = 0.0f;
     float reloadNoticeTimer_ = 0.0f;
     std::string reloadNotice_;
 };

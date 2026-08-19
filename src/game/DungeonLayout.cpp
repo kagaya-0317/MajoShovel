@@ -17,6 +17,9 @@ constexpr float MainPathTerminalUpFraction = 0.16f;
 constexpr float MainPathTerminalUpReserveTiles = 24.0f;
 constexpr int RoguelikeSpecialRoomMinCount = 7;
 constexpr float RoguelikeEndgameSpecialRoomMaxProgress = 0.80f;
+constexpr float DungeonBoundaryMarginTiles = 80.0f;
+constexpr float DungeonBoundaryEdgeVariationTiles = 7.0f;
+constexpr float DungeonBoundaryNoisePeriodTiles = 12.0f;
 
 float dot(Vec2 a, Vec2 b)
 {
@@ -275,6 +278,76 @@ void normalizePathRouteLength(std::vector<Vec2>& points, float targetLength)
     }
 }
 
+void configureDungeonBoundary(DungeonLayout& layout)
+{
+    Vec2 minPoint = tileToVec(layout.startTile);
+    Vec2 maxPoint = minPoint;
+    const auto includePoint = [&](Vec2 point, float radius = 0.0f) {
+        minPoint.x = std::min(minPoint.x, point.x - radius);
+        minPoint.y = std::min(minPoint.y, point.y - radius);
+        maxPoint.x = std::max(maxPoint.x, point.x + radius);
+        maxPoint.y = std::max(maxPoint.y, point.y + radius);
+    };
+
+    includePoint(tileToVec(layout.goalTile));
+    for (Vec2 point : layout.mainPathPoints) {
+        includePoint(point);
+    }
+    for (const DungeonPath& branch : layout.branchPathPoints) {
+        for (Vec2 point : branch.points) {
+            includePoint(point);
+        }
+    }
+    for (Vec2 point : layout.warpPointAnchors) {
+        includePoint(point);
+    }
+    for (const SpecialRoomAnchor& room : layout.specialRoomAnchors) {
+        includePoint(room.center, room.radius);
+    }
+
+    layout.boundary = DungeonBoundary{
+        .enabled = true,
+        .minTile = {
+            static_cast<int>(std::floor(minPoint.x - DungeonBoundaryMarginTiles)),
+            static_cast<int>(std::floor(minPoint.y - DungeonBoundaryMarginTiles)),
+        },
+        .maxTile = {
+            static_cast<int>(std::ceil(maxPoint.x + DungeonBoundaryMarginTiles)),
+            static_cast<int>(std::ceil(maxPoint.y + DungeonBoundaryMarginTiles)),
+        },
+        .edgeVariationTiles = DungeonBoundaryEdgeVariationTiles,
+    };
+}
+
+std::uint32_t boundaryNoiseHash(std::uint32_t value)
+{
+    value ^= value >> 16;
+    value *= 0x7FEB352Du;
+    value ^= value >> 15;
+    value *= 0x846CA68Bu;
+    value ^= value >> 16;
+    return value;
+}
+
+float boundaryNoiseLattice(int coordinate, std::uint32_t seed, std::uint32_t salt)
+{
+    const std::uint32_t coordinateBits = static_cast<std::uint32_t>(coordinate);
+    const std::uint32_t hash = boundaryNoiseHash(
+        coordinateBits ^ seed ^ salt ^ (coordinateBits * 0x9E3779B9u));
+    return static_cast<float>(hash & 0x00FFFFFFu) / static_cast<float>(0x007FFFFFu) - 1.0f;
+}
+
+float smoothBoundaryNoise(int coordinate, std::uint32_t seed, std::uint32_t salt)
+{
+    const float samplePosition = static_cast<float>(coordinate) / DungeonBoundaryNoisePeriodTiles;
+    const int lattice = static_cast<int>(std::floor(samplePosition));
+    const float fraction = samplePosition - static_cast<float>(lattice);
+    const float smoothFraction = fraction * fraction * (3.0f - 2.0f * fraction);
+    const float first = boundaryNoiseLattice(lattice, seed, salt);
+    const float second = boundaryNoiseLattice(lattice + 1, seed, salt);
+    return first + (second - first) * smoothFraction;
+}
+
 DungeonLayout makeIntroTutorialLayout(const DungeonGenerationContext& context)
 {
     DungeonLayout layout;
@@ -306,6 +379,7 @@ DungeonLayout makeIntroTutorialLayout(const DungeonGenerationContext& context)
         {SpecialRoomType::EnemyRoom, {29.0f, 0.0f}, 5.6f},
         {SpecialRoomType::EnemyRoom, {54.0f, 2.0f}, 5.4f},
     };
+    configureDungeonBoundary(layout);
     return layout;
 }
 
@@ -499,7 +573,26 @@ DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context)
         });
     }
 
+    configureDungeonBoundary(layout);
     return layout;
+}
+
+bool dungeonBoundaryContainsTile(const DungeonLayout& layout, DungeonTile tile)
+{
+    if (!layout.boundary.enabled) {
+        return true;
+    }
+
+    const float variation = std::max(0.0f, layout.boundary.edgeVariationTiles);
+    const int left = layout.boundary.minTile.x + static_cast<int>(std::round(
+        smoothBoundaryNoise(tile.y, layout.seed, 0xA341316Cu) * variation));
+    const int right = layout.boundary.maxTile.x + static_cast<int>(std::round(
+        smoothBoundaryNoise(tile.y, layout.seed, 0xC8013EA4u) * variation));
+    const int top = layout.boundary.minTile.y + static_cast<int>(std::round(
+        smoothBoundaryNoise(tile.x, layout.seed, 0xAD90777Du) * variation));
+    const int bottom = layout.boundary.maxTile.y + static_cast<int>(std::round(
+        smoothBoundaryNoise(tile.x, layout.seed, 0x7E95761Eu) * variation));
+    return tile.x >= left && tile.x <= right && tile.y >= top && tile.y <= bottom;
 }
 
 DungeonLayoutMetrics calculateDungeonLayoutMetrics(const DungeonLayout& layout, Vec2 tilePosition)

@@ -2,6 +2,7 @@
 
 #include "data/GameBalance.hpp"
 #include "engine/Math.hpp"
+#include "game/ActionFlash.hpp"
 #include "game/ItemModel.hpp"
 #include <array>
 #include <cstdint>
@@ -17,8 +18,6 @@ enum class SpellRingItemType {
     Torch = 1,
     Object = 4
 };
-
-constexpr float SpellRingItemActionFlashSeconds = 0.10f;
 
 struct RingItemEnemyHitTime {
     int enemyId = 0;
@@ -49,7 +48,7 @@ struct SpellRingItem {
     float weight = 1.0f;
     float hitInterval = 0.22f;
     float lastTerrainHitTime = -100.0f;
-    float actionFlashTimer = 0.0f;
+    ActionFlashState actionFlash;
     int lastDigTileX = 2147483647;
     int lastDigTileY = 2147483647;
     std::vector<std::pair<int, int>> lastDigTiles;

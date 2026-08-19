@@ -138,7 +138,7 @@ void startBreakCountdownExplosion(SpellRingItem& item)
     item.breakExplosion = state;
     item.capturedExplodeCharge = 0;
     item.capturedExplodeSleepTimer = 0.0f;
-    item.actionFlashTimer = SpellRingItemActionFlashSeconds;
+    triggerActionFlash(item.actionFlash);
 }
 
 float dotVec2(Vec2 a, Vec2 b)
@@ -1373,6 +1373,7 @@ void SpellRingSystem::initialize(const RuntimeBalance& balance)
     throwingRingIndex_ = -1;
     itemBreakEvents_.clear();
     motionEvents_.clear();
+    capturedBehaviorActivationEvents_.clear();
 }
 
 float SpellRingSystem::levelScaleMultiplierForPoints(int points)
@@ -1512,6 +1513,11 @@ void SpellRingSystem::refreshItemWorldPositions(float dt, const RuntimeBalance& 
                     if (item.capturedBehaviorTimer >= jumpInterval) {
                         item.capturedBehaviorTimer = 0.0f;
                         item.capturedJumpTimer = jumpDuration;
+                        capturedBehaviorActivationEvents_.push_back(CapturedBehaviorActivationEvent{
+                            .objectId = item.objectId,
+                            .behaviorId = "jump_outward",
+                            .position = item.worldPosition,
+                        });
                     }
                 }
                 if (item.capturedJumpTimer > 0.0f) {
@@ -2049,6 +2055,7 @@ void SpellRingSystem::resetRuntimeStateAtPlayer(const Player& player, const Runt
     enemyOrbitSpeedDebuffMultiplier_ = 1.0f;
     enemyOrbitSpeedDebuffTimer_ = 0.0f;
     motionEvents_.clear();
+    capturedBehaviorActivationEvents_.clear();
     clearActionFlashTimers();
     for (auto& ringItems : itemsByRing_) {
         for (SpellRingItem& item : ringItems) {
@@ -2069,7 +2076,7 @@ void SpellRingSystem::clearActionFlashTimers()
 {
     for (auto& ringItems : itemsByRing_) {
         for (SpellRingItem& item : ringItems) {
-            item.actionFlashTimer = 0.0f;
+            clearActionFlash(item.actionFlash);
         }
     }
 }
@@ -2106,9 +2113,7 @@ void SpellRingSystem::updateActionFlashTimers(float dt)
 
     for (auto& ringItems : itemsByRing_) {
         for (SpellRingItem& item : ringItems) {
-            if (item.actionFlashTimer > 0.0f) {
-                item.actionFlashTimer = std::max(0.0f, item.actionFlashTimer - safeDt);
-            }
+            updateActionFlash(item.actionFlash, safeDt);
         }
     }
 }
@@ -2442,9 +2447,23 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
         const float stackedRate = std::min(1.0f, 0.65f + 0.12f * static_cast<float>(periodicHealCount));
         capturedHealTimer_ -= safeDt * stackedRate;
         if (capturedHealTimer_ <= 0.0f) {
+            bool healed = false;
             if (player.hp > 0 && player.hp < player.maxHp) {
+                const int previousHp = player.hp;
                 const int pulseHeal = std::clamp(static_cast<int>(std::round(std::max(1.0f, periodicHealAmountAccumulator))), 1, CapturedPeriodicHealMaxPerPulse);
                 player.hp = std::min(player.maxHp, player.hp + pulseHeal);
+                healed = player.hp > previousHp;
+            }
+            if (healed) {
+                for (const SpellRingItem* item : allItems) {
+                    if (item != nullptr && !item->broken() && item->hasCapturedBehavior("periodic_heal")) {
+                        capturedBehaviorActivationEvents_.push_back(CapturedBehaviorActivationEvent{
+                            .objectId = item->objectId,
+                            .behaviorId = "periodic_heal",
+                            .position = item->worldPosition,
+                        });
+                    }
+                }
             }
             capturedHealTimer_ = periodicHealInterval;
         }
@@ -2895,7 +2914,7 @@ int SpellRingSystem::applyExplosionDamageToItems(Vec2 position, float radius, in
             continue;
         }
 
-        item.actionFlashTimer = SpellRingItemActionFlashSeconds;
+        triggerActionFlash(item.actionFlash);
         consumeItemDurability(item, durabilityDamage);
         ++damaged;
     }
@@ -3573,6 +3592,13 @@ std::vector<RingMotionEvent> SpellRingSystem::consumeMotionEvents()
 {
     std::vector<RingMotionEvent> events = std::move(motionEvents_);
     motionEvents_.clear();
+    return events;
+}
+
+std::vector<CapturedBehaviorActivationEvent> SpellRingSystem::consumeCapturedBehaviorActivationEvents()
+{
+    std::vector<CapturedBehaviorActivationEvent> events = std::move(capturedBehaviorActivationEvents_);
+    capturedBehaviorActivationEvents_.clear();
     return events;
 }
 

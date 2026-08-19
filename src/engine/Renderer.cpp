@@ -345,6 +345,17 @@ SDL_FlipMode imageFlipMode(bool flipX, bool flipY)
     return SDL_FLIP_NONE;
 }
 
+SDL_BlendMode imageBlendMode(ImageBlendMode blendMode)
+{
+    switch (blendMode) {
+    case ImageBlendMode::Multiply:
+        return SDL_BLENDMODE_MUL;
+    case ImageBlendMode::Alpha:
+        return SDL_BLENDMODE_BLEND;
+    }
+    return SDL_BLENDMODE_BLEND;
+}
+
 SDL_FRect pixelSnappedRect(SDL_FRect rect)
 {
     const float left = std::round(rect.x);
@@ -2910,16 +2921,19 @@ bool Renderer::drawImageRegion(ImageHandle handle, RectF sourceRect, Vec2 center
         }
     }
 
-    SDL_SetTextureColorMod(entry->texture.texture, tint.r, tint.g, tint.b);
-    SDL_SetTextureAlphaMod(entry->texture.texture, tint.a);
+    SDL_Texture* imageTexture = entry->texture.texture;
+    SDL_SetTextureColorMod(imageTexture, tint.r, tint.g, tint.b);
+    SDL_SetTextureAlphaMod(imageTexture, tint.a);
+    SDL_SetTextureBlendMode(imageTexture, imageBlendMode(options.blendMode));
     SDL_RenderTextureRotated(
         renderer_,
-        entry->texture.texture,
+        imageTexture,
         source,
         &dst,
         static_cast<double>(options.rotationDegrees),
         nullptr,
         flipMode);
+    SDL_SetTextureBlendMode(imageTexture, SDL_BLENDMODE_BLEND);
 
     Color maskOverlay = transformColor(options.maskOverlayColor);
     if (maskOverlay.a > 0) {

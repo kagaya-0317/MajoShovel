@@ -5,6 +5,7 @@
 #include "game/Collision.hpp"
 #include "game/EncyclopediaSystem.hpp"
 #include "game/EnemySystem.hpp"
+#include "game/ElementVisual.hpp"
 #include "game/ObjectImageRenderer.hpp"
 #include "game/ScaledImageRenderer.hpp"
 
@@ -1613,7 +1614,7 @@ GuardBlockResult blocksProjectile(
             projectile.radius,
             item.worldPosition,
             equipmentScaledGuardRadius(spellRing, item, item.hitRadius + 12.0f))) {
-        return {true, "guard_projectile"};
+        return {true, "magic_guard"};
     }
 
     if (item.hasCapturedBehavior("heavy_guard") &&
@@ -1623,7 +1624,7 @@ GuardBlockResult blocksProjectile(
             projectile.radius,
             item.worldPosition,
             equipmentScaledGuardRadius(spellRing, item, item.hitRadius + 10.0f))) {
-        return {true, isHeavyProjectile(projectile) ? "guard_large" : "guard_projectile"};
+        return {true, "heavy_guard"};
     }
 
     if (item.hasCapturedBehavior("outward_guard") &&
@@ -1635,7 +1636,7 @@ GuardBlockResult blocksProjectile(
         const Vec2 outward = item.orbitOutward;
         const Vec2 incomingFrom = normalize(projectile.velocity * -1.0f);
         if (dot(outward, incomingFrom) > 0.25f) {
-            return {true, "guard_projectile"};
+            return {true, "outward_guard"};
         }
     }
 
@@ -1775,17 +1776,7 @@ void pushDiscoveryEvent(
     Vec2 position,
     std::string_view note = {})
 {
-    if (discoveryEvents == nullptr || object.id.empty() || effectKey.empty()) {
-        return;
-    }
-    discoveryEvents->push_back(EffectDiscoveryEvent{
-        .objectId = object.id,
-        .objectName = object.name,
-        .effectKey = std::string(effectKey),
-        .description = {},
-        .note = std::string(note),
-        .position = position,
-    });
+    queueObjectEffectDiscovery(discoveryEvents, object, effectKey, position, {}, note);
 }
 
 std::string chooseGuardEffectKey(const ObjectDefinition* object, const Projectile& projectile)
@@ -1921,6 +1912,27 @@ std::span<const ProjectileDefinition> projectileDefinitions()
 {
     static const std::vector<ProjectileDefinition> Definitions = makeProjectileDefinitions();
     return Definitions;
+}
+
+Color projectileActionFlashColor(std::string_view projectileId)
+{
+    const ProjectilePrototype& prototype = prototypeFor(projectileId);
+    const auto hasTag = [&](std::string_view tag) {
+        return std::find(prototype.tags.begin(), prototype.tags.end(), tag) != prototype.tags.end();
+    };
+    if (hasTag("poison")) {
+        return elementVisualColor("poison");
+    }
+    if (hasTag("paralyze")) {
+        return elementVisualColor("thunder");
+    }
+    if (hasTag("web")) {
+        return elementVisualColor("web");
+    }
+    if (hasTag("stone") || hasTag("mud") || hasTag("needle")) {
+        return elementVisualColor("earth");
+    }
+    return elementVisualColor(prototype.damageType);
 }
 
 bool ProjectileSystem::spawn(std::string_view projectileId, Vec2 position, Vec2 direction, ProjectileOwnerType ownerType)

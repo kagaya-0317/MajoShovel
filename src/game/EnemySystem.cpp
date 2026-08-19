@@ -2007,70 +2007,22 @@ std::string capturedObjectIdFor(const Enemy& enemy)
 
 ItemData makeCapturedItemData(const Enemy& enemy)
 {
-    ItemData item;
-    item.id = capturedObjectIdFor(enemy);
-    item.name = enemy.enemyName;
-    item.category = "\xE8\xBB\x8C\xE9\x81\x93";
-    item.rarity = 1;
-    item.roguelikeDropWeight = 0.0;
-    item.roguelikeResidualWeight = 0.0;
-    item.price = enemy.definition != nullptr
-        ? balance::capturedEnemyItemBasePrice(enemy.definition->money)
-        : 0;
-
     if (enemy.definition == nullptr) {
+        ItemData item;
+        item.id = capturedObjectIdFor(enemy);
+        item.name = enemy.enemyName;
+        item.category = "\xE8\xBB\x8C\xE9\x81\x93";
+        item.rarity = 1;
+        item.roguelikeDropWeight = 0.0;
+        item.roguelikeResidualWeight = 0.0;
         item.damageType = "none";
         item.tags.push_back("no_drop");
         return item;
     }
 
-    const EnemyDefinition& definition = *enemy.definition;
-    item.visual.source = ItemVisualSource::Enemy;
-    item.visual.imageNumber = definition.imageNumber;
-    item.visual.sourceId = definition.id.empty() ? item.id : definition.id;
-    item.visual.enemyVariantLevelBonus = enemyVariantLevelBonus(enemy.variantTier);
-    item.description = definition.capturedDescription;
-    item.normalEffects = definition.capturedNormalEffects;
-    item.orbitEffects = definition.capturedOrbitEffects;
-    item.attackPower = definition.capturedAttackPower;
-    item.damageType = definition.capturedDamageType.empty() ? "none" : definition.capturedDamageType;
-    const std::string normalizedDamageType = normalizeDamageType(item.damageType);
-    if (normalizedDamageType.empty()) {
-        if (item.damageType == "physical") {
-            logError("[warning] EnemySystem: captured damage type physical is deprecated; using blunt");
-            item.damageType = "blunt";
-        } else {
-            logError("[warning] EnemySystem: captured damage type \"" + item.damageType + "\" is invalid; using none");
-            item.damageType = "none";
-        }
-    } else {
-        if (item.damageType == "physical" && normalizedDamageType == "blunt") {
-            logError("[warning] EnemySystem: captured damage type physical is deprecated; using blunt");
-        }
-        item.damageType = normalizedDamageType;
-    }
-    item.digPower = definition.capturedDigPower;
-    item.durability = definition.capturedDurability;
-    item.weightKg = definition.capturedWeight;
-    item.tags = definition.capturedTags;
-    if (std::find(item.tags.begin(), item.tags.end(), "no_drop") == item.tags.end()) {
-        item.tags.push_back("no_drop");
-    }
-    if (enemy.variantTier != EnemyVariantTier::Normal) {
-        item.tags.push_back("captured_variant");
-        item.tags.push_back(enemy.variantTier == EnemyVariantTier::Abyss ? "captured_abyss" : "captured_deep");
-        item.tags.push_back("codex_hidden");
-    }
-    item.effectText = definition.capturedEffectText;
-    item.capturedBehaviorIds = definition.capturedBehaviorIds;
-    item.capturedBehaviorSpecs.reserve(definition.capturedBehaviorSpecs.size());
-    for (const EnemyBehaviorSpec& spec : definition.capturedBehaviorSpecs) {
-        CapturedBehaviorSpec runtimeSpec;
-        runtimeSpec.trigger = spec.trigger;
-        runtimeSpec.behavior = spec.behavior;
-        runtimeSpec.params = spec.params;
-        runtimeSpec.intervalSeconds = spec.intervalSeconds;
-        item.capturedBehaviorSpecs.push_back(std::move(runtimeSpec));
+    ItemData item = makeCapturedObjectDefinition(*enemy.definition, enemy.variantTier);
+    if (!enemy.enemyName.empty()) {
+        item.name = enemy.enemyName;
     }
     return item;
 }
@@ -2234,17 +2186,7 @@ void recordObjectEffectDiscovery(
     std::string_view description,
     Vec2 position)
 {
-    if (discoveryEvents == nullptr || object.id.empty() || effectKey.empty()) {
-        return;
-    }
-    discoveryEvents->push_back(EffectDiscoveryEvent{
-        .objectId = object.id,
-        .objectName = object.name,
-        .effectKey = std::string(effectKey),
-        .description = std::string(description),
-        .note = {},
-        .position = position,
-    });
+    queueObjectEffectDiscovery(discoveryEvents, object, effectKey, position, description);
 }
 
 bool effectSpecsContain(const std::vector<EffectSpec>& specs, std::string_view effectId)
@@ -2942,6 +2884,9 @@ void dispatchCapturedContactEffect(
         slow.duration = slowDuration;
         effectDispatcher.dispatch({slow}, context);
     }
+    if (item.hasCapturedBehavior("contact_slow")) {
+        queueObjectEffectDiscovery(discoveryEvents, object, "contact_slow", hitPosition);
+    }
 
     if (item.hasCapturedBehavior("rust_debuff") &&
         !effectSpecsContain(object.orbitEffects, "status_defense_down") &&
@@ -2954,6 +2899,9 @@ void dispatchCapturedContactEffect(
         rust.values = {defenseMultiplier};
         rust.duration = debuffDuration;
         effectDispatcher.dispatch({rust}, context);
+    }
+    if (item.hasCapturedBehavior("rust_debuff")) {
+        queueObjectEffectDiscovery(discoveryEvents, object, "rust_debuff", hitPosition);
     }
 }
 
@@ -3020,18 +2968,19 @@ void recordCapturedReward(SpellRingItem& item, const Enemy& enemy, float totalTi
     events.push_back(std::move(event));
 }
 
-void tryCapturedRewardFromEnemy(SpellRingItem& item, const Enemy& enemy, float totalTime, std::vector<EnemyEvent>& events)
+bool tryCapturedRewardFromEnemy(SpellRingItem& item, const Enemy& enemy, float totalTime, std::vector<EnemyEvent>& events)
 {
     if (!item.hasCapturedBehavior("reward_drop")) {
-        return;
+        return false;
     }
     const float chance = static_cast<float>(std::clamp(item.capturedBehaviorParamDouble("reward_drop", "chance", CapturedRewardChanceEnemy), 0.0, 1.0));
 
     if (!capturedRewardAllowed(item, enemy, totalTime) || !rollCapturedReward(chance)) {
-        return;
+        return false;
     }
 
     recordCapturedReward(item, enemy, totalTime, enemy.position, events);
+    return true;
 }
 
 Color colorForEnemy(const Enemy& enemy)
@@ -3288,14 +3237,18 @@ EnemyImageDrawOptions enemyImageOptionsFor(const Enemy& enemy)
     imageOptions.stretchScale = pose.scale;
     imageOptions.flipY = statusVisual.flipVertical;
     imageOptions.rotationDegrees = externalBounceRotationDegrees(enemy) + pose.rotationDegrees;
-    if (enemy.hitFlash > 0.0f) {
+    const bool actionFlashing = enemy.actionFlash.remainingSeconds > 0.0f;
+    const bool hitFlashing = enemy.hitFlash > 0.0f;
+    if (actionFlashing) {
+        imageOptions.maskOverlayColor = actionFlashOverlayColor(enemy.actionFlash, 210.0f);
+    } else if (hitFlashing) {
         const float flash = clamp(enemy.hitFlash / 0.12f, 0.0f, 1.0f);
         imageOptions.maskOverlayColor = {255, 255, 255, static_cast<unsigned char>(std::round(220.0f * flash))};
     }
-    if (enemy.hitFlash <= 0.0f && statusVisual.hasTint) {
+    if (!actionFlashing && !hitFlashing && statusVisual.hasTint) {
         imageOptions.tint = statusVisual.tint;
     }
-    if (enemy.hitFlash <= 0.0f && !enemy.death.active && enemy.variantTier != EnemyVariantTier::Normal) {
+    if (!actionFlashing && !hitFlashing && !enemy.death.active && enemy.variantTier != EnemyVariantTier::Normal) {
         imageOptions.tint = multiplyRgb(imageOptions.tint, enemyVariantTintMultiplier(enemy.variantTier));
     }
     if (enemy.death.active) {
@@ -3620,6 +3573,35 @@ BossDamageAdjustment adjustBossIncomingDamage(
         bossWeakPointHit(weakPoint, item, itemHitbox));
 }
 
+int ringContactRawDamage(
+    const SpellRingItem& item,
+    std::string_view damageType,
+    const Player& player,
+    const SpellRingSystem& spellRing)
+{
+    if (item.damage <= 0) {
+        return 0;
+    }
+
+    const int speedBonus = static_cast<int>(
+        item.damageMotionSpeed *
+        0.25f *
+        static_cast<float>(
+            spellRing.speedDamageMultiplier() *
+            spellRing.ringDamageSpeedMultiplierForRing(item.ringIndex)));
+    const int modifiedDamage = static_cast<int>(
+        player.status.applyModifiers(
+            ModifierStat::Attack,
+            static_cast<double>(item.damage) *
+                damageTypeMultiplier(damageType) *
+                item.slashDamageMultiplier *
+                spellRing.effectivePowerMultiplier()));
+    return static_cast<int>(
+        std::ceil(
+            static_cast<double>(modifiedDamage + speedBonus) *
+            spellRing.ringOutputMultiplierForRing(item.ringIndex)));
+}
+
 RingContactDamageResult computeRingContactDamageAgainstEnemy(
     const Enemy& enemy,
     const SpellRingItem& item,
@@ -3641,22 +3623,7 @@ RingContactDamageResult computeRingContactDamageAgainstEnemy(
         result.damageType = item.magicAuraDamageType;
     }
 
-    const double ringOutputMultiplier = spellRing.ringOutputMultiplierForRing(item.ringIndex);
-    const int speedBonus = static_cast<int>(
-        item.damageMotionSpeed *
-        0.25f *
-        static_cast<float>(
-            spellRing.speedDamageMultiplier() *
-            spellRing.ringDamageSpeedMultiplierForRing(item.ringIndex)));
-    const int modifiedDamage = static_cast<int>(
-        player.status.applyModifiers(
-            ModifierStat::Attack,
-            static_cast<double>(item.damage) *
-                damageTypeMultiplier(result.damageType) *
-                item.slashDamageMultiplier *
-                spellRing.effectivePowerMultiplier()));
-    const int rawDamage = static_cast<int>(
-        std::ceil(static_cast<double>(modifiedDamage + speedBonus) * ringOutputMultiplier));
+    const int rawDamage = ringContactRawDamage(item, result.damageType, player, spellRing);
     int adjustedDamage = rawDamage;
     const CriticalDamageSpec criticalSpec = collectCriticalDamageSpec(item, hitObject, spellRing, objectCatalog);
     if (rawDamage > 0 && criticalRollSucceeds(criticalSpec.chancePercent, rng)) {
@@ -4109,15 +4076,19 @@ void drawEnemyVisual(
         drawAwarenessIcon(visualRadius);
         return;
     }
-    Color color = enemy.hitFlash > 0.0f ? Color{255, 255, 255, 255} : (enemy.isBoss ? Color{142, 46, 160, 255} : colorForEnemy(enemy));
+    const bool actionFlashing = enemy.actionFlash.remainingSeconds > 0.0f;
+    const bool hitFlashing = enemy.hitFlash > 0.0f;
+    Color color = actionFlashing
+        ? enemy.actionFlash.color
+        : (hitFlashing ? Color{255, 255, 255, 255} : (enemy.isBoss ? Color{142, 46, 160, 255} : colorForEnemy(enemy)));
     const EntityStatusVisualStyle statusVisual = entityStatusVisualStyle(enemy.status);
-    if (enemy.hitFlash <= 0.0f && statusVisual.hasTint) {
+    if (!actionFlashing && !hitFlashing && statusVisual.hasTint) {
         color = statusVisual.tint;
     }
     if (enemy.death.active) {
         color = darkenEnemyColorForDeath(color, enemy);
     }
-    if (enemy.hitFlash <= 0.0f && !enemy.death.active && enemy.variantTier != EnemyVariantTier::Normal) {
+    if (!actionFlashing && !hitFlashing && !enemy.death.active && enemy.variantTier != EnemyVariantTier::Normal) {
         color = multiplyRgb(color, enemyVariantTintMultiplier(enemy.variantTier));
     }
     const float visualRadius = enemyVisualRadius(enemy);
@@ -4131,7 +4102,7 @@ void drawEnemyVisual(
     drawJunkCrabDebris(renderer, enemy);
     const bool astragnaVisual = isAstragnaBossAction(enemy);
     EnemyImageDrawOptions imageOptions = enemyImageOptionsFor(enemy);
-    if (captureHighlighted && !enemy.death.active) {
+    if (captureHighlighted && !enemy.death.active && !actionFlashing && !hitFlashing) {
         imageOptions.maskOverlayColor = {255, 255, 255, 62};
     }
     Vec2 enemyImageDrawSize{};
@@ -4945,7 +4916,7 @@ bool tryHitJunkCrabDebris(
             debris.alpha = 1.0f;
         }
 
-        item.actionFlashTimer = SpellRingItemActionFlashSeconds;
+        triggerActionFlash(item.actionFlash);
         if (!item.hasCapturedBehavior("heavy_guard")) {
             spellRing.consumeItemDurability(item);
         }
@@ -5195,6 +5166,7 @@ bool launchNearestJunkCrabDebrisAtPlayer(Enemy& enemy, const Player& player, std
     debris.altitude = 0.0f;
     debris.verticalVelocity = 0.0f;
     debris.alpha = 1.0f;
+    triggerActionFlash(enemy.actionFlash);
     events.push_back(makeEnemyEventAt(EnemyEventType::Shoot, enemy, startPosition, "junk_throw"));
     return true;
 }
@@ -6009,6 +5981,7 @@ void fireAstragnaEmitterLaser(
     };
     static const std::vector<EffectSpec> NoEffects;
     if (projectiles.spawn(AstragnaLaserProjectileId, emitter.position + direction * (emitter.radius + 3.0f), direction, ProjectileOwnerType::Enemy, NoEffects, tuning, metadata)) {
+        triggerActionFlash(enemy.actionFlash, projectileActionFlashColor(AstragnaLaserProjectileId));
         events.push_back(makeEnemyEventAt(EnemyEventType::Shoot, enemy, emitter.position, "astragna_laser"));
     }
 }
@@ -6234,22 +6207,7 @@ int astragnaSealDamageForRingHit(
     if (item.magicAuraTimer > 0.0f && !item.magicAuraDamageType.empty()) {
         damageType = item.magicAuraDamageType;
     }
-    const int speedBonus = static_cast<int>(
-        item.damageMotionSpeed *
-        0.25f *
-        static_cast<float>(
-            spellRing.speedDamageMultiplier() *
-            spellRing.ringDamageSpeedMultiplierForRing(item.ringIndex)));
-    const int modifiedDamage = static_cast<int>(
-        player.status.applyModifiers(
-            ModifierStat::Attack,
-            static_cast<double>(item.damage) *
-                damageTypeMultiplier(damageType) *
-                item.slashDamageMultiplier *
-                spellRing.effectivePowerMultiplier()));
-    return std::max(
-        0,
-        static_cast<int>(std::ceil(static_cast<double>(modifiedDamage + speedBonus) * spellRing.ringOutputMultiplierForRing(item.ringIndex))));
+    return std::max(0, ringContactRawDamage(item, damageType, player, spellRing));
 }
 
 bool astragnaAllSealPartsDestroyed(const Enemy& enemy)
@@ -6415,7 +6373,7 @@ bool tryHitAstragnaBossComponent(
             return false;
         }
 
-        item.actionFlashTimer = SpellRingItemActionFlashSeconds;
+        triggerActionFlash(item.actionFlash);
         if (!item.hasCapturedBehavior("heavy_guard")) {
             spellRing.consumeItemDurability(item);
         }
@@ -6445,7 +6403,7 @@ bool tryHitAstragnaBossComponent(
         }
         damageAstragnaSealPart(enemy, sealIndex, damage, events);
 
-        item.actionFlashTimer = SpellRingItemActionFlashSeconds;
+        triggerActionFlash(item.actionFlash);
         if (!item.hasCapturedBehavior("heavy_guard")) {
             spellRing.consumeItemDurability(item);
         }
@@ -6475,7 +6433,7 @@ bool tryHitAstragnaBossComponent(
         const bool broken = damage >= block.hp;
         damageAstragnaShellBlock(enemy, block, damage, events);
 
-        item.actionFlashTimer = SpellRingItemActionFlashSeconds;
+        triggerActionFlash(item.actionFlash);
         if (!item.hasCapturedBehavior("heavy_guard")) {
             spellRing.consumeItemDurability(item);
         }
@@ -6780,6 +6738,9 @@ void drawAstragnaCore(Renderer& renderer, const Enemy& enemy, bool downed)
 
     ImageDrawOptions options;
     options.tint = {255, 255, 255, static_cast<unsigned char>(downed ? 255 : 238)};
+    if (enemy.actionFlash.remainingSeconds > 0.0f) {
+        options.maskOverlayColor = actionFlashOverlayColor(enemy.actionFlash, 210.0f);
+    }
     const float starDiameter = coreRadius * (2.03f + 0.04f * starPulse);
     const bool drewCoreImage = renderer.drawImage(
         AstragnaGuardianStarImagePath,
@@ -6791,7 +6752,11 @@ void drawAstragnaCore(Renderer& renderer, const Enemy& enemy, bool downed)
     if (!drewCoreImage) {
         const unsigned char starFillAlpha = downed ? 220 : 164;
         const unsigned char starRingAlpha = downed ? 190 : 108;
-        renderer.fillCircle(enemy.position, coreRadius * starPulse, {255, 238, 152, starFillAlpha});
+        Color coreColor = enemy.actionFlash.remainingSeconds > 0.0f
+            ? enemy.actionFlash.color
+            : Color{255, 238, 152, starFillAlpha};
+        coreColor.a = starFillAlpha;
+        renderer.fillCircle(enemy.position, coreRadius * starPulse, coreColor);
         renderer.drawCircle(enemy.position, coreRadius * starPulse + 4.0f, {118, 220, 255, starRingAlpha});
     }
 }
@@ -6871,6 +6836,69 @@ void drawAstragnaBoss(Renderer& renderer, const TileMap& map, const Enemy& enemy
     }
 }
 
+}
+
+ObjectDefinition makeCapturedObjectDefinition(const EnemyDefinition& enemy, EnemyVariantTier variantTier)
+{
+    ObjectDefinition item;
+    item.id = "captured_" + std::string(enemyVariantObjectIdSegment(variantTier)) + enemy.id;
+    item.name = variantTier == EnemyVariantTier::Normal
+        ? enemy.name
+        : enemyVariantDisplayName(enemy.name.empty() ? enemy.id : enemy.name, variantTier);
+    item.category = "\xE8\xBB\x8C\xE9\x81\x93";
+    item.description = enemy.capturedDescription;
+    item.rarity = 1;
+    item.roguelikeDropWeight = 0.0;
+    item.roguelikeResidualWeight = 0.0;
+    item.price = balance::capturedEnemyItemBasePrice(enemy.money);
+    item.visual.source = ItemVisualSource::Enemy;
+    item.visual.imageNumber = enemy.imageNumber;
+    item.visual.sourceId = enemy.id;
+    item.visual.enemyVariantLevelBonus = enemyVariantLevelBonus(variantTier);
+    item.normalEffects = enemy.capturedNormalEffects;
+    item.orbitEffects = enemy.capturedOrbitEffects;
+    item.attackPower = enemy.capturedAttackPower;
+    item.damageType = enemy.capturedDamageType.empty() ? "none" : enemy.capturedDamageType;
+    const std::string normalizedDamageType = normalizeDamageType(item.damageType);
+    if (normalizedDamageType.empty()) {
+        if (item.damageType == "physical") {
+            logError("[warning] EnemySystem: captured damage type physical is deprecated; using blunt");
+            item.damageType = "blunt";
+        } else {
+            logError("[warning] EnemySystem: captured damage type \"" + item.damageType + "\" is invalid; using none");
+            item.damageType = "none";
+        }
+    } else {
+        if (item.damageType == "physical" && normalizedDamageType == "blunt") {
+            logError("[warning] EnemySystem: captured damage type physical is deprecated; using blunt");
+        }
+        item.damageType = normalizedDamageType;
+    }
+    item.digPower = enemy.capturedDigPower;
+    item.durability = enemy.capturedDurability;
+    item.weightKg = enemy.capturedWeight;
+    item.tags = enemy.capturedTags;
+    if (std::find(item.tags.begin(), item.tags.end(), "no_drop") == item.tags.end()) {
+        item.tags.push_back("no_drop");
+    }
+    if (variantTier != EnemyVariantTier::Normal) {
+        item.tags.push_back("captured_variant");
+        item.tags.push_back(variantTier == EnemyVariantTier::Abyss ? "captured_abyss" : "captured_deep");
+        item.tags.push_back("codex_hidden");
+    }
+    item.effectText = enemy.capturedEffectText;
+    item.capturedBehaviorIds = enemy.capturedBehaviorIds;
+    item.capturedBehaviorSpecs.reserve(enemy.capturedBehaviorSpecs.size());
+    for (const EnemyBehaviorSpec& spec : enemy.capturedBehaviorSpecs) {
+        CapturedBehaviorSpec runtimeSpec;
+        runtimeSpec.trigger = spec.trigger;
+        runtimeSpec.behavior = spec.behavior;
+        runtimeSpec.params = spec.params;
+        runtimeSpec.intervalSeconds = spec.intervalSeconds;
+        item.capturedBehaviorSpecs.push_back(std::move(runtimeSpec));
+    }
+    item.discoveryEffectLines = buildDiscoveryEffectLines(item);
+    return item;
 }
 
 const EnemyDefinition* EnemySystem::chooseEnemyDefinition(const EnemyCatalog& enemyCatalog)
@@ -9602,6 +9630,9 @@ bool fireEnemyProjectile(Enemy& enemy, ProjectileSystem& projectiles, Vec2 playe
             bubbleTuning,
             metadata) || spawned;
         if (enemy.rangedBehaviorId == "shoot_bubble" || shotIndex > 0) {
+            if (spawned) {
+                triggerActionFlash(enemy.actionFlash, projectileActionFlashColor("water_bubble"));
+            }
             return spawned;
         }
     }
@@ -9618,6 +9649,9 @@ bool fireEnemyProjectile(Enemy& enemy, ProjectileSystem& projectiles, Vec2 playe
                 tuning,
                 metadata) || spawned;
         }
+        if (spawned) {
+            triggerActionFlash(enemy.actionFlash, projectileActionFlashColor(enemy.projectileId));
+        }
         return spawned;
     }
 
@@ -9632,10 +9666,28 @@ bool fireEnemyProjectile(Enemy& enemy, ProjectileSystem& projectiles, Vec2 playe
             const Vec2 dir = fromAngle(angle);
             spawned = projectiles.spawn(enemy.projectileId, enemy.position + dir * (radius + 6.0f), dir, ProjectileOwnerType::Enemy, enemy.projectileEffects, tuning, metadata) || spawned;
         }
+        if (spawned) {
+            triggerActionFlash(enemy.actionFlash, projectileActionFlashColor(enemy.projectileId));
+        }
         return spawned;
     }
 
-    return projectiles.spawn(enemy.projectileId, origin, toPlayer, ProjectileOwnerType::Enemy, enemy.projectileEffects, tuning, metadata);
+    const bool finalSpawned = projectiles.spawn(
+        enemy.projectileId,
+        origin,
+        toPlayer,
+        ProjectileOwnerType::Enemy,
+        enemy.projectileEffects,
+        tuning,
+        metadata);
+    const bool anySpawned = spawned || finalSpawned;
+    if (anySpawned) {
+        const std::string_view flashProjectileId = spawned && !finalSpawned && isBubbleRangedBehavior(enemy.rangedBehaviorId)
+            ? std::string_view("water_bubble")
+            : std::string_view(enemy.projectileId);
+        triggerActionFlash(enemy.actionFlash, projectileActionFlashColor(flashProjectileId));
+    }
+    return anySpawned;
 }
 
 float enemyProjectileCooldownSeconds(const Enemy& enemy)
@@ -9998,6 +10050,7 @@ void EnemySystem::update(
         if (enemy.dungeonEventActivationLocked) {
             clearEnemyAction(enemy);
             enemy.hitFlash = 0.0f;
+            clearActionFlash(enemy.actionFlash);
             enemy.hpBarTimer = 0.0f;
             enemy.awarenessIconTimer = 0.0f;
             enemy.awarenessIcon = EnemyAwarenessIcon::None;
@@ -10015,6 +10068,7 @@ void EnemySystem::update(
             } else {
                 clearEnemyAction(enemy);
                 enemy.hitFlash = std::max(0.0f, enemy.hitFlash - dt);
+                updateActionFlash(enemy.actionFlash, dt);
                 enemy.hpBarTimer = std::max(0.0f, enemy.hpBarTimer - dt);
                 enemy.awarenessIconTimer = 0.0f;
                 enemy.awarenessIcon = EnemyAwarenessIcon::None;
@@ -10107,6 +10161,7 @@ void EnemySystem::update(
             enemy.bleedDamageAccumulator = 0.0;
         }
         enemy.hitFlash = std::max(0.0f, enemy.hitFlash - dt);
+        updateActionFlash(enemy.actionFlash, dt);
         enemy.hpBarTimer = std::max(0.0f, enemy.hpBarTimer - dt);
         if (enemy.spawnTimer > 0.0f) {
             clearEnemyAction(enemy);
@@ -10297,6 +10352,7 @@ void EnemySystem::update(
                 event.effectRadius = pulse.radius;
                 windPulses_.push_back(std::move(pulse));
                 events_.push_back(std::move(event));
+                triggerActionFlash(firingEnemy.actionFlash, elementVisualColor("wind"));
                 return true;
             }
             if (fireEnemyProjectile(firingEnemy, projectiles, player.position, rng_)) {
@@ -11016,7 +11072,7 @@ void EnemySystem::update(
                         .allowedEnemyIds = allowedCaptureEnemyIds,
                     });
                 if (capture.type != CaptureResultType::NoTarget) {
-                    item.actionFlashTimer = SpellRingItemActionFlashSeconds;
+                    triggerActionFlash(item.actionFlash);
                     if (capture.type != CaptureResultType::KnowledgeLocked) {
                         spellRing.consumeItemDurability(item);
                     }
@@ -11039,7 +11095,7 @@ void EnemySystem::update(
                 const bool alreadyInspected = encyclopedia != nullptr &&
                     encyclopedia->enemyStage(enemy.enemyId) == EncyclopediaStage::Complete;
                 if (!alreadyInspected && !enemyInspectionAlreadyQueued(events_, enemy.enemyId)) {
-                    item.actionFlashTimer = SpellRingItemActionFlashSeconds;
+                    triggerActionFlash(item.actionFlash);
                     spellRing.consumeItemDurability(item);
                     events_.push_back(makeEnemyEvent(EnemyEventType::Inspected, enemy, "inspect_enemy", 0));
                 }
@@ -11149,11 +11205,14 @@ void EnemySystem::update(
             }
             revealEnemyHpBar(enemy, damageDealt);
             if (damageDealt > 0) {
-                item.actionFlashTimer = SpellRingItemActionFlashSeconds;
+                triggerActionFlash(item.actionFlash);
             }
             if (item.hasCapturedBehavior("heavy_guard")) {
                 enemy.knockbackVelocity = normalize(enemy.position - item.worldPosition) * 90.0f;
                 enemy.knockbackTimer = std::max(enemy.knockbackTimer, 0.10f);
+                if (hitObject != nullptr) {
+                    queueObjectEffectDiscovery(discoveryEvents, *hitObject, "heavy_guard", enemy.position);
+                }
             } else {
                 spellRing.consumeItemDurability(item);
             }
@@ -11290,16 +11349,18 @@ void EnemySystem::update(
                     1.0));
                 if (tryStealHeldDrop(enemy, worldDrops, objectCatalog, player.position, totalTime, stealChance)) {
                     recordCapturedBehaviorUse(item, enemy, totalTime);
-                    item.actionFlashTimer = SpellRingItemActionFlashSeconds;
+                    triggerActionFlash(item.actionFlash);
                     if (hitEffectId.empty()) {
                         hitEffectId = "steal";
                     }
                     if (hitObject != nullptr) {
-                        recordObjectEffectDiscovery(discoveryEvents, *hitObject, "steal", "敵から所持品を盗む", enemy.position);
+                        queueObjectEffectDiscovery(discoveryEvents, *hitObject, "steal_or_dig", enemy.position);
                     }
                 }
             }
-            tryCapturedRewardFromEnemy(item, enemy, totalTime, events_);
+            if (tryCapturedRewardFromEnemy(item, enemy, totalTime, events_) && hitObject != nullptr) {
+                queueObjectEffectDiscovery(discoveryEvents, *hitObject, "reward_drop", enemy.position);
+            }
             if (item.hasCapturedBehavior("charge_explode") && item.capturedExplodeSleepTimer <= 0.0f) {
                 const int requiredHits = std::max(
                     1,
@@ -11332,6 +11393,9 @@ void EnemySystem::update(
                         .terrainRadius = terrainRadius,
                         .terrainDamage = terrainDamage,
                     });
+                    if (hitObject != nullptr) {
+                        queueObjectEffectDiscovery(discoveryEvents, *hitObject, "charge_explode", item.worldPosition);
+                    }
                 }
             }
             enemy.hitFlash = 0.12f;
@@ -11893,6 +11957,7 @@ void EnemySystem::beginEnemyDeath(
         static_cast<std::uint32_t>(rng_()));
     enemy.velocity = {};
     enemy.hitFlash = 0.0f;
+    clearActionFlash(enemy.actionFlash);
     enemy.hpBarTimer = 0.0f;
     enemy.contactTimer = 0.0f;
     enemy.awarenessIcon = EnemyAwarenessIcon::None;
@@ -11924,6 +11989,7 @@ void EnemySystem::updateEnemyDeath(Enemy& enemy, TileMap& map, SpellRingSystem& 
     enemy.death.elapsedSeconds += std::max(0.0f, dt);
     enemy.behaviorTimer += std::max(0.0f, dt);
     enemy.hitFlash = 0.0f;
+    clearActionFlash(enemy.actionFlash);
     enemy.hpBarTimer = 0.0f;
     enemy.velocity = {};
     enemy.awarenessIcon = EnemyAwarenessIcon::None;
@@ -12530,6 +12596,7 @@ void EnemySystem::clearTemporaryState()
         enemy.bleedDamageAccumulator = 0.0;
         enemy.stunWakeTimer = 0.0f;
         enemy.hitFlash = 0.0f;
+        clearActionFlash(enemy.actionFlash);
         enemy.hpBarTimer = 0.0f;
         enemy.knockbackVelocity = {};
         enemy.knockbackTimer = 0.0f;

@@ -364,6 +364,7 @@ void DiggingSystem::update(
         bool anyTerrainHit = false;
         int terrainHitCount = 0;
         bool discoveryRecorded = false;
+        bool capturedBehaviorDiscoveryRecorded = false;
         const Vec2 firstHitPosition = map.tileCenter(newTargets.front().x, newTargets.front().y);
         if (sourceObject != nullptr) {
             const TerrainDigProfile digProfile = terrainDigProfileFor(sourceObject, &item);
@@ -406,7 +407,7 @@ void DiggingSystem::update(
                 terrainHitCount += static_cast<int>(hitTiles_.size() - hitCountBefore);
                 anyTerrainHit = anyTerrainHit || terrainHit;
                 if (terrainHit) {
-                    item.actionFlashTimer = SpellRingItemActionFlashSeconds;
+                    triggerActionFlash(item.actionFlash);
                     impactSoundEvents_.push_back(makeTerrainRingImpactSoundEvent(
                         item,
                         sourceObject,
@@ -417,15 +418,12 @@ void DiggingSystem::update(
                 }
                 if (terrainHit && !discoveryRecorded && discoveryEvents != nullptr) {
                     const std::string effectKey = terrainDiscoveryEffectKey(digProfile.mode);
-                    discoveryEvents->push_back(EffectDiscoveryEvent{
-                        .objectId = sourceObject->id,
-                        .objectName = sourceObject->name,
-                        .effectKey = effectKey,
-                        .description = "",
-                        .note = {},
-                        .position = hitPosition,
-                    });
+                    queueObjectEffectDiscovery(discoveryEvents, *sourceObject, effectKey, hitPosition);
                     discoveryRecorded = true;
+                }
+                if (terrainHit && !capturedBehaviorDiscoveryRecorded && item.hasCapturedBehavior("dig_contact")) {
+                    queueObjectEffectDiscovery(discoveryEvents, *sourceObject, "dig_contact", hitPosition);
+                    capturedBehaviorDiscoveryRecorded = true;
                 }
             }
         }
@@ -442,6 +440,13 @@ void DiggingSystem::update(
                 : item.capturedBehaviorParamDouble("reward_drop", "chance", CapturedRewardChanceWall);
             if (rollCapturedReward(static_cast<float>(std::clamp(rewardChance, 0.0, 1.0)))) {
                 recordCapturedReward(item, totalTime, firstHitPosition, rewardDropRequests_);
+                if (sourceObject != nullptr) {
+                    queueObjectEffectDiscovery(
+                        discoveryEvents,
+                        *sourceObject,
+                        item.hasCapturedBehavior("steal_or_dig") ? "steal_or_dig" : "reward_drop",
+                        firstHitPosition);
+                }
             }
         }
         if (item.hasCapturedBehavior("charge_explode") && item.capturedExplodeSleepTimer <= 0.0f) {
@@ -457,6 +462,9 @@ void DiggingSystem::update(
                 item.capturedExplodeCharge = 0;
                 item.capturedExplodeSleepTimer = restSeconds;
                 capturedExplosionRequests_.push_back(makeCapturedExplosionRequest(item, firstHitPosition));
+                if (sourceObject != nullptr) {
+                    queueObjectEffectDiscovery(discoveryEvents, *sourceObject, "charge_explode", firstHitPosition);
+                }
             }
         }
         if (terrainHitCount > 0) {

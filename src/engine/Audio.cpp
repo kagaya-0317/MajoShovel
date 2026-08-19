@@ -368,6 +368,7 @@ public:
             options.loopStartFrame = fields.size() >= 9 ? parseUint64Or(fields[8], 0) : 0;
             options.loopEndFrame = fields.size() >= 10 ? parseUint64Or(fields[9], 0) : 0;
             options.loopCrossfadeFrames = fields.size() >= 11 ? parseUint64Or(fields[10], 0) : 0;
+            const std::string artistName = fields.size() >= 12 ? trimAscii(fields[11]) : std::string{};
 
             const std::filesystem::path audioPath = resolveAudioPath(path, clipPathText);
             Cue cue;
@@ -388,6 +389,7 @@ public:
                 continue;
             }
             cue.displayName = displayName.empty() ? id : displayName;
+            cue.artistName = artistName;
             loadedCues[id] = std::move(cue);
             ++loadedCount;
         }
@@ -432,19 +434,19 @@ public:
         return true;
     }
 
-    void playBgm(std::string_view id, float fadeSeconds, bool restart)
+    AudioBgmPlayResult playBgm(std::string_view id, float fadeSeconds, bool restart)
     {
         const std::string key(id);
         if (!ensureCueLoaded(key, AudioCueType::Bgm)) {
-            return;
+            return AudioBgmPlayResult::Failed;
         }
         std::scoped_lock lock(mutex_);
         Cue* cue = findCueLocked(key, AudioCueType::Bgm);
         if (cue == nullptr) {
-            return;
+            return AudioBgmPlayResult::Failed;
         }
         if (!restart && currentBgmId_ == key && hasActiveBgmLocked(key)) {
-            return;
+            return AudioBgmPlayResult::Unchanged;
         }
 
         const int fadeFrames = fadeFramesForSeconds(fadeSeconds);
@@ -471,6 +473,7 @@ public:
         voices_.push_back(std::move(voice));
         currentBgmId_ = key;
         releaseCachedBgmLocked(key);
+        return AudioBgmPlayResult::Started;
     }
 
     void stopBgm(float fadeSeconds)
@@ -483,6 +486,59 @@ public:
             fadeOutBgmVoicesLocked(fadeFrames);
         }
         currentBgmId_.clear();
+    }
+
+    bool suspendBgm(float fadeSeconds)
+    {
+        std::scoped_lock lock(mutex_);
+        Voice* voice = retainCurrentBgmVoiceLocked();
+        if (voice == nullptr) {
+            return false;
+        }
+
+        voice->stoppingAfterFade = false;
+        voice->suspendingAfterFade = false;
+        voice->suspended = false;
+        voice->targetVolume = 0.0f;
+        const int fadeFrames = fadeFramesForSeconds(fadeSeconds);
+        if (fadeFrames <= 0 || voice->currentVolume <= 0.0f) {
+            voice->currentVolume = 0.0f;
+            voice->fadeRemainingFrames = 0;
+            voice->fadeDeltaPerFrame = 0.0f;
+            voice->suspended = true;
+            return true;
+        }
+
+        voice->fadeRemainingFrames = fadeFrames;
+        voice->fadeDeltaPerFrame = -voice->currentVolume / static_cast<float>(fadeFrames);
+        voice->suspendingAfterFade = true;
+        return true;
+    }
+
+    bool resumeBgm(float fadeSeconds)
+    {
+        std::scoped_lock lock(mutex_);
+        Voice* voice = currentBgmVoiceLocked();
+        if (voice == nullptr || (!voice->suspended && !voice->suspendingAfterFade)) {
+            return false;
+        }
+
+        voice->stoppingAfterFade = false;
+        voice->suspendingAfterFade = false;
+        voice->suspended = false;
+        voice->targetVolume = voice->baseVolume;
+        const int fadeFrames = fadeFramesForSeconds(fadeSeconds);
+        if (fadeFrames <= 0 || voice->currentVolume >= voice->targetVolume) {
+            voice->currentVolume = voice->targetVolume;
+            voice->fadeRemainingFrames = 0;
+            voice->fadeDeltaPerFrame = 0.0f;
+            return true;
+        }
+
+        voice->fadeRemainingFrames = fadeFrames;
+        voice->fadeDeltaPerFrame =
+            (voice->targetVolume - voice->currentVolume) / static_cast<float>(fadeFrames);
+        return true;
     }
 
     void setBgmPaused(bool paused)
@@ -564,6 +620,39 @@ public:
         return it->second.displayName;
     }
 
+    AudioTrackMetadata bgmTrackMetadata(std::string_view id) const
+    {
+        constexpr std::string_view AssetCuePrefix = "bgm.asset.";
+        const std::string key(id);
+        std::scoped_lock lock(mutex_);
+        const auto cueIt = cues_.find(key);
+        if (cueIt == cues_.end() || cueIt->second.type != AudioCueType::Bgm) {
+            return {};
+        }
+
+        const Cue* assetCue = nullptr;
+        if (key.rfind(AssetCuePrefix, 0) == 0) {
+            assetCue = &cueIt->second;
+        } else {
+            for (const auto& [candidateId, candidate] : cues_) {
+                if (candidate.type == AudioCueType::Bgm &&
+                    candidateId.rfind(AssetCuePrefix, 0) == 0 &&
+                    candidate.path == cueIt->second.path) {
+                    assetCue = &candidate;
+                    break;
+                }
+            }
+        }
+
+        if (assetCue == nullptr || assetCue->displayName.empty()) {
+            return {};
+        }
+        return AudioTrackMetadata{
+            .title = assetCue->displayName,
+            .artist = assetCue->artistName,
+        };
+    }
+
     void stopAll()
     {
         std::scoped_lock lock(mutex_);
@@ -618,6 +707,7 @@ private:
     struct Cue {
         std::string id;
         std::string displayName;
+        std::string artistName;
         AudioCueType type = AudioCueType::Se;
         std::filesystem::path path;
         AudioCueOptions options;
@@ -634,6 +724,8 @@ private:
         std::size_t loopEndFrame = 0;
         std::size_t loopCrossfadeFrames = 0;
         bool stoppingAfterFade = false;
+        bool suspendingAfterFade = false;
+        bool suspended = false;
         float pitchScale = 1.0f;
         float baseVolume = 1.0f;
         float currentVolume = 1.0f;
@@ -684,7 +776,7 @@ private:
                     voice.finished = true;
                     continue;
                 }
-                if (bgmPaused_ && voice.type == AudioCueType::Bgm) {
+                if (voice.type == AudioCueType::Bgm && (bgmPaused_ || voice.suspended)) {
                     continue;
                 }
 
@@ -793,6 +885,9 @@ private:
             voice.fadeDeltaPerFrame = 0.0f;
             if (voice.stoppingAfterFade) {
                 voice.finished = true;
+            } else if (voice.suspendingAfterFade) {
+                voice.suspendingAfterFade = false;
+                voice.suspended = true;
             }
         }
     }
@@ -978,6 +1073,36 @@ private:
         });
     }
 
+    Voice* currentBgmVoiceLocked()
+    {
+        const auto it = std::find_if(voices_.rbegin(), voices_.rend(), [this](const Voice& voice) {
+            return voice.type == AudioCueType::Bgm &&
+                voice.id == currentBgmId_ &&
+                !voice.finished;
+        });
+        return it != voices_.rend() ? &*it : nullptr;
+    }
+
+    Voice* retainCurrentBgmVoiceLocked()
+    {
+        Voice* currentVoice = currentBgmVoiceLocked();
+        if (currentVoice == nullptr) {
+            return nullptr;
+        }
+
+        for (Voice& voice : voices_) {
+            if (voice.type == AudioCueType::Bgm && &voice != currentVoice) {
+                voice.finished = true;
+            }
+        }
+        voices_.erase(
+            std::remove_if(voices_.begin(), voices_.end(), [](const Voice& voice) {
+                return voice.finished;
+            }),
+            voices_.end());
+        return currentBgmVoiceLocked();
+    }
+
     void eraseBgmVoicesLocked()
     {
         voices_.erase(
@@ -993,6 +1118,11 @@ private:
             if (voice.type != AudioCueType::Bgm) {
                 continue;
             }
+            if (voice.suspended) {
+                voice.finished = true;
+                continue;
+            }
+            voice.suspendingAfterFade = false;
             voice.targetVolume = 0.0f;
             voice.fadeRemainingFrames = std::max(1, fadeFrames);
             voice.fadeDeltaPerFrame = -voice.currentVolume / static_cast<float>(voice.fadeRemainingFrames);
@@ -1113,14 +1243,24 @@ bool AudioEngine::loadCue(
     return impl_->loadCue(std::move(id), type, path, options);
 }
 
-void AudioEngine::playBgm(std::string_view id, float fadeSeconds, bool restart)
+AudioBgmPlayResult AudioEngine::playBgm(std::string_view id, float fadeSeconds, bool restart)
 {
-    impl_->playBgm(id, fadeSeconds, restart);
+    return impl_->playBgm(id, fadeSeconds, restart);
 }
 
 void AudioEngine::stopBgm(float fadeSeconds)
 {
     impl_->stopBgm(fadeSeconds);
+}
+
+bool AudioEngine::suspendBgm(float fadeSeconds)
+{
+    return impl_->suspendBgm(fadeSeconds);
+}
+
+bool AudioEngine::resumeBgm(float fadeSeconds)
+{
+    return impl_->resumeBgm(fadeSeconds);
 }
 
 void AudioEngine::setBgmPaused(bool paused)
@@ -1151,6 +1291,11 @@ std::string AudioEngine::cueDisplayName(std::string_view id, AudioCueType type) 
 std::string AudioEngine::currentBgmDisplayName() const
 {
     return impl_->currentBgmDisplayName();
+}
+
+AudioTrackMetadata AudioEngine::bgmTrackMetadata(std::string_view id) const
+{
+    return impl_->bgmTrackMetadata(id);
 }
 
 void AudioEngine::stopAll()

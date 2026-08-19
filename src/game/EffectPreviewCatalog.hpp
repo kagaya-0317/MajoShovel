@@ -2,6 +2,7 @@
 
 #include "engine/Math.hpp"
 #include "game/EffectSystem.hpp"
+#include "game/MagicAudio.hpp"
 #include "game/MagicFxSystem.hpp"
 
 #include <span>
@@ -67,6 +68,8 @@ struct EffectPreviewEntry {
     Vec2 direction{1.0f, 0.0f};
     float radius = 32.0f;
     float scale = 1.0f;
+    std::string_view previewSoundCueId;
+    std::string_view layeredPreviewSoundCueId;
 };
 
 [[nodiscard]] std::span<const EffectPreviewEntry> effectSystemPreviewEntries();

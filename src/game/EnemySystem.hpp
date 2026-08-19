@@ -136,6 +136,10 @@ struct CaptureResult {
     bool protectable = false;
 };
 
+[[nodiscard]] ObjectDefinition makeCapturedObjectDefinition(
+    const EnemyDefinition& enemy,
+    EnemyVariantTier variantTier = EnemyVariantTier::Normal);
+
 struct CaptureTargetPreview {
     int enemyRuntimeId = 0;
     CaptureResultType blockedReason = CaptureResultType::NoTarget;

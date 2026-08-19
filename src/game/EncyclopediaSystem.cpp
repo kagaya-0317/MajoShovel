@@ -8,7 +8,6 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
-#include <limits>
 #include <utility>
 
 namespace majo {
@@ -21,11 +20,9 @@ constexpr float PopupPaddingY = 12.0f;
 constexpr float PopupLineGap = 6.0f;
 constexpr float PopupScreenMargin = 12.0f;
 constexpr float PopupTopMargin = 58.0f;
-constexpr float PopupAvoidPadding = 8.0f;
 constexpr float PopupHoldAfterRevealSeconds = 4.5f;
 constexpr float PopupRevealUnitsPerSecond = 102.0f;
 constexpr int PopupTextScale = 2;
-constexpr float PopupMinPlayerDistance = 144.0f;
 constexpr std::string_view TreasureCategory = "\xE5\xAE\x9D";
 constexpr std::string_view NoEffectText = "\xE3\x81\xAA\xE3\x81\x97";
 
@@ -226,46 +223,6 @@ float popupTextBlockHeight(Renderer& renderer, std::size_t lineCount)
     return popupLineHeight(renderer) * static_cast<float>(lineCount) - PopupLineGap;
 }
 
-UiRect expandedRect(UiRect rect, float padding)
-{
-    rect.pos -= Vec2{padding, padding};
-    rect.size += Vec2{padding * 2.0f, padding * 2.0f};
-    return rect;
-}
-
-float rectOverlapArea(UiRect a, UiRect b)
-{
-    const float left = std::max(a.pos.x, b.pos.x);
-    const float top = std::max(a.pos.y, b.pos.y);
-    const float right = std::min(a.pos.x + a.size.x, b.pos.x + b.size.x);
-    const float bottom = std::min(a.pos.y + a.size.y, b.pos.y + b.size.y);
-    if (right <= left || bottom <= top) {
-        return 0.0f;
-    }
-    return (right - left) * (bottom - top);
-}
-
-float totalAvoidOverlap(UiRect popup, std::span<const UiRect> avoidRects)
-{
-    float total = 0.0f;
-    for (UiRect avoid : avoidRects) {
-        if (avoid.size.x <= 0.0f || avoid.size.y <= 0.0f) {
-            continue;
-        }
-        total += rectOverlapArea(popup, expandedRect(avoid, PopupAvoidPadding));
-    }
-    return total;
-}
-
-float pointToRectDistance(Vec2 point, UiRect rect)
-{
-    const float right = rect.pos.x + rect.size.x;
-    const float bottom = rect.pos.y + rect.size.y;
-    const float dx = std::max({rect.pos.x - point.x, 0.0f, point.x - right});
-    const float dy = std::max({rect.pos.y - point.y, 0.0f, point.y - bottom});
-    return std::sqrt(dx * dx + dy * dy);
-}
-
 float popupTotalDuration(float revealSeconds)
 {
     return revealSeconds + PopupHoldAfterRevealSeconds;
@@ -286,59 +243,6 @@ Vec2 clampPopupPosition(Vec2 pos, Vec2 size, const Camera& camera)
     pos.x = clampPopupAxis(pos.x, PopupScreenMargin, screenWidth - size.x - PopupScreenMargin);
     pos.y = clampPopupAxis(pos.y, PopupTopMargin, screenHeight - size.y - PopupScreenMargin);
     return pos;
-}
-
-Vec2 choosePopupPosition(
-    Vec2 anchor,
-    Vec2 desired,
-    Vec2 size,
-    const Camera& camera,
-    Vec2 playerScreenPosition,
-    std::span<const UiRect> avoidRects)
-{
-    constexpr float DiagonalDistance = PopupMinPlayerDistance * 0.70710678118f;
-    const std::array<Vec2, 16> candidates{{
-        desired,
-        anchor + Vec2{14.0f, 18.0f},
-        anchor + Vec2{-size.x - 14.0f, -34.0f},
-        anchor + Vec2{-size.x - 14.0f, 18.0f},
-        anchor + Vec2{-size.x * 0.5f, -size.y - 18.0f},
-        anchor + Vec2{-size.x * 0.5f, 18.0f},
-        anchor + Vec2{18.0f, -size.y * 0.5f},
-        anchor + Vec2{-size.x - 18.0f, -size.y * 0.5f},
-        playerScreenPosition + Vec2{PopupMinPlayerDistance, -size.y * 0.5f},
-        playerScreenPosition + Vec2{-PopupMinPlayerDistance - size.x, -size.y * 0.5f},
-        playerScreenPosition + Vec2{-size.x * 0.5f, PopupMinPlayerDistance},
-        playerScreenPosition + Vec2{-size.x * 0.5f, -PopupMinPlayerDistance - size.y},
-        playerScreenPosition + Vec2{DiagonalDistance, -DiagonalDistance - size.y},
-        playerScreenPosition + Vec2{-DiagonalDistance - size.x, -DiagonalDistance - size.y},
-        playerScreenPosition + Vec2{DiagonalDistance, DiagonalDistance},
-        playerScreenPosition + Vec2{-DiagonalDistance - size.x, DiagonalDistance},
-    }};
-
-    Vec2 best = clampPopupPosition(desired, size, camera);
-    float bestPlayerShortfall = std::numeric_limits<float>::max();
-    float bestOverlap = std::numeric_limits<float>::max();
-    float bestMovement = std::numeric_limits<float>::max();
-    for (Vec2 candidate : candidates) {
-        const Vec2 pos = clampPopupPosition(candidate, size, camera);
-        const UiRect rect{pos, size};
-        const float playerDistance = pointToRectDistance(playerScreenPosition, rect);
-        const float playerShortfall = std::max(0.0f, PopupMinPlayerDistance - playerDistance);
-        const float overlap = totalAvoidOverlap(rect, avoidRects);
-        const float movement = lengthSquared(pos - desired);
-        const bool better =
-            playerShortfall < bestPlayerShortfall ||
-            (playerShortfall == bestPlayerShortfall && overlap < bestOverlap) ||
-            (playerShortfall == bestPlayerShortfall && overlap == bestOverlap && movement < bestMovement);
-        if (better) {
-            best = pos;
-            bestPlayerShortfall = playerShortfall;
-            bestOverlap = overlap;
-            bestMovement = movement;
-        }
-    }
-    return best;
 }
 
 void drawDiscoveryPopupBackdrop(Renderer& renderer, UiRect rect)
@@ -405,6 +309,55 @@ std::string fallbackEffectDescription(std::string_view effectKey)
 }
 }
 
+void queueObjectEffectDiscovery(
+    std::vector<EffectDiscoveryEvent>* events,
+    const ObjectDefinition& object,
+    std::string_view effectKey,
+    Vec2 position,
+    std::string_view description,
+    std::string_view note)
+{
+    if (events == nullptr || object.id.empty() || effectKey.empty()) {
+        return;
+    }
+    const auto alreadyQueued = std::find_if(
+        events->begin(),
+        events->end(),
+        [&](const EffectDiscoveryEvent& event) {
+            return event.objectId == object.id && event.effectKey == effectKey;
+        });
+    if (alreadyQueued != events->end()) {
+        return;
+    }
+    events->push_back(EffectDiscoveryEvent{
+        .objectId = object.id,
+        .objectName = object.name,
+        .effectKey = std::string(effectKey),
+        .description = std::string(description),
+        .note = std::string(note),
+        .position = position,
+    });
+}
+
+void queueObjectEffectDiscovery(
+    std::vector<EffectDiscoveryEvent>* events,
+    const ObjectCatalog& catalog,
+    std::string_view objectId,
+    std::string_view effectKey,
+    Vec2 position,
+    std::string_view description,
+    std::string_view note)
+{
+    if (events == nullptr) {
+        return;
+    }
+    const ObjectDefinition* object = catalog.registry.findById(objectId);
+    if (object == nullptr) {
+        return;
+    }
+    queueObjectEffectDiscovery(events, *object, effectKey, position, description, note);
+}
+
 void EncyclopediaSystem::clear()
 {
     itemStages_.clear();
@@ -438,7 +391,7 @@ std::optional<EncyclopediaPopupStartedEvent> EncyclopediaSystem::update(float dt
         if (active.cue != EncyclopediaPopupCue::None) {
             return EncyclopediaPopupStartedEvent{
                 .cue = active.cue,
-                .position = active.position,
+                .position = active.cueWorldPosition,
             };
         }
     }
@@ -449,8 +402,7 @@ void EncyclopediaSystem::renderPopups(
     Renderer& renderer,
     const Camera& camera,
     const ObjectCatalog& catalog,
-    Vec2 playerWorldPosition,
-    std::span<const UiRect> avoidRects)
+    Vec2 bottomCenterScreenPosition)
 {
     if (activePopups_.empty()) {
         return;
@@ -458,7 +410,6 @@ void EncyclopediaSystem::renderPopups(
 
     const InlineItemTextStyle textStyle = popupTextStyle();
     const float contentWidth = std::max(0.0f, PopupWidth - PopupPaddingX * 2.0f);
-    const Vec2 playerScreenPosition = camera.worldToScreen(playerWorldPosition);
 
     renderer.setScreenSpace();
     Popup& popup = activePopups_.front();
@@ -482,15 +433,11 @@ void EncyclopediaSystem::renderPopups(
 
     const Vec2 baseSize = popup.baseSize;
     if (!popup.screenPositionLocked) {
-        const Vec2 anchor = camera.worldToScreen(popup.position);
-        const Vec2 desired = anchor + Vec2{14.0f, -34.0f};
-        popup.screenPosition = choosePopupPosition(
-            anchor,
-            desired,
-            baseSize,
-            camera,
-            playerScreenPosition,
-            avoidRects);
+        const Vec2 desired{
+            bottomCenterScreenPosition.x - baseSize.x * 0.5f,
+            bottomCenterScreenPosition.y - baseSize.y,
+        };
+        popup.screenPosition = clampPopupPosition(desired, baseSize, camera);
         popup.screenPositionLocked = true;
     }
 
@@ -958,7 +905,7 @@ bool EncyclopediaSystem::raiseEnemyStage(std::string_view enemyId, std::string_v
     return true;
 }
 
-void EncyclopediaSystem::enqueuePopup(std::string text, Vec2 position, EncyclopediaPopupCue cue)
+void EncyclopediaSystem::enqueuePopup(std::string text, Vec2 cueWorldPosition, EncyclopediaPopupCue cue)
 {
     if (text.empty()) {
         return;
@@ -968,7 +915,7 @@ void EncyclopediaSystem::enqueuePopup(std::string text, Vec2 position, Encyclope
     const float revealSeconds = static_cast<float>(revealUnits) / PopupRevealUnitsPerSecond;
     queuedPopups_.push_back(Popup{
         .text = std::move(text),
-        .position = position,
+        .cueWorldPosition = cueWorldPosition,
         .elapsed = 0.0f,
         .duration = popupTotalDuration(revealSeconds),
         .revealSeconds = revealSeconds,

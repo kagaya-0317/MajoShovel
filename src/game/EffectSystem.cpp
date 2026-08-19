@@ -84,7 +84,7 @@ constexpr std::array<ParticlePreset, 37> ParticlePresets{{
     {ParticleEffectId::BleedAura, 9, {190, 34, 54, 135}, {255, 76, 86, 110}, 52.0f, 22.0f, Pi * 2.0f, 1.9f, 0.6f, 0.68f, 0.12f, {0.0f, 42.0f}, 1.15f, false, false},
     {ParticleEffectId::FrozenSparkle, 6, {140, 232, 255, 210}, {255, 255, 255, 185}, 26.0f, 16.0f, Pi * 2.0f, 3.8f, 1.2f, 0.64f, 0.14f, {0.0f, -14.0f}, 0.85f, false, false, 4.0f, 9.0f, {170, 236, 255, 180}, ParticleVisual::Sparkle},
     {ParticleEffectId::SpecialItemGlimmer, 3, {180, 224, 255, 125}, {255, 224, 128, 115}, 16.0f, 10.0f, Pi * 2.0f, 1.7f, 0.5f, 0.44f, 0.10f, {0.0f, -18.0f}, 1.2f, false, false},
-    {ParticleEffectId::WarpCircle, 18, {112, 208, 255, 190}, {255, 224, 112, 170}, 62.0f, 24.0f, Pi * 2.0f, 2.4f, 0.8f, 0.72f, 0.18f, {0.0f, -24.0f}, 1.5f, false, true, 18.0f, 64.0f, {126, 208, 255, 150}},
+    {ParticleEffectId::WarpCircle, 0, {112, 208, 255, 190}, {255, 224, 112, 170}, 62.0f, 24.0f, Pi * 2.0f, 2.4f, 0.8f, WarpPointPulseCycleSeconds / 0.75f, 0.0f, {0.0f, -24.0f}, 1.5f, false, true, 18.0f, 64.0f, {126, 208, 255, 150}},
     {ParticleEffectId::BossCircle, 24, {255, 96, 120, 210}, {255, 210, 96, 190}, 74.0f, 28.0f, Pi * 2.0f, 2.7f, 0.9f, 0.82f, 0.22f, {0.0f, -18.0f}, 1.4f, false, true, 24.0f, 90.0f, {255, 176, 84, 180}},
     {ParticleEffectId::ItemBreak, 14, {226, 220, 198, 232}, {118, 128, 148, 210}, 104.0f, 42.0f, Pi * 2.0f, 4.0f, 1.2f, 0.54f, 0.10f, {0.0f, 220.0f}, 1.7f, false, true, 8.0f, 30.0f, {255, 226, 142, 185}, ParticleVisual::RockShard},
     {ParticleEffectId::WoodBreak, 16, {164, 112, 62, 232}, {92, 58, 34, 205}, 112.0f, 48.0f, Pi * 2.0f, 7.2f, 2.1f, 0.58f, 0.10f, {0.0f, 260.0f}, 1.8f, false, true, 8.0f, 30.0f, {212, 154, 84, 170}, ParticleVisual::RockShard},
@@ -990,6 +990,12 @@ void EffectSystem::render(Renderer& renderer)
     renderLayer(renderer, EffectLayer::World);
 }
 
+void EffectSystem::renderGround(Renderer& renderer)
+{
+    renderSmokeLayer(renderer, EffectLayer::Ground);
+    renderLayer(renderer, EffectLayer::Ground);
+}
+
 void EffectSystem::renderShadows(Renderer& renderer)
 {
     for (const Effect& effect : effects_.items()) {
@@ -1352,7 +1358,7 @@ void EffectSystem::spawnPresentationPulseRings(
             break;
         }
         pulse->type = EffectType::LevelUpPulseRing;
-        pulse->layer = EffectLayer::Foreground;
+        pulse->layer = options.layer;
         pulse->position = position;
         pulse->color = color;
         pulse->duration = options.duration;
@@ -2015,7 +2021,12 @@ void EffectSystem::spawnForegroundSpecialItemGlimmer(Vec2 position)
 
 void EffectSystem::spawnWarpCircle(Vec2 position, bool boss)
 {
-    spawn(boss ? ParticleEffectId::BossCircle : ParticleEffectId::WarpCircle, position);
+    spawn(
+        boss ? ParticleEffectId::BossCircle : ParticleEffectId::WarpCircle,
+        position,
+        {1.0f, 0.0f},
+        1.0f,
+        boss ? EffectLayer::World : EffectLayer::Ground);
 }
 
 void EffectSystem::spawnAreaPulse(Vec2 position, float radius, Color color)

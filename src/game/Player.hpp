@@ -64,6 +64,11 @@ struct PlayerHealEvent {
     Vec2 position{};
 };
 
+struct PlayerMovementOptions {
+    bool ignoreCollisions = false;
+    std::span<const CollisionRect> objectBlockers{};
+};
+
 struct Player {
     Vec2 position{0.0f, 0.0f};
     Vec2 velocity{};
@@ -106,7 +111,7 @@ struct Player {
         float dt,
         bool paused,
         const RuntimeBalance& balance,
-        std::span<const CollisionRect> objectBlockers = {});
+        PlayerMovementOptions movementOptions = {});
     void updateSpriteAnimation(float dt, bool walking);
     void updateSpriteFlipFromFacing();
     int spriteFrameIndex(CharacterSpriteMotion motion) const;

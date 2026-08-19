@@ -23,6 +23,11 @@ enum class TextureFilter {
     Linear,
 };
 
+enum class ImageBlendMode {
+    Alpha,
+    Multiply,
+};
+
 enum class TextStyle {
     Regular,
     Italic,
@@ -60,6 +65,7 @@ struct ImageHandle {
 struct ImageDrawOptions {
     Vec2 anchor{0.5f, 0.5f};
     Color tint{255, 255, 255, 255};
+    ImageBlendMode blendMode = ImageBlendMode::Alpha;
     bool outlineEnabled = false;
     Color outlineColor{0, 0, 0, 255};
     int outlinePx = 1;

@@ -1260,6 +1260,9 @@ void TileMap::evictDistantChunks()
 
 void TileMap::setTileOverride(DungeonTile tile, TileType type)
 {
+    if (suppressBoundaryTerrainMutation(tile)) {
+        return;
+    }
     tileOverrides_[key(tile.x, tile.y)] = type;
 
     const int cx = floorDiv(tile.x, balance::ChunkTiles);
@@ -1285,6 +1288,9 @@ void TileMap::setTileOverride(DungeonTile tile, TileType type)
 
 void TileMap::setTerrainEdit(DungeonTile tile, TileType type)
 {
+    if (suppressBoundaryTerrainMutation(tile)) {
+        return;
+    }
     terrainEdits_[key(tile.x, tile.y)] = type;
 
     const int cx = floorDiv(tile.x, balance::ChunkTiles);
@@ -1323,7 +1329,10 @@ std::vector<TerrainTileEdit> TileMap::terrainEditsForSave() const
     std::vector<TerrainTileEdit> edits;
     edits.reserve(terrainEdits_.size());
     for (const auto& [packed, type] : terrainEdits_) {
-        edits.push_back(TerrainTileEdit{tileFromKey(packed), type});
+        const DungeonTile tile = tileFromKey(packed);
+        if (!isDungeonBoundaryTile(tile.x, tile.y)) {
+            edits.push_back(TerrainTileEdit{tile, type});
+        }
     }
     std::sort(edits.begin(), edits.end(), [](const TerrainTileEdit& lhs, const TerrainTileEdit& rhs) {
         if (lhs.tile.x != rhs.tile.x) {
@@ -1339,7 +1348,10 @@ TileMapPersistentState TileMap::capturePersistentState() const
     TileMapPersistentState state;
     state.tileOverrides.reserve(tileOverrides_.size());
     for (const auto& [packed, type] : tileOverrides_) {
-        state.tileOverrides.push_back(TerrainTileEdit{tileFromKey(packed), type});
+        const DungeonTile tile = tileFromKey(packed);
+        if (!isDungeonBoundaryTile(tile.x, tile.y)) {
+            state.tileOverrides.push_back(TerrainTileEdit{tile, type});
+        }
     }
     state.terrainEdits = terrainEditsForSave();
     state.damagedTiles.reserve(damagedTileStates_.size());
@@ -1349,6 +1361,9 @@ TileMapPersistentState TileMap::capturePersistentState() const
         }
         TerrainTileDamageState copy = damage;
         copy.tile = tileFromKey(packed);
+        if (isDungeonBoundaryTile(copy.tile.x, copy.tile.y)) {
+            continue;
+        }
         state.damagedTiles.push_back(copy);
     }
 
@@ -1511,6 +1526,9 @@ bool TileMap::damageTile(int tx, int ty, int damage, Vec2& openedTileCenter, Til
 
 bool TileMap::damageProtectedAt(int tx, int ty) const
 {
+    if (isDungeonBoundaryTile(tx, ty)) {
+        return true;
+    }
     for (const TerrainDamageProtectionArea& area : damageProtectionAreas_) {
         const int minX = std::min(area.minTile.x, area.maxTile.x);
         const int maxX = std::max(area.minTile.x, area.maxTile.x);
@@ -1521,6 +1539,35 @@ bool TileMap::damageProtectedAt(int tx, int ty) const
         }
     }
     return false;
+}
+
+bool TileMap::isDungeonBoundaryTile(int tx, int ty) const
+{
+    return !dungeonBoundaryContainsTile(dungeonLayoutSnapshot_, DungeonTile{tx, ty});
+}
+
+bool TileMap::suppressBoundaryTerrainMutation(DungeonTile tile)
+{
+    if (!isDungeonBoundaryTile(tile.x, tile.y)) {
+        return false;
+    }
+
+    const long long tileKey = key(tile.x, tile.y);
+    tileOverrides_.erase(tileKey);
+    terrainEdits_.erase(tileKey);
+    damagedTileStates_.erase(tileKey);
+
+    const int cx = floorDiv(tile.x, balance::ChunkTiles);
+    const int cy = floorDiv(tile.y, balance::ChunkTiles);
+    const auto chunkIt = chunks_.find(key(cx, cy));
+    if (chunkIt != chunks_.end()) {
+        Tile& boundaryTile = chunkIt->second.at(
+            floorMod(tile.x, balance::ChunkTiles),
+            floorMod(tile.y, balance::ChunkTiles));
+        boundaryTile.type = TileType::HardRock;
+        boundaryTile.hp = std::numeric_limits<unsigned char>::max();
+    }
+    return true;
 }
 
 bool TileMap::isSolidAt(Vec2 world)
@@ -1637,6 +1684,16 @@ bool TileMap::isTileRectLit(Vec2 pos, Vec2 playerLight, const std::vector<LightS
 TerrainDebugInfo TileMap::terrainInfoForTile(int tx, int ty, const Tile* tile) const
 {
     TerrainDebugInfo info;
+    if (isDungeonBoundaryTile(tx, ty)) {
+        info.type = TileType::HardRock;
+        info.attribute = TerrainAttribute::Hard;
+        info.hp = tile != nullptr ? static_cast<int>(tile->hp) : 0;
+        info.effectiveHp = 255;
+        info.localHardnessMultiplier = 1.0f;
+        info.depthHardnessMultiplier = 1.0f;
+        return info;
+    }
+
     const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(
         dungeonLayoutSnapshot_,
         {static_cast<float>(tx), static_cast<float>(ty)});
@@ -1795,6 +1852,9 @@ TerrainDebugInfo TileMap::terrainDebugAtWorld(Vec2 world) const
 
 Color TileMap::tileColorAtTile(int tx, int ty) const
 {
+    if (isDungeonBoundaryTile(tx, ty)) {
+        return {0, 0, 0, 255};
+    }
     if (const Tile* tile = tileAtWorldIfGenerated(tx, ty)) {
         return tileColor(*tile);
     }
@@ -2009,6 +2069,10 @@ void TileMap::render(Renderer& renderer, const Camera& camera, Vec2 lightCenter,
                     const int ty = cy * balance::ChunkTiles + y;
                     const Vec2 pos{static_cast<float>(tx * balance::TileSize), static_cast<float>(ty * balance::TileSize)};
                     if (!tileRectLit(pos)) {
+                        continue;
+                    }
+                    if (isDungeonBoundaryTile(tx, ty)) {
+                        renderer.fillRect(pos, {tileSize, tileSize}, {0, 0, 0, 255});
                         continue;
                     }
                     const Tile& tile = chunk.at(x, y);

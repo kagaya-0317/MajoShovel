@@ -198,7 +198,7 @@ void Player::update(
     float dt,
     bool paused,
     const RuntimeBalance& balance,
-    std::span<const CollisionRect> objectBlockers)
+    PlayerMovementOptions movementOptions)
 {
     damageFlash = std::max(0.0f, damageFlash - dt);
     if (paused) {
@@ -282,8 +282,9 @@ void Player::update(
     const Vec2 delta = velocity * dt;
     const float playerRadius = effectiveRadius(balance.playerRadius);
     const auto blocked = [&](Vec2 center) {
-        return map.isCircleBlocked(center, playerRadius) ||
-            circleIntersectsAnyRect(center, playerRadius, objectBlockers);
+        return !movementOptions.ignoreCollisions &&
+            (map.isCircleBlocked(center, playerRadius) ||
+                circleIntersectsAnyRect(center, playerRadius, movementOptions.objectBlockers));
     };
     Vec2 next = position + Vec2{delta.x, 0.0f};
     if (!blocked(next)) {

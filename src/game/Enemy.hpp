@@ -2,6 +2,7 @@
 
 #include "engine/Math.hpp"
 #include "data/EnemyCatalog.hpp"
+#include "game/ActionFlash.hpp"
 #include "game/EntityStatus.hpp"
 #include "game/ItemModel.hpp"
 #include "game/Chunk.hpp"
@@ -577,6 +578,7 @@ struct Enemy {
     EnemyFleeNavigationRuntime fleeNavigation;
     EnemyDeathRuntime death;
     float hitFlash = 0.0f;
+    ActionFlashState actionFlash;
     float hpBarTimer = 0.0f;
     float facingAngle = 0.0f;
     EnemyAwarenessState awareness = EnemyAwarenessState::Unaware;

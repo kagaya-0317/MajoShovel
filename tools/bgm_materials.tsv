@@ -1,21 +1,21 @@
-﻿source	output	cue_id	display_name	loop_start_seconds	loop_end_seconds	loop_crossfade_ms	notes
-_First_village.mp3	first_village.wav	bgm.asset.first_village	First village	0	full	1000	終端まで再生し、末尾1秒の減衰と先頭をクロスフェード
-A_letter.mp3	a_letter.wav	bgm.asset.a_letter	A letter	0	full	0	ユーザー指定の全体ループ
-Cunning_Monsters.mp3	cunning_monsters.wav	bgm.asset.cunning_monsters	Cunning Monsters	7.5	99.3375	20	導入後から終端無音前までを反復
-Dot_Snow.mp3	dot_snow.wav	bgm.asset.dot_snow	Dot Snow	0	full	0	ユーザー指定の全体ループ
-God_only_knows.mp3	god_only_knows.wav	bgm.asset.god_only_knows	God only knows	0	full	0	ユーザー指定の全体ループ
-Grumpy_Witch.mp3	grumpy_witch.wav	bgm.asset.grumpy_witch	Grumpy Witch	0	118.828	0	音響フィンガープリントで確認した反復周期
-Immortal_Hotel.mp3	immortal_hotel.wav	bgm.asset.immortal_hotel	Immortal Hotel	2.89	194.455	500	導入の立ち上がりと終端の減衰を長めのクロスフェードで接続
-In_the_Ruins.mp3	in_the_ruins.wav	bgm.asset.in_the_ruins	In the Ruins	0	full	0	ユーザー指定の全体ループ
-Legacy_Battle.mp3	legacy_battle.wav	bgm.asset.legacy_battle	Legacy Battle	0	63.636	0	音響フィンガープリントで確認した反復周期
-Old_Blood.mp3	old_blood.wav	bgm.asset.old_blood	Old Blood	15.89	137.158	0	導入後の一致する反復区間
-Pleasurable_Grave.mp3	pleasurable_grave.wav	bgm.asset.pleasurable_grave	Pleasurable Grave	32.48	99.571	0	導入後の一致する反復区間
-Puppet_Skeleton.mp3	puppet_skeleton.wav	bgm.asset.puppet_skeleton	Puppet Skeleton	0	104.59	20	ピアノだけになる終結部の直前から先頭へ戻す
-Small_Cave.mp3	small_cave.wav	bgm.asset.small_cave	Small Cave	0	full	0	ユーザー指定の全体ループ
-Vivid_Spooky.mp3	vivid_spooky.wav	bgm.asset.vivid_spooky	Vivid Spooky	0	119.25	20	1分59秒付近でファミコン音だけになる直前から先頭へ戻す
-WaveScope.mp3	wave_scope.wav	bgm.asset.wave_scope	WaveScope	0	113.83	100	終結部へ移る直前から先頭へ戻す
-あくまおばけのチェレスタ.mp3	devil_ghost_celesta.wav	bgm.asset.devil_ghost_celesta	あくまおばけのチェレスタ	0	104.937	0	音響フィンガープリントで確認した反復周期
-あくまのオルガン.mp3	devil_organ.wav	bgm.asset.devil_organ	あくまのオルガン	0	114.208	0	音響フィンガープリントで確認した反復周期
-あくまの行進.mp3	devil_march.wav	bgm.asset.devil_march	あくまの行進	0	109.032	0	音響フィンガープリントで確認した反復周期
-月光蝶.mp3	moonlight_butterfly.wav	bgm.asset.moonlight_butterfly	月光蝶	0	full	0	ユーザー指定の全体ループ
-煉獄道.mp3	purgatory_road.wav	bgm.asset.purgatory_road	煉獄道	0	89.361	0	音響フィンガープリントで確認した反復周期
+﻿source	output	cue_id	display_name	artist_name	loop_start_seconds	loop_end_seconds	loop_crossfade_ms	notes
+_First_village.mp3	first_village.wav	bgm.asset.first_village	First village	こおろぎ	0	full	1000	終端まで再生し、末尾1秒の減衰と先頭をクロスフェード
+A_letter.mp3	a_letter.wav	bgm.asset.a_letter	A letter	こおろぎ	0	full	0	ユーザー指定の全体ループ
+Cunning_Monsters.mp3	cunning_monsters.wav	bgm.asset.cunning_monsters	Cunning Monsters	こおろぎ	7.5	99.3375	20	導入後から終端無音前までを反復
+Dot_Snow.mp3	dot_snow.wav	bgm.asset.dot_snow	Dot Snow	こおろぎ	0	full	0	ユーザー指定の全体ループ
+God_only_knows.mp3	god_only_knows.wav	bgm.asset.god_only_knows	God only knows	こおろぎ	0	full	0	ユーザー指定の全体ループ
+Grumpy_Witch.mp3	grumpy_witch.wav	bgm.asset.grumpy_witch	Grumpy Witch	こおろぎ	0	118.828	0	音響フィンガープリントで確認した反復周期
+Immortal_Hotel.mp3	immortal_hotel.wav	bgm.asset.immortal_hotel	Immortal Hotel	こおろぎ	2.89	194.455	500	導入の立ち上がりと終端の減衰を長めのクロスフェードで接続
+In_the_Ruins.mp3	in_the_ruins.wav	bgm.asset.in_the_ruins	In the Ruins	こおろぎ	0	full	0	ユーザー指定の全体ループ
+Legacy_Battle.mp3	legacy_battle.wav	bgm.asset.legacy_battle	Legacy Battle	こおろぎ	0	63.636	0	音響フィンガープリントで確認した反復周期
+Old_Blood.mp3	old_blood.wav	bgm.asset.old_blood	Old Blood	こおろぎ	15.89	137.158	0	導入後の一致する反復区間
+Pleasurable_Grave.mp3	pleasurable_grave.wav	bgm.asset.pleasurable_grave	Pleasurable Grave	こおろぎ	32.48	99.571	0	導入後の一致する反復区間
+Puppet_Skeleton.mp3	puppet_skeleton.wav	bgm.asset.puppet_skeleton	Puppet Skeleton	こおろぎ	0	104.59	20	ピアノだけになる終結部の直前から先頭へ戻す
+Small_Cave.mp3	small_cave.wav	bgm.asset.small_cave	Small Cave	こおろぎ	0	full	0	ユーザー指定の全体ループ
+Vivid_Spooky.mp3	vivid_spooky.wav	bgm.asset.vivid_spooky	Vivid Spooky	こおろぎ	0	119.25	20	1分59秒付近でファミコン音だけになる直前から先頭へ戻す
+WaveScope.mp3	wave_scope.wav	bgm.asset.wave_scope	WaveScope	こおろぎ	0	113.83	100	終結部へ移る直前から先頭へ戻す
+あくまおばけのチェレスタ.mp3	devil_ghost_celesta.wav	bgm.asset.devil_ghost_celesta	あくまおばけのチェレスタ	こおろぎ	0	104.937	0	音響フィンガープリントで確認した反復周期
+あくまのオルガン.mp3	devil_organ.wav	bgm.asset.devil_organ	あくまのオルガン	こおろぎ	0	114.208	0	音響フィンガープリントで確認した反復周期
+あくまの行進.mp3	devil_march.wav	bgm.asset.devil_march	あくまの行進	こおろぎ	0	109.032	0	音響フィンガープリントで確認した反復周期
+月光蝶.mp3	moonlight_butterfly.wav	bgm.asset.moonlight_butterfly	月光蝶	こおろぎ	0	full	0	ユーザー指定の全体ループ
+煉獄道.mp3	purgatory_road.wav	bgm.asset.purgatory_road	煉獄道	こおろぎ	0	89.361	0	音響フィンガープリントで確認した反復周期

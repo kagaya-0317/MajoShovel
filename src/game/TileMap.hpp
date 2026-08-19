@@ -152,8 +152,10 @@ private:
     int damageStateMaxHpForTile(int tx, int ty, const Tile& tile) const;
     void recordDamagedTileState(int tx, int ty, TileType type, int hp, int maxHp);
     bool damageProtectedAt(int tx, int ty) const;
+    bool suppressBoundaryTerrainMutation(DungeonTile tile);
     void clearCrackCacheForTile(int tx, int ty);
     int crackLevelForTile(int tx, int ty, const Tile& tile) const;
+    bool isDungeonBoundaryTile(int tx, int ty) const;
     void drawTileCracks(Renderer& renderer, Vec2 pos, int tx, int ty, const Tile& tile);
     RuntimeBalance balanceSnapshot_;
     DungeonLayout dungeonLayoutSnapshot_;

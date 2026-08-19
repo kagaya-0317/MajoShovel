@@ -51,7 +51,21 @@ struct EffectDiscoveryEvent {
     Vec2 position{};
 };
 
-struct UiRect;
+void queueObjectEffectDiscovery(
+    std::vector<EffectDiscoveryEvent>* events,
+    const ObjectDefinition& object,
+    std::string_view effectKey,
+    Vec2 position,
+    std::string_view description = {},
+    std::string_view note = {});
+void queueObjectEffectDiscovery(
+    std::vector<EffectDiscoveryEvent>* events,
+    const ObjectCatalog& catalog,
+    std::string_view objectId,
+    std::string_view effectKey,
+    Vec2 position,
+    std::string_view description = {},
+    std::string_view note = {});
 
 enum class EffectRevealMode {
     RevealedOnly,
@@ -89,8 +103,7 @@ public:
         Renderer& renderer,
         const Camera& camera,
         const ObjectCatalog& catalog,
-        Vec2 playerWorldPosition,
-        std::span<const UiRect> avoidRects = {});
+        Vec2 bottomCenterScreenPosition);
 
     void noteItemDiscovered(const ObjectDefinition& object, Vec2 position);
     bool noteItemObtained(const ObjectDefinition& object, Vec2 position);
@@ -133,7 +146,7 @@ private:
 
     struct Popup {
         std::string text;
-        Vec2 position{};
+        Vec2 cueWorldPosition{};
         Vec2 screenPosition{};
         float elapsed = 0.0f;
         float duration = 0.0f;
@@ -169,7 +182,7 @@ private:
     bool raiseObjectStage(const ObjectDefinition& object, EncyclopediaStage stage, Vec2 position, bool popup);
     bool raiseEnemyStage(std::string_view enemyId, std::string_view enemyName, EncyclopediaStage stage, Vec2 position, bool popup);
     void enqueueEffectPopup(std::span<const EffectPopupLine> lines);
-    void enqueuePopup(std::string text, Vec2 position, EncyclopediaPopupCue cue);
+    void enqueuePopup(std::string text, Vec2 cueWorldPosition, EncyclopediaPopupCue cue);
 
     std::unordered_map<std::string, EncyclopediaStage> itemStages_;
     std::unordered_map<std::string, EncyclopediaStage> treasureStages_;

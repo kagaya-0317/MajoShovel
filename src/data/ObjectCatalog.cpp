@@ -490,6 +490,7 @@ bool autoTextForEffectCode(
     double value,
     double duration,
     std::string_view target,
+    DiscoveryTrigger trigger,
     std::string& outText)
 {
     if (effectCode == "heal") {
@@ -781,12 +782,12 @@ bool autoTextForEffectCode(
         } else if (element == "earth") {
             name = "土魔法";
         }
-        outText = std::string(name);
-        if (value > 0.0) {
-            outText += "を発動する（威力" + formatDiscoveryNumber(value) + "）";
-        } else {
-            outText += "を発動する";
+        outText.clear();
+        if (trigger == DiscoveryTrigger::OrbitEffect && duration > 0.0) {
+            outText = formatDiscoveryNumber(duration) + "秒おきに";
         }
+        outText += name;
+        outText += "を発動する";
         return true;
     }
     if (effectCode == "break_wood_fragments") {
@@ -1800,7 +1801,7 @@ std::vector<DiscoveryEffectLine> buildDiscoveryEffectLines(const ObjectDefinitio
                     continue;
                 }
                 std::string text;
-                if (!autoTextForEffectCode(effect, spec.values[i], spec.duration, spec.target, text)) {
+                if (!autoTextForEffectCode(effect, spec.values[i], spec.duration, spec.target, trigger, text)) {
                     if (debugWarnings != nullptr) {
                         debugWarnings->push_back(
                             "object=\"" + object.id + "\" discovery effect line skipped: unsupported effect code \"" + effect + "\"");
@@ -1818,6 +1819,43 @@ std::vector<DiscoveryEffectLine> buildDiscoveryEffectLines(const ObjectDefinitio
     appendFromSpecs(object.orbitEffects, DiscoveryTrigger::OrbitEffect);
 
     const std::vector<std::string> manualLines = splitEffectTextLines(object.effectText);
+    if (object.visual.source == ItemVisualSource::Enemy) {
+        std::vector<std::string_view> capturedBehaviorKeys;
+        const auto appendCapturedBehaviorKey = [&](std::string_view behavior) {
+            if (behavior.empty() || behavior == "none" || behavior == "contact_basic" ||
+                std::find(capturedBehaviorKeys.begin(), capturedBehaviorKeys.end(), behavior) != capturedBehaviorKeys.end()) {
+                return;
+            }
+            capturedBehaviorKeys.push_back(behavior);
+        };
+        for (const CapturedBehaviorSpec& spec : object.capturedBehaviorSpecs) {
+            appendCapturedBehaviorKey(spec.behavior);
+        }
+        for (const std::string& behavior : object.capturedBehaviorIds) {
+            appendCapturedBehaviorKey(behavior);
+        }
+
+        if (!manualLines.empty() &&
+            !(manualLines.size() == 1 && isNoDiscoveryEffectText(manualLines.front()))) {
+            if (manualLines.size() == capturedBehaviorKeys.size()) {
+                for (std::size_t i = 0; i < capturedBehaviorKeys.size(); ++i) {
+                    pushDiscoveryLine(
+                        lines,
+                        object,
+                        std::string(capturedBehaviorKeys[i]),
+                        manualLines[i],
+                        DiscoveryTrigger::OrbitEffect);
+                }
+            } else if (debugWarnings != nullptr) {
+                debugWarnings->push_back(
+                    "object=\"" + object.id + "\" captured effectText line count mismatch: behaviors=" +
+                    std::to_string(capturedBehaviorKeys.size()) + ", manual=" + std::to_string(manualLines.size()) +
+                    "; generated attack/dig/effect text is used");
+            }
+        }
+        return lines;
+    }
+
     if (!manualLines.empty()) {
         if (manualLines.size() == 1 && isNoDiscoveryEffectText(manualLines.front())) {
             return {};

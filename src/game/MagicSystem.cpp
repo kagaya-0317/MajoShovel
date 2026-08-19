@@ -27,29 +27,8 @@ constexpr float EarthDebrisLightSeconds = 0.72f;
 constexpr float WindWaveFxFadeStart = 0.68f;
 constexpr float MagicAuraCooldownFraction = 0.65f;
 constexpr float MinimumMagicAuraSeconds = 0.08f;
-constexpr std::string_view AudioSeMagicCast = "se.magic.cast";
-
-struct MagicAudioProfile {
-    std::string_view castCueId;
-    std::string_view impactCueId;
-};
-
-constexpr MagicAudioProfile magicAudioProfile(MagicElement element)
-{
-    switch (element) {
-    case MagicElement::Fire:
-        return {"se.magic.fire.cast", "se.magic.fire.impact"};
-    case MagicElement::Ice:
-        return {"se.magic.ice.cast", "se.magic.ice.impact"};
-    case MagicElement::Thunder:
-        return {"se.magic.thunder.cast", "se.magic.thunder.impact"};
-    case MagicElement::Wind:
-        return {"se.magic.wind.cast", "se.magic.wind.impact"};
-    case MagicElement::Earth:
-        return {"se.magic.earth.cast", "se.magic.earth.impact"};
-    }
-    return {};
-}
+constexpr float FireballMinimumFxRadius = 28.0f;
+constexpr float FireballFxHitRadiusScale = 1.15f;
 
 std::mt19937& magicSystemRng()
 {
@@ -297,6 +276,7 @@ bool MagicSystem::cast(
             sourceItem->magicAuraTimer,
             magicAuraSeconds(castCooldownSeconds));
         sourceItem->magicCastCooldownTimer = castCooldownSeconds;
+        triggerActionFlash(sourceItem->actionFlash, elementVisualColor(magicElementDamageType(element)));
         if (magicFx_ != nullptr && sourceItem->magicAuraFxEmitterId == 0) {
             sourceItem->magicAuraFxEmitterId = startAuraFxEmitter(
                 element,
@@ -305,7 +285,7 @@ bool MagicSystem::cast(
         }
     }
 
-    queueCastSounds(element, origin);
+    queueMagicStartSounds(element, origin);
 
     switch (element) {
     case MagicElement::Fire:
@@ -414,12 +394,7 @@ void MagicSystem::castFire(Vec2 origin, Vec2 direction, int power)
     projectile.gravity = 180.0f;
     projectile.damage = std::max(1, power * 2);
     projectile.piercesWalls = true;
-    if (magicFx_ != nullptr) {
-        projectile.fxEmitterId = magicFx_->startFireballLoop(
-            projectile.position + Vec2{0.0f, -projectile.height},
-            direction,
-            projectile.radius).id;
-    }
+    projectile.fxEmitterId = startProjectileFxEmitter(projectile);
     addProjectile(projectile);
 }
 
@@ -639,7 +614,7 @@ void MagicSystem::updateGroundAreas(
 
         if (area.kind == GroundKind::EarthSpike && !area.triggered) {
             area.triggered = true;
-            queueImpactSound(MagicElement::Earth, area.position, 1.06f, 0.88f);
+            queuePrimaryEffectSound(MagicElement::Earth, area.position);
             EnemyMagicHitSpec hit;
             hit.position = area.position;
             hit.radius = area.radius;
@@ -832,8 +807,12 @@ std::uint32_t MagicSystem::startProjectileFxEmitter(const MagicProjectile& proje
     const Vec2 drawPosition = projectile.position + Vec2{0.0f, -projectile.height};
     const Vec2 direction = lengthSquared(projectile.velocity) > 0.0001f ? normalize(projectile.velocity) : Vec2{1.0f, 0.0f};
     switch (projectile.kind) {
-    case ProjectileKind::Fireball:
-        return magicFx_->startFireballLoop(drawPosition, direction, projectile.radius).id;
+    case ProjectileKind::Fireball: {
+        const float fxRadius = std::max(
+            FireballMinimumFxRadius,
+            projectile.radius * FireballFxHitRadiusScale);
+        return magicFx_->startFireballLoop(drawPosition, direction, fxRadius).id;
+    }
     case ProjectileKind::IceShard:
         return magicFx_->startIceShardLoop(drawPosition, direction, projectile.radius).id;
     case ProjectileKind::WindWave:
@@ -917,13 +896,28 @@ void MagicSystem::stopProjectileFx(MagicProjectile& projectile)
     projectile.fxEmitterId = 0;
 }
 
-void MagicSystem::queueCastSounds(MagicElement element, Vec2 position)
+void MagicSystem::queueMagicStartSounds(MagicElement element, Vec2 position)
 {
     const MagicAudioProfile profile = magicAudioProfile(element);
     soundEvents_.push_back(MagicSoundEvent{
-        .cueId = AudioSeMagicCast,
+        .cueId = MagicCommonCastCueId,
         .position = position,
     });
+    if (profile.castCueTiming != MagicElementCastCueTiming::MagicStart) {
+        return;
+    }
+    soundEvents_.push_back(MagicSoundEvent{
+        .cueId = profile.castCueId,
+        .position = position,
+    });
+}
+
+void MagicSystem::queuePrimaryEffectSound(MagicElement element, Vec2 position)
+{
+    const MagicAudioProfile profile = magicAudioProfile(element);
+    if (profile.castCueTiming != MagicElementCastCueTiming::PrimaryEffect) {
+        return;
+    }
     soundEvents_.push_back(MagicSoundEvent{
         .cueId = profile.castCueId,
         .position = position,

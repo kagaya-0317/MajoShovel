@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -49,6 +50,17 @@ struct MagicFxEmitterHandle {
     [[nodiscard]] bool valid() const { return id != 0; }
 };
 
+struct MagicFxAttachedVisual {
+    MagicFxParticleShape shape = MagicFxParticleShape::SoftCircle;
+    Color color{255, 255, 255, 220};
+    float size = 0.0f;
+    float rotation = 0.0f;
+    float height = 0.0f;
+    float stretch = 1.0f;
+    bool depthSorted = true;
+    bool foreground = false;
+};
+
 struct MagicFxEmitterConfig {
     Vec2 position{};
     Vec2 direction{1.0f, 0.0f};
@@ -85,6 +97,7 @@ struct MagicFxEmitterConfig {
     bool loop = false;
     bool depthSorted = true;
     bool foreground = false;
+    std::optional<MagicFxAttachedVisual> attachedVisual;
 };
 
 struct MagicFxSoundEvent {
@@ -202,6 +215,10 @@ private:
     void updateParticles(float dt);
     void updateLightningStrikes(float dt);
     void updateThunderImpactArcs(float dt);
+    void appendAttachedVisualRenderEntries(
+        std::vector<DepthRenderEntry>& entries,
+        Renderer& renderer,
+        bool foreground) const;
     [[nodiscard]] float sample(MagicFxRange range);
     [[nodiscard]] Vec2 sampleSpawnOffset(const MagicFxEmitterConfig& config);
     [[nodiscard]] Vec2 sampleVelocity(const MagicFxEmitterConfig& config);

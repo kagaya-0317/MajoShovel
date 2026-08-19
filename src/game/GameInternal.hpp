@@ -2949,15 +2949,8 @@ float ringItemShadowVisualSize(const SpellRingItem& item, float totalSeconds)
 
 ObjectImageDrawOptions ringItemActionFlashOptions(const SpellRingItem& item, ObjectImageDrawOptions options = {})
 {
-    if (item.actionFlashTimer > 0.0f) {
-        const float t = std::clamp(item.actionFlashTimer / SpellRingItemActionFlashSeconds, 0.0f, 1.0f);
-        const float eased = t * t * (3.0f - 2.0f * t);
-        options.maskOverlayColor = {
-            255,
-            244,
-            214,
-            static_cast<unsigned char>(std::round(150.0f * eased)),
-        };
+    if (item.actionFlash.remainingSeconds > 0.0f) {
+        options.maskOverlayColor = actionFlashOverlayColor(item.actionFlash, 150.0f);
     }
     return options;
 }
@@ -3380,66 +3373,6 @@ std::string loadRingObjectId(std::string_view value)
 std::string playerDeathCauseText(const Player& player)
 {
     return deathCauseText(player.lastDamageCause);
-}
-
-ObjectDefinition makeCapturedObjectDefinition(const EnemyDefinition& enemy, EnemyVariantTier variantTier = EnemyVariantTier::Normal)
-{
-    ObjectDefinition item;
-    item.id = "captured_" + std::string(enemyVariantObjectIdSegment(variantTier)) + enemy.id;
-    item.name = variantTier == EnemyVariantTier::Normal
-        ? enemy.name
-        : enemyVariantDisplayName(enemy.name.empty() ? enemy.id : enemy.name, variantTier);
-    item.category = "\xE8\xBB\x8C\xE9\x81\x93";
-    item.description = enemy.capturedDescription;
-    item.rarity = 1;
-    item.roguelikeDropWeight = 0.0;
-    item.roguelikeResidualWeight = 0.0;
-    item.price = balance::capturedEnemyItemBasePrice(enemy.money);
-    item.visual.source = ItemVisualSource::Enemy;
-    item.visual.imageNumber = enemy.imageNumber;
-    item.visual.sourceId = enemy.id;
-    item.visual.enemyVariantLevelBonus = enemyVariantLevelBonus(variantTier);
-    item.normalEffects = enemy.capturedNormalEffects;
-    item.orbitEffects = enemy.capturedOrbitEffects;
-    item.attackPower = enemy.capturedAttackPower;
-    item.damageType = enemy.capturedDamageType.empty() ? "none" : enemy.capturedDamageType;
-    const std::string normalizedDamageType = normalizeDamageType(item.damageType);
-    if (normalizedDamageType.empty()) {
-        if (item.damageType == "physical") {
-            logError("[warning] Game: captured object damage type physical is deprecated; using blunt");
-            item.damageType = "blunt";
-        } else {
-            logError("[warning] Game: captured object damage type \"" + item.damageType + "\" is invalid; using none");
-            item.damageType = "none";
-        }
-    } else {
-        item.damageType = normalizedDamageType;
-    }
-    item.digPower = enemy.capturedDigPower;
-    item.durability = enemy.capturedDurability;
-    item.weightKg = enemy.capturedWeight;
-    item.tags = enemy.capturedTags;
-    if (std::find(item.tags.begin(), item.tags.end(), "no_drop") == item.tags.end()) {
-        item.tags.push_back("no_drop");
-    }
-    if (variantTier != EnemyVariantTier::Normal) {
-        item.tags.push_back("captured_variant");
-        item.tags.push_back(variantTier == EnemyVariantTier::Abyss ? "captured_abyss" : "captured_deep");
-        item.tags.push_back("codex_hidden");
-    }
-    item.effectText = enemy.capturedEffectText;
-    item.capturedBehaviorIds = enemy.capturedBehaviorIds;
-    item.discoveryEffectLines = buildDiscoveryEffectLines(item);
-    item.capturedBehaviorSpecs.reserve(enemy.capturedBehaviorSpecs.size());
-    for (const EnemyBehaviorSpec& spec : enemy.capturedBehaviorSpecs) {
-        CapturedBehaviorSpec runtimeSpec;
-        runtimeSpec.trigger = spec.trigger;
-        runtimeSpec.behavior = spec.behavior;
-        runtimeSpec.params = spec.params;
-        runtimeSpec.intervalSeconds = spec.intervalSeconds;
-        item.capturedBehaviorSpecs.push_back(std::move(runtimeSpec));
-    }
-    return item;
 }
 
 void upsertObjectDefinition(ObjectCatalog& catalog, ObjectDefinition item)

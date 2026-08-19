@@ -3,6 +3,7 @@
 #include "engine/FrameProfiler.hpp"
 #include "engine/InputHelpGlyph.hpp"
 #include "game/EnemyImageRenderer.hpp"
+#include "game/ElementVisual.hpp"
 #include "game/EntityStatusVisuals.hpp"
 #include "game/ExplosionWarning.hpp"
 #include "game/MenuIconImage.hpp"
@@ -454,22 +455,9 @@ float stunWakeHopOffset(float stunWakeTimer)
 
 Color magicAuraColor(std::string_view damageType)
 {
-    if (damageType == "fire") {
-        return {255, 116, 32, 210};
-    }
-    if (damageType == "ice") {
-        return {116, 214, 255, 210};
-    }
-    if (damageType == "thunder") {
-        return {255, 232, 80, 220};
-    }
-    if (damageType == "wind") {
-        return {138, 238, 178, 190};
-    }
-    if (damageType == "earth") {
-        return {164, 120, 70, 215};
-    }
-    return {220, 220, 255, 190};
+    Color color = elementVisualColor(damageType);
+    color.a = 210;
+    return color;
 }
 
 std::string signedPercentShort(double multiplier)
@@ -3609,6 +3597,16 @@ UiRect importantDungeonNoticeBlockRect(float screenWidth, float screenHeight, in
     }};
 }
 
+Vec2 mirroredImportantNoticePopupBottomCenter(Vec2 playerScreenPosition, float screenWidth, float screenHeight)
+{
+    const UiRect referenceNotice = importantDungeonNoticeBlockRect(screenWidth, screenHeight, 1);
+    const float lowerGapFromScreenCenter = std::max(0.0f, referenceNotice.pos.y - screenHeight * 0.5f);
+    return {
+        playerScreenPosition.x,
+        playerScreenPosition.y - lowerGapFromScreenCenter,
+    };
+}
+
 } // namespace
 
 bool Game::rewardNodeVisibleOnDungeonMap(const RewardNode& node) const
@@ -6106,8 +6104,97 @@ void Game::renderDevBuildNotice(Renderer& renderer) const
 void Game::renderFinalScreenOverlays(Renderer& renderer)
 {
     renderScreenTransitionOverlay(renderer);
+    renderBgmNowPlayingNotice(renderer);
     renderDevBuildNotice(renderer);
     renderBossDefeatFlash(renderer);
+}
+
+void Game::renderBgmNowPlayingNotice(Renderer& renderer) const
+{
+    if (!bgmNowPlayingNotice_.active()) {
+        return;
+    }
+
+    const bool gameplayScreen =
+        basePresentationActive() ||
+        mode_ == ScreenMode::Playing ||
+        mode_ == ScreenMode::Inventory ||
+        mode_ == ScreenMode::PauseMenu ||
+        mode_ == ScreenMode::Ring;
+    if (!gameplayScreen) {
+        return;
+    }
+
+    constexpr float RestingX = 18.0f;
+    constexpr float SlideDistance = 48.0f;
+    constexpr float TextYGap = 8.0f;
+    constexpr float ScreenMargin = 18.0f;
+    constexpr float PreferredTextWidth = 520.0f;
+    constexpr int OutlinePx = 2;
+    constexpr int TextScale = 2;
+
+    const float elapsed = bgmNowPlayingNotice_.elapsedSeconds;
+    float alpha = 1.0f;
+    float textX = RestingX;
+    if (elapsed < BgmNowPlayingNoticeState::EnterSeconds) {
+        const float progress = easeOutCubic(
+            elapsed / BgmNowPlayingNoticeState::EnterSeconds);
+        alpha = progress;
+        textX = RestingX - SlideDistance * (1.0f - progress);
+    } else if (elapsed >= BgmNowPlayingNoticeState::ExitStartSeconds) {
+        const float progress = smoothStep01(
+            (elapsed - BgmNowPlayingNoticeState::ExitStartSeconds) /
+            (BgmNowPlayingNoticeState::LifetimeSeconds -
+                BgmNowPlayingNoticeState::ExitStartSeconds));
+        alpha = 1.0f - progress;
+        textX = RestingX + SlideDistance * progress;
+    }
+
+    renderer.setScreenSpace();
+    const float maxTextWidth = std::max(
+        1.0f,
+        std::min(
+            PreferredTextWidth,
+            static_cast<float>(camera_.width()) - RestingX - ScreenMargin));
+    const std::string titleText = "♪ " + bgmNowPlayingNotice_.title;
+    const std::string artistText = bgmNowPlayingNotice_.artist.empty()
+        ? std::string{}
+        : " / " + bgmNowPlayingNotice_.artist;
+    const std::string fullText = titleText + artistText;
+    const bool renderSeparateColors =
+        renderer.measureText(fullText, TextScale).x <= maxTextWidth;
+    const std::string visibleText = renderSeparateColors
+        ? fullText
+        : fittedSingleLineText(renderer, fullText, maxTextWidth, TextScale);
+    const Vec2 textPos{textX, TopInfoBarY + TopInfoBarHeight + TextYGap};
+    const unsigned char textAlpha = alphaByte(255.0f * alpha);
+    const Color outlineColor{0, 0, 0, alphaByte(150.0f * alpha)};
+
+    if (!renderSeparateColors || artistText.empty()) {
+        renderer.drawOutlinedText(
+            textPos,
+            visibleText,
+            {255, 245, 210, textAlpha},
+            outlineColor,
+            OutlinePx,
+            TextScale);
+        return;
+    }
+
+    renderer.drawOutlinedText(
+        textPos,
+        titleText,
+        {255, 245, 210, textAlpha},
+        outlineColor,
+        OutlinePx,
+        TextScale);
+    renderer.drawOutlinedText(
+        textPos + Vec2{renderer.measureText(titleText, TextScale).x, 0.0f},
+        artistText,
+        {190, 194, 204, textAlpha},
+        outlineColor,
+        OutlinePx,
+        TextScale);
 }
 
 void Game::renderPlayerDamageVignette(Renderer& renderer, double totalSeconds) const
@@ -7763,7 +7850,7 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
         SpellRingItem displayItem = item;
         displayItem.worldPosition = itemAnchor;
         // Combat feedback belongs to the live world, not the ring management preview.
-        displayItem.actionFlashTimer = 0.0f;
+        clearActionFlash(displayItem.actionFlash);
         const Vec2 itemCenter = ringItemDrawPosition(displayItem, totalTime);
         const Vec2 outward = normalize(itemAnchor - orbitCenter);
         Vec2 forward{-outward.y, outward.x};
@@ -9519,6 +9606,7 @@ void Game::render(Renderer& renderer, const Time& time)
         finishUiFrame(renderer);
         renderBaseDebugOverlay(renderer, time);
         renderScreenTransitionOverlay(renderer);
+        renderBgmNowPlayingNotice(renderer);
         renderWorldLoadingScreen(renderer, time.totalSeconds());
         renderDevBuildNotice(renderer);
         renderer.present();
@@ -9578,6 +9666,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderRoguelikeBigHole(renderer);
         renderRoguelikeFacilities(renderer);
     }
+    effects_.renderGround(renderer);
 
     bool ringCenterVisible = false;
     if (playerDeathSequenceActive()) {
@@ -9922,65 +10011,17 @@ void Game::render(Renderer& renderer, const Time& time)
             FrameProfileScope popupsProfile("UI.popups");
             if (!suppressDungeonUi && !dungeonMapOverlayOpen_ &&
                 (mode_ == ScreenMode::Playing || mode_ == ScreenMode::Inventory || mode_ == ScreenMode::PauseMenu || mode_ == ScreenMode::Ring)) {
-                std::vector<UiRect> encyclopediaAvoidRects;
                 const float screenWidth = static_cast<float>(camera_.width());
                 const float screenHeight = static_cast<float>(camera_.height());
-                encyclopediaAvoidRects.push_back({{TopInfoBarX, TopInfoBarY}, {screenWidth - TopInfoBarX * 2.0f, TopInfoBarHeight + 8.0f}});
-                if (reloadNoticeTimer_ > 0.0f) {
-                    encyclopediaAvoidRects.push_back({{18.0f, 170.0f}, {430.0f, 26.0f}});
-                }
-                const bool importantNoticeMode =
-                    mode_ == ScreenMode::Playing ||
-                    ((mode_ == ScreenMode::Inventory || mode_ == ScreenMode::Ring) &&
-                        pauseReturnMode_ != ScreenMode::Base);
-                const int importantNoticeCount = std::min(
-                    static_cast<int>(importantDungeonNotices_.size()),
-                    ImportantDungeonNoticeMaxVisible);
-                if (importantNoticeMode && importantNoticeCount > 0) {
-                    encyclopediaAvoidRects.push_back(importantDungeonNoticeBlockRect(
-                        screenWidth,
-                        screenHeight,
-                        importantNoticeCount));
-                }
-                if (mode_ == ScreenMode::Playing) {
-                    if (!enemyTestActive_ && !dungeonMinimapCells_.empty()) {
-                        encyclopediaAvoidRects.push_back(dungeonMinimapRect());
-                    }
-
-                    if (!introTutorialActive()) {
-                        const int unlockedRingCount = unlockedRingHudCount();
-                        for (int ringIndex = 0; ringIndex < unlockedRingCount; ++ringIndex) {
-                            encyclopediaAvoidRects.push_back(ringStatusHudRect(ringIndex, unlockedRingCount));
-                        }
-                    }
-
-                    encyclopediaAvoidRects.push_back(dungeonStatusHudRect(screenWidth, screenHeight));
-
-                    int visibleLogCount = std::min(static_cast<int>(dungeonLogs_.size()), DungeonLogMaxVisible);
-                    const auto logBlockHeight = [](int count) {
-                        return static_cast<float>(count) * DungeonLogRowHeight +
-                            static_cast<float>(std::max(0, count - 1)) * DungeonLogGap;
-                    };
-                    const float logTopLimit = TopInfoBarY + TopInfoBarHeight + 8.0f;
-                    const float statusTopY = dungeonStatusHudRect(screenWidth, screenHeight).pos.y;
-                    const float maxLogBottomY = std::max(logTopLimit + DungeonLogRowHeight, statusTopY - DungeonLogStatusGap);
-                    while (visibleLogCount > 0 && logBlockHeight(visibleLogCount) > maxLogBottomY - logTopLimit) {
-                        --visibleLogCount;
-                    }
-                    if (visibleLogCount > 0) {
-                        const float totalLogHeight = logBlockHeight(visibleLogCount);
-                        const float logX = std::max(8.0f, screenWidth - DungeonLogRightMargin - DungeonLogWidth);
-                        const float logY = std::clamp(screenHeight * DungeonLogTargetYRatio, logTopLimit, maxLogBottomY - totalLogHeight);
-                        encyclopediaAvoidRects.push_back({{logX, logY}, {DungeonLogWidth, totalLogHeight}});
-                    }
-                }
-
+                const Vec2 playerScreenPosition = camera_.worldToScreen(player_.position);
                 encyclopedia_.renderPopups(
                     renderer,
                     camera_,
                     objectCatalog_,
-                    player_.position,
-                    encyclopediaAvoidRects);
+                    mirroredImportantNoticePopupBottomCenter(
+                        playerScreenPosition,
+                        screenWidth,
+                        screenHeight));
             }
         }
         {

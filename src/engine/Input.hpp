@@ -84,6 +84,7 @@ public:
     bool redoShortcutPressed() const { return ctrlRedoPressed_; }
     bool copyShortcutPressed() const { return ctrlCopyPressed_; }
     bool pasteShortcutPressed() const { return ctrlPastePressed_; }
+    bool ctrlHeld() const;
     int shortcutCursorDelta() const { return shortcutCursorDelta_; }
     int mouseWheelDelta() const { return mouseWheelDelta_; }
     int cycleDelta() const { return cycleDelta_; }

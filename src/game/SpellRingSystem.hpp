@@ -49,6 +49,12 @@ struct RingMotionEvent {
     Vec2 direction{1.0f, 0.0f};
 };
 
+struct CapturedBehaviorActivationEvent {
+    std::string objectId;
+    std::string behaviorId;
+    Vec2 position{};
+};
+
 struct SpellRingFluidVisual {
     Vec2 direction{1.0f, 0.0f};
     float shiftAmount = 0.0f;
@@ -312,6 +318,7 @@ public:
     SpellRingFluidVisual fluidVisualForRing(int ringIndex) const;
     std::vector<Vec2> visualPathSamplePointsForRing(int ringIndex, const RuntimeBalance& balance, int sampleCount = 96) const;
     std::vector<RingMotionEvent> consumeMotionEvents();
+    std::vector<CapturedBehaviorActivationEvent> consumeCapturedBehaviorActivationEvents();
 
 private:
     struct RingAnchorFollowState {
@@ -404,6 +411,7 @@ private:
     std::vector<RingItemBreakEvent> itemBreakEvents_;
     std::vector<RingItemAddedEvent> itemAddedEvents_;
     std::vector<RingMotionEvent> motionEvents_;
+    std::vector<CapturedBehaviorActivationEvent> capturedBehaviorActivationEvents_;
 
     std::vector<SpellRingItem>& activeItems();
     const std::vector<SpellRingItem>& activeItems() const;

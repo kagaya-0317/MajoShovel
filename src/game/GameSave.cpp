@@ -1,5 +1,9 @@
 ﻿#include "game/GameInternal.hpp"
 
+#include "game/SaveDataValidation.hpp"
+#include "game/SaveFileStorage.hpp"
+#include "game/StorageRules.hpp"
+
 #include <limits>
 
 namespace majo {
@@ -63,6 +67,11 @@ struct LoadedEnemyNodeSave {
     DungeonTile tile{};
     int placementType = 0;
     bool spawned = false;
+};
+
+struct LoadedWarehouseStackSave {
+    std::string objectId;
+    int count = 0;
 };
 
 void normalizeEnhanceLevels(ItemInstance& instance)
@@ -980,6 +989,29 @@ int unlockedRingCountFromStageClearFlags(const std::vector<std::string>& storyFl
     return std::clamp(result, 1, SpellRingCount);
 }
 
+save_data::ValidationLimits gameSaveValidationLimits(const InventorySystem& inventory)
+{
+    save_data::ValidationLimits limits;
+    limits.maxBackpackSlots = inventory.screenSlotCount();
+    return limits;
+}
+
+bool readValidatedGameSaveFile(
+    const std::filesystem::path& path,
+    const save_data::ValidationLimits& limits,
+    save_file::SaveFileDocument& outDocument,
+    std::string& outError)
+{
+    if (!save_file::readSaveFile(path, outDocument, outError)) {
+        return false;
+    }
+    if (!save_data::validatePayload(outDocument.payload, limits, outError)) {
+        outError += ": " + path.string();
+        return false;
+    }
+    return true;
+}
+
 }
 
 Game::DiarySaveSummary Game::currentDiarySaveSummary() const
@@ -1066,23 +1098,19 @@ Game::DiarySaveSummary Game::loadDiarySaveSummaryFromDisk() const
 {
     DiarySaveSummary summary;
     const std::filesystem::path path = saveDataPath();
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        return summary;
-    }
-
-    std::string line;
-    if (!std::getline(file, line)) {
-        return summary;
-    }
-    if (!line.empty() && line.back() == '\r') {
-        line.pop_back();
-    }
-    if (line != "MAJO_SHOVEL_SAVE_V1") {
-        return summary;
+    save_file::SaveFileDocument document;
+    std::string documentError;
+    const save_data::ValidationLimits validationLimits = gameSaveValidationLimits(inventory_);
+    if (!readValidatedGameSaveFile(path, validationLimits, document, documentError)) {
+        const std::filesystem::path backupPath = save_file::backupPathFor(path);
+        if (!readValidatedGameSaveFile(backupPath, validationLimits, document, documentError)) {
+            return summary;
+        }
     }
 
     summary.hasSave = true;
+    std::istringstream file(document.payload);
+    std::string line;
     int unlockedStages = 1;
     int currentStageUnlockedWarpPoints = 0;
     std::string currentStageId = currentStageId_;
@@ -1179,30 +1207,47 @@ Game::DiarySaveSummary Game::loadDiarySaveSummaryFromDisk() const
 bool Game::loadSaveData()
 {
     const std::filesystem::path path = saveDataPath();
-    return loadSaveData(path);
+    if (loadSaveData(path)) {
+        return true;
+    }
+
+    const std::filesystem::path backupPath = save_file::backupPathFor(path);
+    std::error_code existsError;
+    const bool backupExists = std::filesystem::exists(backupPath, existsError);
+    if (existsError || !backupExists) {
+        return false;
+    }
+
+    logError("[warning] SaveData: primary save unavailable; trying backup");
+    if (!loadSaveData(backupPath)) {
+        logError("[warning] SaveData: backup save is also unavailable");
+        return false;
+    }
+
+    std::string restoreError;
+    if (save_file::restoreSaveFileFromBackup(path, restoreError)) {
+        logError("[warning] SaveData: recovered primary save from backup");
+    } else {
+        logError("[warning] SaveData: loaded backup but could not restore primary: " + restoreError);
+    }
+    return true;
 }
 
 bool Game::loadSaveData(const std::filesystem::path& path)
 {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        logError("[save] no save file: " + path.string());
+    save_file::SaveFileDocument document;
+    std::string documentError;
+    if (!readValidatedGameSaveFile(
+            path,
+            gameSaveValidationLimits(inventory_),
+            document,
+            documentError)) {
+        logError("[warning] SaveData: " + documentError);
         return false;
     }
 
+    std::istringstream file(document.payload);
     std::string line;
-    if (!std::getline(file, line)) {
-        logError("[warning] SaveData: empty or unreadable file; starting with new data");
-        return false;
-    }
-    if (!line.empty() && line.back() == '\r') {
-        line.pop_back();
-    }
-    if (line != "MAJO_SHOVEL_SAVE_V1") {
-        logError("[warning] SaveData: invalid header; starting with new data");
-        return false;
-    }
-
     InventorySystem loadedInventory;
     EncyclopediaSystem loadedEncyclopedia;
     std::unordered_map<std::string, int> loadedEncyclopediaOwnedSyncSuppressCounts;
@@ -1216,6 +1261,7 @@ bool Game::loadSaveData(const std::filesystem::path& path)
     std::array<std::vector<SpellRingItem>, SpellRingCount> loadedRingItemsByRing{};
     RingPresetSystem loadedRingPresets;
     std::vector<InventoryObjectStack> loadedWarehouseStacks;
+    std::vector<LoadedWarehouseStackSave> loadedWarehouseStackRecords;
     std::vector<InventoryObjectInstance> loadedWarehouseInstances;
     const auto restoreWarehouseStack = [&loadedWarehouseStacks](const ItemData& item, std::string_view objectId, int count) {
         int remaining = std::max(0, count);
@@ -1813,15 +1859,11 @@ bool Game::loadSaveData(const std::filesystem::path& path)
             std::string objectId;
             int count = 0;
             stream >> objectId >> count;
-            const ItemData* item = objectCatalog_.registry.findById(objectId);
             if (!stream.fail() && count > 0) {
-                if (item != nullptr) {
-                    restoreWarehouseStack(*item, objectId, count);
-                } else {
-                    ++warningCount;
-                    logError("[warning] SaveData: warehouse_object object_id=\"" + objectId + "\" is missing from Objects DB; restored as missing stack item");
-                    restoreWarehouseStack(makeMissingItemData(objectId), objectId, count);
-                }
+                loadedWarehouseStackRecords.push_back(LoadedWarehouseStackSave{
+                    .objectId = std::move(objectId),
+                    .count = count,
+                });
             }
         } else if (key == "warehouse_object_instance") {
             ItemInstance instance;
@@ -1989,6 +2031,20 @@ bool Game::loadSaveData(const std::filesystem::path& path)
                 loadedRingPresets.setPreset(presetIndex, std::move(preset));
             }
         }
+    }
+
+    loadedWarehouseStacks.reserve(
+        static_cast<std::size_t>(storage_rules::warehouseCapacityForLevel(loadedWarehouseCapacityLevel)));
+    for (const LoadedWarehouseStackSave& stackRecord : loadedWarehouseStackRecords) {
+        const ItemData* item = objectCatalog_.registry.findById(stackRecord.objectId);
+        if (item != nullptr) {
+            restoreWarehouseStack(*item, stackRecord.objectId, stackRecord.count);
+            continue;
+        }
+        ++warningCount;
+        logError("[warning] SaveData: warehouse_object object_id=\"" + stackRecord.objectId +
+            "\" is missing from Objects DB; restored as missing stack item");
+        restoreWarehouseStack(makeMissingItemData(stackRecord.objectId), stackRecord.objectId, stackRecord.count);
     }
 
     addCapturedEnemyKnowledgeFromInventory(migratedMainCapturedEnemyIds, enemyCatalog_, loadedInventory);
@@ -2418,22 +2474,7 @@ bool Game::saveSaveData(std::string& message) const
 
 bool Game::saveSaveData(const std::filesystem::path& path, std::string& message) const
 {
-    std::error_code error;
-    if (path.has_parent_path()) {
-        std::filesystem::create_directories(path.parent_path(), error);
-        if (error) {
-            message = "保存先作成に失敗";
-            return false;
-        }
-    }
-
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    if (!file) {
-        message = "セーブ失敗";
-        return false;
-    }
-
-    file << "MAJO_SHOVEL_SAVE_V1\n";
+    std::ostringstream file;
     file << "durability_unit_scale " << DurabilityUnitsPerPoint << "\n";
     file << "money " << money_ << "\n";
     file << "play_time_seconds " << static_cast<std::int64_t>(std::max(0.0, playTimeSeconds_)) << "\n";
@@ -2878,6 +2919,31 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
     }
 
     if (!file) {
+        message = "セーブ書込に失敗";
+        return false;
+    }
+
+    std::string payload = file.str();
+    const save_data::ValidationLimits validationLimits = gameSaveValidationLimits(inventory_);
+    std::string validationError;
+    if (!save_data::validatePayload(payload, validationLimits, validationError)) {
+        logError("[save] generated save data failed semantic validation: " + validationError);
+        message = "セーブ書込に失敗";
+        return false;
+    }
+
+    const save_file::ExistingSaveValidator existingSaveValidator =
+        [validationLimits](const save_file::SaveFileDocument& document) {
+            std::string ignoredError;
+            return save_data::validatePayload(document.payload, validationLimits, ignoredError);
+        };
+    std::string storageError;
+    if (!save_file::writeSaveFileAtomically(
+            path,
+            std::move(payload),
+            existingSaveValidator,
+            storageError)) {
+        logError("[save] atomic save failed: " + storageError);
         message = "セーブ書込に失敗";
         return false;
     }

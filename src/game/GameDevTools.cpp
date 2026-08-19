@@ -2567,6 +2567,7 @@ AudioCueEditEntry parseAudioCueManifestEntry(const std::vector<std::string>& fie
     entry.loopStartFrame = parseAudioFrameOrDefault(fieldOrEmpty(fields, 8), 0);
     entry.loopEndFrame = parseAudioFrameOrDefault(fieldOrEmpty(fields, 9), 0);
     entry.loopCrossfadeFrames = parseAudioFrameOrDefault(fieldOrEmpty(fields, 10), 0);
+    entry.artistName = trimAscii(std::string(fieldOrEmpty(fields, 11)));
     return entry;
 }
 
@@ -2624,7 +2625,7 @@ bool writeAudioCueManifestRows(const std::vector<AudioCueManifestRow>& rows, std
     }
 
     file << "\xEF\xBB\xBF";
-    file << "id\ttype\tpath\tvolume\tloop\tcooldown_ms\tpitch\tdisplay_name\tloop_start_frame\tloop_end_frame\tloop_crossfade_frames\n";
+    file << "id\ttype\tpath\tvolume\tloop\tcooldown_ms\tpitch\tdisplay_name\tloop_start_frame\tloop_end_frame\tloop_crossfade_frames\tartist_name\n";
     for (const AudioCueManifestRow& row : rows) {
         if (!row.valid || row.entry.id.empty()) {
             continue;
@@ -2640,7 +2641,8 @@ bool writeAudioCueManifestRows(const std::vector<AudioCueManifestRow>& rows, std
             << row.entry.displayName << '\t'
             << row.entry.loopStartFrame << '\t'
             << row.entry.loopEndFrame << '\t'
-            << row.entry.loopCrossfadeFrames << '\n';
+            << row.entry.loopCrossfadeFrames << '\t'
+            << row.entry.artistName << '\n';
     }
 
     if (!file) {
@@ -8798,7 +8800,7 @@ void Game::updateDebugNamedSaveUi(const Input& input, UiContext& ui)
                     ui.block({{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}});
                     return;
                 }
-            } else if (keyboardActivation) {
+            } else {
                 loadSelectedDebugNamedSave();
                 return;
             }
@@ -9824,6 +9826,13 @@ void Game::triggerEffectTestPlayback(const EffectPreviewEntry& entry)
         EntityStatus status;
         (void)status.applyState(std::string(entry.argument), 1.0, -1.0, "effect_test");
         emitEntityStatusAuras(status, targetPosition, effects_);
+    }
+
+    if (!entry.previewSoundCueId.empty()) {
+        playAudioSe(entry.previewSoundCueId);
+    }
+    if (!entry.layeredPreviewSoundCueId.empty()) {
+        playAudioSe(entry.layeredPreviewSoundCueId);
     }
 }
 

@@ -9,6 +9,7 @@
 #include "game/PlayerEquipmentVisual.hpp"
 #include "game/RingDisplayName.hpp"
 #include "game/SpellRingItem.hpp"
+#include "game/StorageRules.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -74,6 +75,43 @@ constexpr float BaseFacilityMarkerPulseSeconds = 0.75f;
 constexpr float BaseFacilityMarkerPulseScale = 0.24f;
 constexpr float BaseFacilityMarkerOuterOutlinePixels = 4.0f;
 constexpr float BaseFacilityMarkerInnerOutlinePixels = 2.0f;
+constexpr std::string_view BaseCloudShadowImagePath = "assets/kyoten/cloud_shadow.png";
+constexpr float BaseCloudShadowTileSize = 1024.0f;
+constexpr Vec2 BaseCloudShadowVelocity{128.0f / 3.0f, 256.0f / 15.0f};
+constexpr Color BaseCloudShadowTint{0, 0, 0, 176};
+
+void drawBaseCloudShadow(Renderer& renderer, UiRect mapBounds, float elapsedSeconds)
+{
+    const ImageHandle image = renderer.acquireImage(BaseCloudShadowImagePath, TextureFilter::Linear);
+    if (!image.valid() || mapBounds.size.x <= 0.0f || mapBounds.size.y <= 0.0f) {
+        return;
+    }
+
+    const float animationTime = std::max(0.0f, elapsedSeconds);
+    const Vec2 offset{
+        std::fmod(animationTime * BaseCloudShadowVelocity.x, BaseCloudShadowTileSize),
+        std::fmod(animationTime * BaseCloudShadowVelocity.y, BaseCloudShadowTileSize),
+    };
+    const Vec2 firstTile = mapBounds.pos - Vec2{BaseCloudShadowTileSize, BaseCloudShadowTileSize} + offset;
+    const Vec2 mapEnd = mapBounds.pos + mapBounds.size;
+
+    ImageDrawOptions options;
+    options.anchor = {0.0f, 0.0f};
+    options.tint = BaseCloudShadowTint;
+    options.blendMode = ImageBlendMode::Multiply;
+
+    renderer.pushClipRect(mapBounds.pos, mapBounds.size);
+    for (float y = firstTile.y; y < mapEnd.y; y += BaseCloudShadowTileSize) {
+        for (float x = firstTile.x; x < mapEnd.x; x += BaseCloudShadowTileSize) {
+            renderer.drawImage(
+                image,
+                {x, y},
+                {BaseCloudShadowTileSize, BaseCloudShadowTileSize},
+                options);
+        }
+    }
+    renderer.popClipRect();
+}
 
 UiRect baseDiaryPanelRect()
 {
@@ -750,9 +788,7 @@ const char* baseFacilityTutorialTrigger(BaseFacilityAction action)
 
 int baseUpgradeWarehouseCapacityForLevel(int level)
 {
-    constexpr std::array<int, 5> Capacities{{48, 72, 100, 140, 200}};
-    const int index = std::clamp(level, 0, static_cast<int>(Capacities.size()) - 1);
-    return Capacities[static_cast<std::size_t>(index)];
+    return storage_rules::warehouseCapacityForLevel(level);
 }
 
 template <std::size_t N>
@@ -7264,9 +7300,7 @@ void Game::applyProcessingTarget(ProcessingTarget target, ProcessingMode mode)
 
 int Game::warehouseCapacity() const
 {
-    constexpr std::array<int, 5> Capacities{{48, 72, 100, 140, 200}};
-    const int level = std::clamp(warehouseCapacityLevel_, 0, static_cast<int>(Capacities.size()) - 1);
-    return Capacities[static_cast<std::size_t>(level)];
+    return storage_rules::warehouseCapacityForLevel(warehouseCapacityLevel_);
 }
 
 int Game::warehouseUsedSlots() const
@@ -10835,7 +10869,7 @@ void Game::updateHiddenBaseOrbit(const Input& input, UiContext& ui, float dt, bo
             }
 
             cooldown = std::max(HiddenBaseNpcHitCooldownSeconds, item.hitInterval);
-            item.actionFlashTimer = SpellRingItemActionFlashSeconds;
+            triggerActionFlash(item.actionFlash);
             (void)spellRing_.consumeItemDurability(item, FullPointDurabilityCostUnits);
 
             if (hiddenRouteCaptureNetObject(item.objectId)) {
@@ -15362,6 +15396,10 @@ void Game::renderBaseBackdrop(Renderer& renderer) const
             renderPlayerFootstepDust(renderer);
         });
 
+    if (baseArea_ == BaseArea::Outdoor && !baseEditEnabled_) {
+        drawBaseCloudShadow(renderer, map, baseRingPreviewAnimationTime_);
+    }
+
     renderBaseStoryRingDemo(renderer);
     renderBaseStoryChicoryFlight(renderer);
     renderBaseMiningRescueDropEvent(renderer);
@@ -15473,6 +15511,10 @@ void Game::renderBaseScreen(Renderer& renderer) const
         [&]() {
             renderPlayerFootstepDust(renderer);
         });
+
+    if (baseArea_ == BaseArea::Outdoor && !baseEditEnabled_) {
+        drawBaseCloudShadow(renderer, map, baseRingPreviewAnimationTime_);
+    }
 
     renderBaseStoryRingDemo(renderer);
     renderBaseStoryChicoryFlight(renderer);
@@ -16842,9 +16884,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         const int displaySelection = baseUpgradeDisplayForIndex(roguelikeTrainer, baseUpgradeSelection_);
         const int selected = baseUpgradeIndexForDisplay(roguelikeTrainer, displaySelection);
         const auto warehouseCapacityForUiLevel = [](int level) {
-            constexpr std::array<int, 5> Capacities{{48, 72, 100, 140, 200}};
-            const int index = std::clamp(level, 0, static_cast<int>(Capacities.size()) - 1);
-            return Capacities[static_cast<std::size_t>(index)];
+            return storage_rules::warehouseCapacityForLevel(level);
         };
         const auto merchantStockCountForUiLevel = [](int level) {
             return 6 + std::clamp(level, 0, 6) * 3;

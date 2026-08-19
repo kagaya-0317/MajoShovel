@@ -38,12 +38,11 @@ constexpr float RingItemHitboxReferenceImageSize = 96.0f;
 
 [[nodiscard]] inline Vec2 ringItemActionShakeOffset(const SpellRingItem& item, float totalSeconds)
 {
-    if (item.actionFlashTimer <= 0.0f) {
+    if (item.actionFlash.remainingSeconds <= 0.0f) {
         return {};
     }
 
-    const float t = std::clamp(item.actionFlashTimer / SpellRingItemActionFlashSeconds, 0.0f, 1.0f);
-    const float eased = t * t * (3.0f - 2.0f * t);
+    const float eased = actionFlashStrength(item.actionFlash);
     const float amplitude = 3.6f * eased;
     const float phase = item.localAngle * 17.0f + static_cast<float>(item.ringIndex) * 5.0f;
     constexpr float ShakeSpeed = 86.0f;

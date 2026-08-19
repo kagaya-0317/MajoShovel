@@ -169,7 +169,7 @@ function Assert-Mapping {
     )
 
     $requiredColumns = @(
-        "source", "output", "cue_id", "display_name",
+        "source", "output", "cue_id", "display_name", "artist_name",
         "loop_start_seconds", "loop_end_seconds", "loop_crossfade_ms", "notes"
     )
     if ($Rows.Count -eq 0) {
@@ -210,6 +210,9 @@ function Assert-Mapping {
         }
         if ([string]::IsNullOrWhiteSpace($row.display_name) -or $row.display_name.Contains("`t")) {
             $problems.Add("Invalid display name for '$($row.source)'.")
+        }
+        if ([string]::IsNullOrWhiteSpace($row.artist_name) -or $row.artist_name.Contains("`t")) {
+            $problems.Add("Invalid artist name for '$($row.source)'.")
         }
         try {
             $startFrame = Convert-SecondsToFrames $row.loop_start_seconds $SampleRate
@@ -290,6 +293,7 @@ function Assert-ManifestMatchesMapping {
         if ($manifest[0].type -cne "bgm" -or
             $manifest[0].path -cne $expectedPath -or
             $manifest[0].display_name -cne $row.display_name -or
+            $manifest[0].artist_name -cne $row.artist_name -or
             [uint64]$manifest[0].loop_start_frame -ne [uint64]$result.loop_start_frame -or
             [uint64]$manifest[0].loop_end_frame -ne [uint64]$result.manifest_loop_end_frame -or
             [uint64]$manifest[0].loop_crossfade_frames -ne [uint64]$result.loop_crossfade_frames) {

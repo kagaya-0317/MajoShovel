@@ -127,6 +127,7 @@ struct ProjectileDefinition {
 };
 
 [[nodiscard]] std::span<const ProjectileDefinition> projectileDefinitions();
+[[nodiscard]] Color projectileActionFlashColor(std::string_view projectileId);
 
 class ProjectileSystem {
 public:

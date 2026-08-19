@@ -33,8 +33,11 @@ enum class ParticleVisual {
 
 enum class EffectLayer {
     World,
-    Foreground
+    Foreground,
+    Ground
 };
+
+inline constexpr float WarpPointPulseCycleSeconds = 2.4f;
 
 enum class DamagePopupStyle {
     Enemy,
@@ -177,6 +180,7 @@ struct PresentationPulseRingOptions {
     float startRadius = 8.0f;
     float endRadius = 72.0f;
     float ringWidth = 5.0f;
+    EffectLayer layer = EffectLayer::Foreground;
 };
 
 struct SmokePuff {
@@ -201,6 +205,7 @@ public:
     [[nodiscard]] bool lightweightMode() const { return lightweightMode_; }
 
     void update(float dt);
+    void renderGround(Renderer& renderer);
     void render(Renderer& renderer);
     void renderShadows(Renderer& renderer);
     void appendRenderEntries(std::vector<DepthRenderEntry>& entries, Renderer& renderer);

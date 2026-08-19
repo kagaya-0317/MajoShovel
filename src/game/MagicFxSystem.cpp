@@ -27,6 +27,12 @@ constexpr float EarthSpikeRiseFraction = 0.18f;
 constexpr float EarthSpikeSettleFraction = 0.12f;
 constexpr float EarthSpikeRiseOvershoot = 1.04f;
 constexpr float EarthSpikeGroundOffsetScale = 0.08f;
+constexpr float WindMagicVisualScale = 1.5f;
+
+float scaledWindMagicRadius(float radius, float minimumRadius)
+{
+    return std::max(minimumRadius, radius) * WindMagicVisualScale;
+}
 
 std::mt19937& magicFxRng()
 {
@@ -881,6 +887,30 @@ void drawParticle(Renderer& renderer, const MagicFxSystem::Particle& particle)
     }
 }
 
+void drawAttachedVisual(
+    Renderer& renderer,
+    Vec2 position,
+    float age,
+    const MagicFxAttachedVisual& visual)
+{
+    MagicFxSystem::Particle particle;
+    particle.active = true;
+    particle.shape = visual.shape;
+    particle.position = position;
+    particle.startColor = visual.color;
+    particle.endColor = visual.color;
+    particle.age = std::max(0.0f, age);
+    particle.lifetime = 1.0f;
+    particle.startSize = std::max(0.0f, visual.size);
+    particle.endSize = particle.startSize;
+    particle.rotation = visual.rotation;
+    particle.height = std::max(0.0f, visual.height);
+    particle.stretch = std::max(0.1f, visual.stretch);
+    particle.depthSorted = visual.depthSorted;
+    particle.foreground = visual.foreground;
+    drawParticle(renderer, particle);
+}
+
 } // namespace
 
 MagicFxEmitterHandle MagicFxSystem::addEmitter(const MagicFxEmitterConfig& config)
@@ -1146,47 +1176,42 @@ MagicFxEmitterHandle MagicFxSystem::startFireballLoop(Vec2 position, Vec2 direct
     direction = normalize(direction);
     radius = std::max(3.0f, radius * 0.72f);
 
-    MagicFxEmitterConfig body;
-    body.position = position;
-    body.direction = direction;
-    body.particleShape = MagicFxParticleShape::FireballCore;
-    body.spawnShape = MagicFxSpawnShape::Point;
-    body.startColor = {255, 126, 28, 240};
-    body.endColor = {255, 96, 20, 222};
-    body.speed = {0.0f, 0.0f};
-    body.lifetime = {0.075f, 0.115f};
-    body.startSize = {std::max(1.0f, radius * 0.20f), std::max(1.6f, radius * 0.30f)};
-    body.endSize = body.startSize;
-    body.rotation = {0.0f, Pi * 2.0f};
-    body.fadeOutFraction = 0.10f;
-    body.emissionRate = 58.0f;
-    body.loop = true;
-    body.depthSorted = true;
-    const MagicFxEmitterHandle handle = addEmitter(body);
+    MagicFxEmitterConfig fireball;
+    fireball.position = position;
+    fireball.direction = direction;
+    fireball.loop = true;
+    fireball.attachedVisual = MagicFxAttachedVisual{
+        .shape = MagicFxParticleShape::FireballCore,
+        .color = {255, 126, 28, 240},
+        .size = std::max(1.6f, radius * 0.30f),
+        .rotation = std::atan2(direction.y, direction.x),
+        .depthSorted = true,
+    };
+    const MagicFxEmitterHandle handle = addEmitter(fireball);
 
-    MagicFxEmitterConfig core;
-    core.position = position;
-    core.direction = direction * -1.0f;
-    core.baseVelocity = direction * -28.0f;
-    core.particleShape = MagicFxParticleShape::Circle;
-    core.spawnShape = MagicFxSpawnShape::Circle;
-    core.startColor = {255, 238, 104, 238};
-    core.endColor = {255, 178, 48, 0};
-    core.speed = {7.0f, 26.0f};
-    core.lifetime = {0.44f, 0.82f};
-    core.startSize = {std::max(0.8f, radius * 0.075f), std::max(1.8f, radius * 0.180f)};
-    core.endSize = {0.0f, std::max(0.28f, radius * 0.028f)};
-    core.height = {0.0f, 3.0f};
-    core.verticalVelocity = {3.0f, 18.0f};
-    core.gravity = 8.0f;
-    core.drag = 1.7f;
-    core.spawnRadius = std::max(1.0f, radius * 0.28f);
-    core.spreadRadians = Pi * 1.25f;
-    core.fadeOutFraction = 0.76f;
-    core.emissionRate = 66.0f;
-    core.loop = true;
-    core.depthSorted = true;
-    addEmitterWithParent(core, handle.id);
+    MagicFxEmitterConfig innerFlame;
+    innerFlame.position = position;
+    innerFlame.direction = direction * -1.0f;
+    innerFlame.baseVelocity = direction * -28.0f;
+    innerFlame.particleShape = MagicFxParticleShape::Circle;
+    innerFlame.spawnShape = MagicFxSpawnShape::Circle;
+    innerFlame.startColor = {255, 238, 104, 238};
+    innerFlame.endColor = {255, 178, 48, 0};
+    innerFlame.speed = {7.0f, 26.0f};
+    innerFlame.lifetime = {0.44f, 0.82f};
+    innerFlame.startSize = {std::max(0.8f, radius * 0.075f), std::max(1.8f, radius * 0.180f)};
+    innerFlame.endSize = {0.0f, std::max(0.28f, radius * 0.028f)};
+    innerFlame.height = {0.0f, 3.0f};
+    innerFlame.verticalVelocity = {3.0f, 18.0f};
+    innerFlame.gravity = 8.0f;
+    innerFlame.drag = 1.7f;
+    innerFlame.spawnRadius = std::max(1.0f, radius * 0.28f);
+    innerFlame.spreadRadians = Pi * 1.25f;
+    innerFlame.fadeOutFraction = 0.76f;
+    innerFlame.emissionRate = 66.0f;
+    innerFlame.loop = true;
+    innerFlame.depthSorted = true;
+    addEmitterWithParent(innerFlame, handle.id);
 
     MagicFxEmitterConfig outerFlame;
     outerFlame.position = position;
@@ -1936,7 +1961,7 @@ void MagicFxSystem::playThunderSparkBurst(Vec2 position, float radius)
 
 MagicFxEmitterHandle MagicFxSystem::startWindAura(Vec2 position, float radius)
 {
-    radius = std::max(4.0f, radius);
+    radius = scaledWindMagicRadius(radius, 4.0f);
 
     MagicFxEmitterConfig blades;
     blades.position = position;
@@ -2008,7 +2033,7 @@ MagicFxEmitterHandle MagicFxSystem::startWindAura(Vec2 position, float radius)
 MagicFxEmitterHandle MagicFxSystem::startWindWaveLoop(Vec2 position, Vec2 direction, float radius)
 {
     direction = normalize(direction);
-    radius = std::max(8.0f, radius);
+    radius = scaledWindMagicRadius(radius, 8.0f);
     const float angle = std::atan2(direction.y, direction.x);
 
     MagicFxEmitterConfig crescent;
@@ -2554,6 +2579,8 @@ void MagicFxSystem::appendRenderEntries(std::vector<DepthRenderEntry>& entries, 
             },
         });
     }
+
+    appendAttachedVisualRenderEntries(entries, renderer, false);
 }
 
 void MagicFxSystem::appendForegroundRenderEntries(std::vector<DepthRenderEntry>& entries, Renderer& renderer) const
@@ -2567,6 +2594,35 @@ void MagicFxSystem::appendForegroundRenderEntries(std::vector<DepthRenderEntry>&
             sortY,
             [&renderer, &particle]() {
                 drawParticle(renderer, particle);
+            },
+        });
+    }
+
+    appendAttachedVisualRenderEntries(entries, renderer, true);
+}
+
+void MagicFxSystem::appendAttachedVisualRenderEntries(
+    std::vector<DepthRenderEntry>& entries,
+    Renderer& renderer,
+    bool foreground) const
+{
+    for (const Emitter& emitter : emitters_) {
+        if (!emitter.active || !emitter.config.attachedVisual.has_value()) {
+            continue;
+        }
+        const MagicFxAttachedVisual& visual = *emitter.config.attachedVisual;
+        if (visual.foreground != foreground || visual.size <= 0.0f || visual.color.a == 0) {
+            continue;
+        }
+        const float sortY = visual.depthSorted ? emitter.config.position.y : -100000.0f;
+        entries.push_back(DepthRenderEntry{
+            sortY,
+            [&renderer, &emitter]() {
+                drawAttachedVisual(
+                    renderer,
+                    emitter.config.position,
+                    emitter.age,
+                    *emitter.config.attachedVisual);
             },
         });
     }
@@ -2859,25 +2915,54 @@ void MagicFxSystem::addThunderImpactArc(ThunderImpactArc arc)
     thunderImpactArcs_.push_back(arc);
 }
 
+namespace {
+
+constexpr EffectPreviewEntry withMagicCastPreviewSound(
+    EffectPreviewEntry entry,
+    MagicElement element)
+{
+    entry.previewSoundCueId = MagicCommonCastCueId;
+    entry.layeredPreviewSoundCueId = magicAudioProfile(element).castCueId;
+    return entry;
+}
+
+constexpr EffectPreviewEntry withMagicImpactPreviewSound(
+    EffectPreviewEntry entry,
+    MagicElement element)
+{
+    entry.previewSoundCueId = magicAudioProfile(element).impactCueId;
+    return entry;
+}
+
+constexpr EffectPreviewEntry withMagicElementCastPreviewSound(
+    EffectPreviewEntry entry,
+    MagicElement element)
+{
+    entry.previewSoundCueId = magicAudioProfile(element).castCueId;
+    return entry;
+}
+
+} // namespace
+
 std::span<const EffectPreviewEntry> magicFxPreviewEntries()
 {
     static constexpr std::array<EffectPreviewEntry, 16> Entries{{
-        {.id = "fire_aura", .label = "火オーラ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::Player, .playback = EffectPreviewPlayback::PersistentEmitter, .radius = 34.0f},
-        {.id = "fireball_loop", .label = "火球ループ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .playback = EffectPreviewPlayback::PersistentEmitter, .direction = {1.0f, 0.0f}, .radius = 28.0f},
-        {.id = "fire_ground_burn", .label = "火の地面燃焼", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::WallTile, .radius = 38.0f},
-        {.id = "ice_aura", .label = "氷オーラ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::Player, .playback = EffectPreviewPlayback::PersistentEmitter, .radius = 34.0f},
-        {.id = "ice_shard_loop", .label = "氷片ループ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .playback = EffectPreviewPlayback::PersistentEmitter, .direction = {1.0f, 0.0f}, .radius = 28.0f},
-        {.id = "ice_shatter", .label = "氷砕け", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .radius = 34.0f},
-        {.id = "thunder_aura", .label = "雷オーラ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::Player, .playback = EffectPreviewPlayback::PersistentEmitter, .radius = 36.0f},
-        {.id = "thunder_strike", .label = "落雷", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .radius = 40.0f},
-        {.id = "thunder_spark_burst", .label = "雷スパーク", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .radius = 36.0f},
+        withMagicCastPreviewSound({.id = "fire_aura", .label = "火オーラ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::Player, .playback = EffectPreviewPlayback::PersistentEmitter, .radius = 34.0f}, MagicElement::Fire),
+        withMagicCastPreviewSound({.id = "fireball_loop", .label = "火球ループ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .playback = EffectPreviewPlayback::PersistentEmitter, .direction = {1.0f, 0.0f}, .radius = 28.0f}, MagicElement::Fire),
+        withMagicImpactPreviewSound({.id = "fire_ground_burn", .label = "火の地面燃焼", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::WallTile, .radius = 38.0f}, MagicElement::Fire),
+        withMagicCastPreviewSound({.id = "ice_aura", .label = "氷オーラ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::Player, .playback = EffectPreviewPlayback::PersistentEmitter, .radius = 34.0f}, MagicElement::Ice),
+        withMagicCastPreviewSound({.id = "ice_shard_loop", .label = "氷片ループ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .playback = EffectPreviewPlayback::PersistentEmitter, .direction = {1.0f, 0.0f}, .radius = 28.0f}, MagicElement::Ice),
+        withMagicImpactPreviewSound({.id = "ice_shatter", .label = "氷砕け", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .radius = 34.0f}, MagicElement::Ice),
+        withMagicCastPreviewSound({.id = "thunder_aura", .label = "雷オーラ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::Player, .playback = EffectPreviewPlayback::PersistentEmitter, .radius = 36.0f}, MagicElement::Thunder),
+        withMagicImpactPreviewSound({.id = "thunder_strike", .label = "落雷", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .radius = 40.0f}, MagicElement::Thunder),
+        withMagicImpactPreviewSound({.id = "thunder_spark_burst", .label = "雷スパーク", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .radius = 36.0f}, MagicElement::Thunder),
         {.id = "heal_pulse", .label = "回復パルス", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::Player, .radius = 32.0f},
-        {.id = "wind_aura", .label = "風オーラ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::Player, .playback = EffectPreviewPlayback::PersistentEmitter, .radius = 38.0f},
-        {.id = "wind_wave_loop", .label = "風波ループ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .playback = EffectPreviewPlayback::PersistentEmitter, .direction = {1.0f, 0.0f}, .radius = 34.0f},
+        withMagicCastPreviewSound({.id = "wind_aura", .label = "風オーラ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::Player, .playback = EffectPreviewPlayback::PersistentEmitter, .radius = 38.0f}, MagicElement::Wind),
+        withMagicCastPreviewSound({.id = "wind_wave_loop", .label = "風波ループ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .playback = EffectPreviewPlayback::PersistentEmitter, .direction = {1.0f, 0.0f}, .radius = 34.0f}, MagicElement::Wind),
         {.id = "earth_aura", .label = "土オーラ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::Player, .playback = EffectPreviewPlayback::PersistentEmitter, .radius = 36.0f},
         {.id = "dirt_clod_loop", .label = "土塊ループ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .playback = EffectPreviewPlayback::PersistentEmitter, .direction = {1.0f, 0.0f}, .radius = 32.0f},
-        {.id = "earth_spike_rise", .label = "土の棘", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::WallTile, .radius = 38.0f},
-        {.id = "earth_debris_burst", .label = "土破片バースト", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::WallTile, .radius = 38.0f},
+        withMagicElementCastPreviewSound({.id = "earth_spike_rise", .label = "土の棘", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::WallTile, .radius = 38.0f}, MagicElement::Earth),
+        withMagicImpactPreviewSound({.id = "earth_debris_burst", .label = "土破片バースト", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::WallTile, .radius = 38.0f}, MagicElement::Earth),
     }};
     return {Entries.data(), Entries.size()};
 }

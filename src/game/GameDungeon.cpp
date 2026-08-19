@@ -3332,7 +3332,7 @@ void Game::updateDungeonDepthTutorials()
     queueStoryEventForTrigger(std::string(RingShiftTutorialTrigger));
 }
 
-void Game::refreshOrbitEffects()
+void Game::refreshOrbitEffects(std::vector<EffectDiscoveryEvent>* discoveryEvents)
 {
     spellRing_.applyObjectParameters(objectCatalog_);
     spellRing_.clearOrbitModifiers();
@@ -3408,6 +3408,7 @@ void Game::refreshOrbitEffects()
         context.enemies = &enemies_;
         context.magic = &magic_;
         context.encyclopedia = &encyclopedia_;
+        context.discoveryEvents = discoveryEvents;
         context.position = item.worldPosition;
         context.triggerType = EffectTriggerType::Orbit;
         context.logUnimplementedEffects = false;
@@ -3469,7 +3470,7 @@ void Game::updatePlayerRegen(float dt, std::vector<EffectDiscoveryEvent>& discov
     }
 }
 
-void Game::updateCapturedProjectileBehaviors(float dt)
+void Game::updateCapturedProjectileBehaviors(float dt, std::vector<EffectDiscoveryEvent>* discoveryEvents)
 {
     if (dt <= 0.0f) {
         return;
@@ -3580,6 +3581,14 @@ void Game::updateCapturedProjectileBehaviors(float dt)
                 return false;
             }
 
+            triggerActionFlash(item.actionFlash, projectileActionFlashColor(projectileId));
+            queueObjectEffectDiscovery(
+                discoveryEvents,
+                objectCatalog_,
+                item.objectId,
+                behaviorId,
+                item.worldPosition);
+
             if (behaviorId == "shoot_water") {
                 const int burstCount = std::clamp(item.capturedBehaviorParamInt("shoot_water", "burstCount", 1), 1, 6);
                 const float burstInterval = static_cast<float>(std::max(0.02, item.capturedBehaviorParamDouble("shoot_water", "burstInterval", 0.14)));
@@ -3640,7 +3649,7 @@ void Game::updateCapturedProjectileBehaviors(float dt)
     }
 }
 
-void Game::updateCapturedUtilityBehaviors(float dt)
+void Game::updateCapturedUtilityBehaviors(float dt, std::vector<EffectDiscoveryEvent>* discoveryEvents)
 {
     if (dt <= 0.0f) {
         return;
@@ -3676,6 +3685,12 @@ void Game::updateCapturedUtilityBehaviors(float dt)
                 request.terrainDamage = item.breakExplosion.terrainDamage;
                 request.destroyTerrain = true;
                 breakExplosionRequests.push_back(request);
+                queueObjectEffectDiscovery(
+                    discoveryEvents,
+                    objectCatalog_,
+                    item.objectId,
+                    "break_countdown_explode",
+                    item.worldPosition);
                 item.breakExplosion = {};
             }
         }
@@ -3692,9 +3707,17 @@ void Game::updateCapturedUtilityBehaviors(float dt)
             const int pulledDrops = affectMetal ? worldDrops_.pullMetalDrops(objectCatalog_, item.worldPosition, dt * strength, radius) : 0;
             const int pulledEnemies = affectMetal ? enemies_.pullMetalEnemies(item.worldPosition, tileMap_, dt * strength, radius) : 0;
             const int pulledProjectiles = affectMetal ? projectiles_.pullMetalProjectiles(item.worldPosition, dt * strength, radius) : 0;
-            if (pulledDrops + pulledEnemies + pulledProjectiles > 0 && item.capturedMagnetVisualTimer <= 0.0f) {
-                effects_.spawnAreaPulse(item.worldPosition, 42.0f, {120, 190, 245, 150});
-                item.capturedMagnetVisualTimer = CapturedMagnetVisualInterval;
+            if (pulledDrops + pulledEnemies + pulledProjectiles > 0) {
+                queueObjectEffectDiscovery(
+                    discoveryEvents,
+                    objectCatalog_,
+                    item.objectId,
+                    "magnet_pull",
+                    item.worldPosition);
+                if (item.capturedMagnetVisualTimer <= 0.0f) {
+                    effects_.spawnAreaPulse(item.worldPosition, 42.0f, {120, 190, 245, 150});
+                    item.capturedMagnetVisualTimer = CapturedMagnetVisualInterval;
+                }
             }
         }
 
@@ -3707,6 +3730,12 @@ void Game::updateCapturedUtilityBehaviors(float dt)
                 const int deflected = projectiles_.deflectEnemyProjectiles(item.worldPosition, strength, radius);
                 if (deflected > 0) {
                     effects_.spawnAreaPulse(item.worldPosition, 66.0f, {150, 235, 205, 155});
+                    queueObjectEffectDiscovery(
+                        discoveryEvents,
+                        objectCatalog_,
+                        item.objectId,
+                        "wind_deflect",
+                        item.worldPosition);
                 }
                 item.capturedWindTimer = interval;
             }
@@ -3746,6 +3775,21 @@ void Game::updateAmbientParticleEffects(float dt)
     }
 
     const bool lightweight = lightweightModeEnabled();
+    warpPointPulseTimer_ = std::max(0.0f, warpPointPulseTimer_ - dt);
+    if (warpPointsEnabled_ && !lightweight && warpPointPulseTimer_ <= 0.0f) {
+        bool spawnedPulse = false;
+        for (const WarpPoint& point : warpPoints_) {
+            if (!point.discovered && !point.unlocked) {
+                continue;
+            }
+            effects_.spawnWarpCircle(point.position, false);
+            spawnedPulse = true;
+        }
+        if (spawnedPulse) {
+            warpPointPulseTimer_ = WarpPointPulseCycleSeconds;
+        }
+    }
+
     ringTrailEffectTimer_ -= dt;
     const int throwingRingIndex = spellRing_.throwingRingIndex();
     if (throwingRingIndex >= 0 && ringTrailEffectTimer_ <= 0.0f) {
@@ -3785,14 +3829,6 @@ void Game::updateAmbientParticleEffects(float dt)
     emitEntityStatusAuras(player_.status, player_.position, effects_);
     enemies_.emitStatusParticles(effects_);
     updateWetGroundFromStatus();
-
-    if (warpPointsEnabled_ && !lightweight) {
-        for (const WarpPoint& point : warpPoints_) {
-            if (point.discovered || point.unlocked) {
-                effects_.spawnWarpCircle(point.position, false);
-            }
-        }
-    }
 }
 
 bool Game::handleCaptureResult(const CaptureResult& capture)
@@ -4893,6 +4929,7 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
     resetInPlace(wetGround_);
     ringTrailEffectTimer_ = 0.0f;
     ambientParticleTimer_ = 0.0f;
+    warpPointPulseTimer_ = 0.0f;
     resetInPlace(projectiles_);
     resetInPlace(magic_);
     resetInPlace(magicFx_);
@@ -5098,7 +5135,7 @@ void Game::startIntroTutorialDungeon()
     baseEditEnabled_ = false;
     baseEditMode_ = BaseEditMode::None;
     resetPlayerFootstepDust();
-    playCurrentDungeonBgm(0.45f);
+    requestCurrentDungeonSceneBgm(0.45f);
     pendingStoryTrigger_ = std::string(IntroTutorialFallTrigger);
 }
 
@@ -5539,6 +5576,7 @@ void Game::completeIntroTutorialAndReturnToBase()
     wetGround_ = WetGroundSystem{};
     ringTrailEffectTimer_ = 0.0f;
     ambientParticleTimer_ = 0.0f;
+    warpPointPulseTimer_ = 0.0f;
     projectiles_ = ProjectileSystem{};
     magic_ = MagicSystem{};
     magicFx_ = MagicFxSystem{};
@@ -5707,6 +5745,7 @@ bool Game::restoreDungeonState(bool useLatestWarpPoint)
     levelUpPresentation_ = {};
     ringTrailEffectTimer_ = 0.0f;
     ambientParticleTimer_ = 0.0f;
+    warpPointPulseTimer_ = 0.0f;
 
     player_ = Player{};
     player_.xpToNext = playerXpToNextForLevel(player_.level, balance_);
@@ -6861,7 +6900,7 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
             }
 
             hitCooldown = std::max(0.12f, item->hitInterval);
-            item->actionFlashTimer = SpellRingItemActionFlashSeconds;
+            triggerActionFlash(item->actionFlash);
             effects_.spawnEnemyHit(targetCenter, {}, false);
             return DungeonEventRingHit{
                 .item = item,
@@ -9546,6 +9585,7 @@ void Game::updateWarpPoints(float dt)
                 pulseOptions.duration = 1.875f;
                 pulseOptions.endRadius = 144.0f;
                 pulseOptions.ringWidth = 3.0f;
+                pulseOptions.layer = EffectLayer::Ground;
                 effects_.spawnPresentationPulseRings(
                     unlockPosition,
                     {104, 226, 255, 220},
@@ -12514,6 +12554,9 @@ void Game::updateOrbitAreaEffects(float dt, std::vector<EffectDiscoveryEvent>& d
                             direction,
                             particleElementForProjectile(WaterShotEmitterProjectileId),
                             8.0f);
+                        triggerActionFlash(
+                            item.actionFlash,
+                            projectileActionFlashColor(WaterShotEmitterProjectileId));
                         item.waterShotTimer = item.waterShotInterval;
                         if (object != nullptr) {
                             appendObjectEffectDiscovery(
@@ -13960,6 +14003,7 @@ void Game::restoreRetrySnapshot()
     magicFx_ = MagicFxSystem{};
     ringTrailEffectTimer_ = 0.0f;
     ambientParticleTimer_ = 0.0f;
+    warpPointPulseTimer_ = 0.0f;
     levels_ = LevelSystem{};
     levelUpPresentation_ = {};
     inventoryReturnToPause_ = false;

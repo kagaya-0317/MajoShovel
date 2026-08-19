@@ -113,11 +113,13 @@ struct DungeonBgmBinding {
     std::string_view cueId;
 };
 
-constexpr std::array<DungeonBgmBinding, 4> DungeonBgmBindings{{
+constexpr std::string_view DefaultDungeonBgmCue = "bgm.dungeon.1";
+constexpr std::array<DungeonBgmBinding, 5> DungeonBgmBindings{{
     {"stage_01_stardust", "bgm.dungeon.1"},
     {"stage_02_junk_magic", "bgm.dungeon.2"},
     {"stage_03_star_core", "bgm.dungeon.3"},
     {"stage_04_astral_mine", "bgm.dungeon.4"},
+    {IntroTutorialStageId, "bgm.dungeon.tutorial"},
 }};
 
 std::string_view dungeonBgmCueForStage(std::string_view stageId)
@@ -130,7 +132,7 @@ std::string_view dungeonBgmCueForStage(std::string_view stageId)
         });
     return binding != DungeonBgmBindings.end()
         ? binding->cueId
-        : DungeonBgmBindings.front().cueId;
+        : DefaultDungeonBgmCue;
 }
 
 std::string_view dialogueTextSoundCueForSpeaker(std::string_view speakerId)
@@ -731,6 +733,7 @@ void Game::setAudioEngine(AudioEngine* audio)
     audio_ = audio;
     activeAudioBgmCue_.clear();
     audioJingle_ = {};
+    bgmNowPlayingNotice_ = {};
 }
 
 void Game::setSettingsAccessors(
@@ -990,8 +993,19 @@ void Game::playAudioBgm(std::string_view id, float fadeSeconds, bool restart)
     if (!restart && activeAudioBgmCue_ == cueId) {
         return;
     }
-    audio_->playBgm(cueId, fadeSeconds, restart);
+
+    const std::string previousCueId = activeAudioBgmCue_;
+    const AudioBgmPlayResult result = audio_->playBgm(cueId, fadeSeconds, restart);
+    if (result == AudioBgmPlayResult::Failed) {
+        return;
+    }
     activeAudioBgmCue_ = cueId;
+    if (result == AudioBgmPlayResult::Started && previousCueId != cueId) {
+        AudioTrackMetadata track = audio_->bgmTrackMetadata(cueId);
+        if (track.valid()) {
+            showBgmNowPlayingNotice(std::move(track.title), std::move(track.artist));
+        }
+    }
 }
 
 void Game::playCurrentDungeonBgm(float fadeSeconds, bool restart)
@@ -999,12 +1013,53 @@ void Game::playCurrentDungeonBgm(float fadeSeconds, bool restart)
     playAudioBgm(dungeonBgmCueForStage(currentStageId_), fadeSeconds, restart);
 }
 
+void Game::requestSceneBgm(std::string_view id, float fadeSeconds, bool restart)
+{
+    if (id.empty()) {
+        return;
+    }
+
+    const bool deferUntilFadeIn =
+        screenTransition_.phase == ScreenTransitionPhase::FadingOut ||
+        screenTransition_.phase == ScreenTransitionPhase::Hold;
+    if (!deferUntilFadeIn) {
+        playAudioBgm(id, fadeSeconds, restart);
+        return;
+    }
+
+    screenTransition_.pendingBgm = ScreenTransitionBgmRequest{
+        .cueId = std::string(id),
+        .fadeSeconds = fadeSeconds,
+        .restart = restart,
+    };
+}
+
+void Game::requestCurrentDungeonSceneBgm(float fadeSeconds, bool restart)
+{
+    requestSceneBgm(dungeonBgmCueForStage(currentStageId_), fadeSeconds, restart);
+}
+
+void Game::flushPendingScreenTransitionBgm()
+{
+    if (!screenTransition_.pendingBgm.pending()) {
+        return;
+    }
+
+    ScreenTransitionBgmRequest request = std::move(screenTransition_.pendingBgm);
+    screenTransition_.pendingBgm = ScreenTransitionBgmRequest{};
+    playAudioBgm(request.cueId, request.fadeSeconds, request.restart);
+}
+
 void Game::stopAudioBgm(float fadeSeconds)
 {
+    if (audioJingle_.active) {
+        audioJingle_.resumeBgmCue.clear();
+    }
     if (audio_ != nullptr) {
         audio_->stopBgm(fadeSeconds);
     }
     activeAudioBgmCue_.clear();
+    bgmNowPlayingNotice_ = {};
 }
 
 void Game::playAudioSe(std::string_view id, float volumeScale, float pitchScale)
@@ -1055,14 +1110,23 @@ float Game::playAudioJingle(
         }
     }
 
-    const std::string resumeCue = audioJingle_.active
+    const bool jingleAlreadyActive = audioJingle_.active;
+    const std::string resumeCue = jingleAlreadyActive
         ? audioJingle_.resumeBgmCue
         : activeAudioBgmCue_;
-    stopAudioBgm(bgmFadeOutSeconds);
+    std::string suspendedCue = jingleAlreadyActive
+        ? audioJingle_.suspendedBgmCue
+        : std::string{};
+    if (!jingleAlreadyActive && audio_ != nullptr && !resumeCue.empty() &&
+        audio_->suspendBgm(bgmFadeOutSeconds)) {
+        suspendedCue = resumeCue;
+    }
+    activeAudioBgmCue_.clear();
     audioJingle_.active = true;
     audioJingle_.remainingSeconds = duration;
     audioJingle_.resumeFadeSeconds = std::max(0.0f, bgmFadeInSeconds);
     audioJingle_.resumeBgmCue = resumeCue;
+    audioJingle_.suspendedBgmCue = suspendedCue;
     playAudioSe(id, volumeScale, safePitch);
     return duration;
 }
@@ -1078,11 +1142,47 @@ void Game::updateAudioJingle(float dt)
         return;
     }
 
-    const std::string resumeCue = audioJingle_.resumeBgmCue;
-    const float fadeSeconds = audioJingle_.resumeFadeSeconds;
+    AudioJingleState completedJingle = std::move(audioJingle_);
     audioJingle_ = {};
-    if (!resumeCue.empty()) {
-        playAudioBgm(resumeCue, fadeSeconds, true);
+    if (completedJingle.resumeBgmCue.empty()) {
+        return;
+    }
+
+    const bool sameSuspendedCue =
+        completedJingle.resumeBgmCue == completedJingle.suspendedBgmCue;
+    if (sameSuspendedCue && audio_ != nullptr &&
+        audio_->resumeBgm(completedJingle.resumeFadeSeconds)) {
+        activeAudioBgmCue_ = completedJingle.resumeBgmCue;
+        return;
+    }
+    playAudioBgm(completedJingle.resumeBgmCue, completedJingle.resumeFadeSeconds, true);
+}
+
+void Game::showBgmNowPlayingNotice(std::string title, std::string artist)
+{
+    const bool gameplayScreen =
+        mode_ == ScreenMode::Base ||
+        mode_ == ScreenMode::Playing ||
+        mode_ == ScreenMode::Inventory ||
+        mode_ == ScreenMode::PauseMenu ||
+        mode_ == ScreenMode::Ring;
+    if (title.empty() || !gameplayScreen) {
+        return;
+    }
+    bgmNowPlayingNotice_ = BgmNowPlayingNoticeState{
+        .title = std::move(title),
+        .artist = std::move(artist),
+    };
+}
+
+void Game::updateBgmNowPlayingNotice(float dt)
+{
+    if (!bgmNowPlayingNotice_.active()) {
+        return;
+    }
+    bgmNowPlayingNotice_.elapsedSeconds += std::max(0.0f, dt);
+    if (!bgmNowPlayingNotice_.active()) {
+        bgmNowPlayingNotice_ = {};
     }
 }
 
@@ -1905,7 +2005,7 @@ void Game::finishWorldBuild()
     baseEditMode_ = BaseEditMode::None;
     resetBaseEditDragState();
     mode_ = ScreenMode::Playing;
-    playCurrentDungeonBgm(0.45f);
+    requestCurrentDungeonSceneBgm(0.45f);
     pauseReturnMode_ = ScreenMode::Playing;
     resetPlayerFootstepDust();
     camera_.follow(player_.position, 1.0f);
@@ -2010,7 +2110,7 @@ void Game::enterBase()
     closeDebugStoryTest();
     debugStoryTestReturnAfterDialogue_ = false;
     mode_ = ScreenMode::Base;
-    playAudioBgm(AudioBgmBase, 0.35f);
+    requestSceneBgm(AudioBgmBase, 0.35f);
     pausePage_ = PauseMenuPage::Main;
     pauseReturnMode_ = ScreenMode::Base;
     inventoryReturnToPause_ = false;
@@ -2250,7 +2350,7 @@ void Game::startEndingKamishibaiPlayback(EndingKind kind, bool replay)
     }();
     endingPlayer_.start(endingPages_, canSkipImmediately);
     mode_ = ScreenMode::EndingKamishibai;
-    playAudioBgm(AudioBgmEnding, 0.65f);
+    requestSceneBgm(AudioBgmEnding, 0.65f);
     pausePage_ = PauseMenuPage::Main;
     pauseReturnMode_ = replay
         ? ScreenMode::Base
@@ -2572,6 +2672,7 @@ void Game::startScreenTransition(
     ScreenTransitionPhase phase,
     ScreenTransitionSound sound)
 {
+    screenTransition_.pendingBgm = ScreenTransitionBgmRequest{};
     screenTransition_.target = target;
     screenTransition_.phase = phase;
     screenTransition_.fadeColor = fadeColorForScreenTransitionTarget(target);
@@ -2750,6 +2851,7 @@ void Game::updateScreenTransition(float dt)
             : ScreenTransitionHoldSeconds;
         if (screenTransition_.elapsed >= holdSeconds && !worldBuildActive()) {
             screenTransition_.elapsed = 0.0f;
+            flushPendingScreenTransitionBgm();
             screenTransition_.phase = ScreenTransitionPhase::FadingIn;
         }
         break;
@@ -2941,7 +3043,7 @@ void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
     baseEditMode_ = BaseEditMode::None;
     resetBaseEditDragState();
     mode_ = ScreenMode::Playing;
-    playCurrentDungeonBgm(0.45f);
+    requestCurrentDungeonSceneBgm(0.45f);
     pauseReturnMode_ = ScreenMode::Playing;
     resetPlayerFootstepDust();
     camera_.follow(player_.position, 1.0f);
@@ -4887,6 +4989,7 @@ void Game::update(const Input& input, const Time& time, Renderer& renderer)
     updatePlayerDamageVignette(time.deltaSeconds());
     spellRing_.updateTransientPresentation(time.deltaSeconds());
     updateAudioJingle(time.deltaSeconds());
+    updateBgmNowPlayingNotice(time.deltaSeconds());
 
     checkHotReload(time.deltaSeconds());
     reloadNoticeTimer_ = std::max(0.0f, reloadNoticeTimer_ - time.deltaSeconds());
@@ -4974,8 +5077,8 @@ void Game::update(const Input& input, const Time& time, Renderer& renderer)
         spawnRingEquipFx(request);
     }
     updateRingEquipFx(time.deltaSeconds());
-    refreshOrbitEffects();
     const bool paused = gameProgressPaused() || dungeonMapOverlayOpen_ || (wasPaused && mode_ == ScreenMode::Playing);
+    refreshOrbitEffects(!paused ? effectDiscoveryEvents : nullptr);
     if (paused && gameplayRewardsEnabled() && !effectDiscoveries.empty()) {
         applyEffectDiscoveries(effectDiscoveries);
     }
@@ -5017,7 +5120,10 @@ void Game::update(const Input& input, const Time& time, Renderer& renderer)
                     time.deltaSeconds(),
                     false,
                     balance_,
-                    std::span<const CollisionRect>{objectBlockers.data(), objectBlockers.size()});
+                    PlayerMovementOptions{
+                        .ignoreCollisions = testPlayMode_ && input.ctrlHeld(),
+                        .objectBlockers = std::span<const CollisionRect>{objectBlockers.data(), objectBlockers.size()},
+                    });
             }
             maybeTriggerPlayerFootstep(
                 player_.position,
@@ -5069,6 +5175,14 @@ void Game::update(const Input& input, const Time& time, Renderer& renderer)
             } else if (event.kind == RingMotionEventKind::ReturnEnd) {
                 effects_.spawnReturn(event.position);
             }
+        }
+        for (const CapturedBehaviorActivationEvent& event : spellRing_.consumeCapturedBehaviorActivationEvents()) {
+            queueObjectEffectDiscovery(
+                effectDiscoveryEvents,
+                objectCatalog_,
+                event.objectId,
+                event.behaviorId,
+                event.position);
         }
         if (gameplayRewardsEnabled()) {
             updateDungeonEvents(time.deltaSeconds(), time.totalSeconds());
@@ -5392,8 +5506,8 @@ void Game::update(const Input& input, const Time& time, Renderer& renderer)
         for (const CapturedExplosionRequest& explosionRequest : digging_.capturedExplosionRequests()) {
             handleCapturedExplosion(explosionRequest);
         }
-        updateCapturedUtilityBehaviors(time.deltaSeconds());
-        updateCapturedProjectileBehaviors(time.deltaSeconds());
+        updateCapturedUtilityBehaviors(time.deltaSeconds(), effectDiscoveryEvents);
+        updateCapturedProjectileBehaviors(time.deltaSeconds(), effectDiscoveryEvents);
         {
             FrameProfileScope profile("Projectiles.update");
             projectiles_.update(

@@ -417,6 +417,10 @@ function Invoke-MajoShovelBuild {
             $buildArgs = Get-MajoShovelVisualStudioBuildArguments $buildPath $Config $TargetName $Jobs
         }
 
+        $buildLogDirectory = Join-Path $env:LOCALAPPDATA "MajoShovel\build-logs"
+        New-Item -ItemType Directory -Force -Path $buildLogDirectory | Out-Null
+        $buildLogPath = Join-Path $buildLogDirectory ("native-build-{0}.log" -f (Get-Date -Format "yyyyMMdd-HHmmss-fff"))
+
         Write-Host "[build] source: $Root"
         Write-Host "[build] output: $buildPath"
         Write-Host "[build] cmake: $cmake"
@@ -430,13 +434,14 @@ function Invoke-MajoShovelBuild {
             Write-Host "[build] compiler cache: off"
         }
         Write-Host "[build] jobs: $Jobs"
+        Write-Host "[build] log: $buildLogPath"
 
         & $cmake @configureArgs
         if ($LASTEXITCODE -ne 0) {
             return $LASTEXITCODE
         }
 
-        $buildExitCode = Invoke-MajoShovelNativeCommandWithProgress $cmake $buildArgs "[build] compiling with $Jobs job(s)" $Root
+        $buildExitCode = Invoke-MajoShovelNativeCommandWithProgress $cmake $buildArgs "[build] compiling with $Jobs job(s)" $Root $buildLogPath
         if ($buildExitCode -ne 0) {
             return $buildExitCode
         }

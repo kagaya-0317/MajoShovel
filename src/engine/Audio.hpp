@@ -36,6 +36,19 @@ struct AudioEngineSettings {
     bool enabled = true;
 };
 
+enum class AudioBgmPlayResult {
+    Failed,
+    Unchanged,
+    Started,
+};
+
+struct AudioTrackMetadata {
+    std::string title;
+    std::string artist;
+
+    [[nodiscard]] bool valid() const { return !title.empty(); }
+};
+
 class AudioEngine {
 public:
     AudioEngine();
@@ -62,14 +75,17 @@ public:
         const std::filesystem::path& path,
         AudioCueOptions options = {});
 
-    void playBgm(std::string_view id, float fadeSeconds = 0.0f, bool restart = false);
+    AudioBgmPlayResult playBgm(std::string_view id, float fadeSeconds = 0.0f, bool restart = false);
     void stopBgm(float fadeSeconds = 0.0f);
+    bool suspendBgm(float fadeSeconds = 0.0f);
+    bool resumeBgm(float fadeSeconds = 0.0f);
     void setBgmPaused(bool paused);
     void playSe(std::string_view id, float volumeScale = 1.0f, float pitchScale = 1.0f);
     void playSe(std::string_view id, AudioSeParams params);
     float cueDurationSeconds(std::string_view id, AudioCueType type);
     std::string cueDisplayName(std::string_view id, AudioCueType type) const;
     std::string currentBgmDisplayName() const;
+    AudioTrackMetadata bgmTrackMetadata(std::string_view id) const;
     void stopAll();
 
     void setMasterVolume(float volume);

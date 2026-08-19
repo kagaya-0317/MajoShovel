@@ -1,6 +1,8 @@
 ﻿cmake_minimum_required(VERSION 3.22)
 project(MajoShovel LANGUAGES CXX)
 
+option(BUILD_TESTING "Build automated tests" ON)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -79,6 +81,8 @@ add_executable(MajoShovel
     src/game/GameBase.cpp
     src/game/GameDungeon.cpp
     src/game/GameSave.cpp
+    src/game/SaveDataValidation.cpp
+    src/game/SaveFileStorage.cpp
     src/game/GameRender.cpp
     src/game/GameDevTools.cpp
     src/game/Kamishibai.cpp
@@ -170,4 +174,20 @@ if(MSVC)
     )
 else()
     target_compile_options(MajoShovel PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(BUILD_TESTING)
+    enable_testing()
+    add_executable(MajoShovelSaveFileTests
+        tests/SaveFileStorageTests.cpp
+        src/game/SaveDataValidation.cpp
+        src/game/SaveFileStorage.cpp
+    )
+    target_include_directories(MajoShovelSaveFileTests PRIVATE src)
+    if(MSVC)
+        target_compile_options(MajoShovelSaveFileTests PRIVATE /W4 /permissive- /utf-8)
+    else()
+        target_compile_options(MajoShovelSaveFileTests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME save_file_storage COMMAND MajoShovelSaveFileTests)
 endif()

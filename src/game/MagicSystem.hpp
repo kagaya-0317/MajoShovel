@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "engine/Math.hpp"
+#include "game/MagicAudio.hpp"
 
 #include <cstdint>
 #include <string_view>
@@ -15,14 +16,6 @@ class TileMap;
 struct LightSource;
 struct SpellRingItem;
 struct Player;
-
-enum class MagicElement {
-    Fire,
-    Ice,
-    Thunder,
-    Wind,
-    Earth,
-};
 
 struct MagicSoundEvent {
     std::string_view cueId{};
@@ -126,7 +119,8 @@ private:
     void updateProjectileFx(MagicProjectile& projectile);
     void emitProjectileImpact(const MagicProjectile& projectile);
     void stopProjectileFx(MagicProjectile& projectile);
-    void queueCastSounds(MagicElement element, Vec2 position);
+    void queueMagicStartSounds(MagicElement element, Vec2 position);
+    void queuePrimaryEffectSound(MagicElement element, Vec2 position);
     void queueImpactSound(
         MagicElement element,
         Vec2 position,

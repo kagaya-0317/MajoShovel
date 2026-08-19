@@ -473,6 +473,209 @@ function Get-MajoShovelRecompiledSources(
     return @($sources | Sort-Object)
 }
 
+function Get-MajoShovelCommandArgumentValue([string[]]$Arguments, [string]$Name) {
+    for ($index = 0; $index -lt $Arguments.Count - 1; $index++) {
+        if ($Arguments[$index] -eq $Name) {
+            return $Arguments[$index + 1]
+        }
+    }
+    return ""
+}
+
+function Get-MajoShovelVisualStudioCompileProgress(
+    [string[]]$Arguments
+) {
+    $buildPath = Get-MajoShovelCommandArgumentValue $Arguments "--build"
+    if ([string]::IsNullOrWhiteSpace($buildPath)) {
+        return $null
+    }
+
+    $config = Get-MajoShovelCommandArgumentValue $Arguments "--config"
+    $targetName = Get-MajoShovelCommandArgumentValue $Arguments "--target"
+    if ([string]::IsNullOrWhiteSpace($config) -or [string]::IsNullOrWhiteSpace($targetName)) {
+        return $null
+    }
+
+    $targetDirectory = Join-Path $buildPath "$targetName.dir\$config"
+    $tlogDirectory = Join-Path $targetDirectory "$targetName.tlog"
+    $itemsPath = Join-Path $tlogDirectory "Cl.items.tlog"
+    $projectPath = Join-Path $buildPath "$targetName.vcxproj"
+    if (-not (Test-Path -LiteralPath $projectPath -PathType Leaf)) {
+        return $null
+    }
+
+    $compileItems = [System.Collections.Generic.List[object]]::new()
+    if (Test-Path -LiteralPath $itemsPath -PathType Leaf) {
+        foreach ($line in [System.IO.File]::ReadAllLines($itemsPath)) {
+            $parts = $line.Split([char[]]@(';'), 2)
+            if ($parts.Length -ne 2) {
+                continue
+            }
+            $compileItems.Add([pscustomobject]@{
+                sourcePath = [System.IO.Path]::GetFullPath($parts[0])
+                objectPath = [System.IO.Path]::GetFullPath($parts[1])
+            })
+        }
+    } else {
+        [xml]$project = [System.IO.File]::ReadAllText($projectPath)
+        $namespace = [System.Xml.XmlNamespaceManager]::new($project.NameTable)
+        $namespace.AddNamespace("msbuild", "http://schemas.microsoft.com/developer/msbuild/2003")
+        foreach ($node in $project.SelectNodes("//msbuild:ClCompile[@Include]", $namespace)) {
+            $sourcePath = [System.IO.Path]::GetFullPath($node.Include)
+            $compileItems.Add([pscustomobject]@{
+                sourcePath = $sourcePath
+                objectPath = Join-Path $targetDirectory ([System.IO.Path]::GetFileNameWithoutExtension($sourcePath) + ".obj")
+            })
+        }
+    }
+
+    if ($compileItems.Count -eq 0) {
+        return $null
+    }
+
+    $dependenciesBySource = @{}
+    $dependencyPath = Join-Path $tlogDirectory "Microsoft.Build.CPPTasks.CL.read.1.tlog"
+    if (Test-Path -LiteralPath $dependencyPath -PathType Leaf) {
+        $currentSources = @()
+        foreach ($line in [System.IO.File]::ReadAllLines($dependencyPath)) {
+            if ($line.StartsWith("^")) {
+                $currentSources = @($line.Substring(1).Split([char[]]@('|'), [System.StringSplitOptions]::RemoveEmptyEntries))
+                foreach ($source in $currentSources) {
+                    $sourceKey = [System.IO.Path]::GetFullPath($source).ToUpperInvariant()
+                    if (-not $dependenciesBySource.ContainsKey($sourceKey)) {
+                        $dependenciesBySource[$sourceKey] = [System.Collections.Generic.List[string]]::new()
+                    }
+                }
+                continue
+            }
+            if ([string]::IsNullOrWhiteSpace($line)) {
+                continue
+            }
+            foreach ($source in $currentSources) {
+                $sourceKey = [System.IO.Path]::GetFullPath($source).ToUpperInvariant()
+                $dependenciesBySource[$sourceKey].Add($line)
+            }
+        }
+    }
+
+    $cleanFirst = $Arguments -contains "--clean-first"
+    $plannedObjects = [System.Collections.Generic.List[object]]::new()
+    foreach ($item in $compileItems) {
+        $objectTicks = 0
+        $needsCompile = $cleanFirst -or -not [System.IO.File]::Exists($item.objectPath)
+        if (-not $needsCompile) {
+            $objectTicks = [System.IO.File]::GetLastWriteTimeUtc($item.objectPath).Ticks
+            $inputPaths = [System.Collections.Generic.List[string]]::new()
+            $inputPaths.Add($item.sourcePath)
+            $sourceKey = $item.sourcePath.ToUpperInvariant()
+            if ($dependenciesBySource.ContainsKey($sourceKey)) {
+                $inputPaths.AddRange($dependenciesBySource[$sourceKey])
+            }
+            foreach ($inputPath in $inputPaths) {
+                if (-not [System.IO.File]::Exists($inputPath)) {
+                    continue
+                }
+                if ([System.IO.File]::GetLastWriteTimeUtc($inputPath).Ticks -gt $objectTicks) {
+                    $needsCompile = $true
+                    break
+                }
+            }
+        }
+        if ($needsCompile) {
+            $plannedObjects.Add([pscustomobject]@{
+                path = $item.objectPath
+                previousWriteUtcTicks = [int64]$objectTicks
+            })
+        }
+    }
+
+    return [pscustomobject]@{
+        kind = "VisualStudio"
+        plannedObjects = @($plannedObjects)
+        completed = 0
+        total = $plannedObjects.Count
+        phase = if ($plannedObjects.Count -gt 0) { "compiling" } else { "checking" }
+    }
+}
+
+function New-MajoShovelNativeProgressContext([string[]]$Arguments) {
+    try {
+        $visualStudioProgress = Get-MajoShovelVisualStudioCompileProgress $Arguments
+        if ($null -ne $visualStudioProgress) {
+            return $visualStudioProgress
+        }
+    }
+    catch {
+        Write-Verbose "Could not prepare detailed build progress: $($_.Exception.Message)"
+    }
+    return [pscustomobject]@{
+        kind = "NativeOutput"
+        completed = 0
+        total = 0
+        phase = "running"
+    }
+}
+
+function Update-MajoShovelNativeProgressFromLine($Context, [string]$Line) {
+    if ($Context.kind -eq "NativeOutput" -and $Line -match '^\[\s*(?<completed>\d+)\s*/\s*(?<total>\d+)\]') {
+        $Context.completed = [int]$Matches.completed
+        $Context.total = [int]$Matches.total
+        $Context.phase = "building"
+    } elseif ($Context.kind -eq "VisualStudio" -and $Line -match '\.vcxproj\s+->\s+') {
+        $Context.phase = "finished"
+    }
+}
+
+function Write-MajoShovelNativeProgress($Context, [string]$Activity, [TimeSpan]$Elapsed) {
+    $elapsedText = "elapsed $([int]$Elapsed.TotalSeconds)s"
+    if ($Context.kind -eq "VisualStudio" -and $Context.total -gt 0) {
+        $completed = $Context.total
+        if ($Context.phase -ne "linking" -and $Context.phase -ne "finished") {
+            $completed = 0
+            foreach ($plannedObject in $Context.plannedObjects) {
+                if (-not [System.IO.File]::Exists($plannedObject.path)) {
+                    continue
+                }
+                if ([System.IO.File]::GetLastWriteTimeUtc($plannedObject.path).Ticks -gt $plannedObject.previousWriteUtcTicks) {
+                    $completed++
+                }
+            }
+            $Context.completed = $completed
+            if ($completed -ge $Context.total) {
+                $Context.phase = "linking"
+            }
+        }
+        $compilePercent = [Math]::Min(100, [int][Math]::Floor(($completed * 100.0) / $Context.total))
+        $percent = if ($Context.phase -eq "finished") { 100 } elseif ($Context.phase -eq "linking") { 99 } else { $compilePercent }
+        $status = if ($Context.phase -eq "finished") {
+            "finished - compiled $completed/$($Context.total) - $elapsedText"
+        } elseif ($Context.phase -eq "linking") {
+            "linking - compiled $completed/$($Context.total) (compile 100%) - $elapsedText"
+        } else {
+            "compiled $completed/$($Context.total) (compile $compilePercent%) - $elapsedText"
+        }
+        Write-Progress -Activity $Activity -Status $status -PercentComplete $percent
+        return
+    }
+    if ($Context.total -gt 0) {
+        $percent = [Math]::Min(100, [int][Math]::Floor(($Context.completed * 100.0) / $Context.total))
+        Write-Progress -Activity $Activity -Status "$($Context.completed)/$($Context.total) ($percent%) - $elapsedText" -PercentComplete $percent
+        return
+    }
+    if ($Context.kind -eq "VisualStudio" -and $Context.phase -eq "finished") {
+        Write-Progress -Activity $Activity -Status "finished - $elapsedText" -PercentComplete 100
+        return
+    }
+    $status = if ($Context.kind -eq "VisualStudio" -and $Context.phase -eq "linking") {
+        "linking - $elapsedText"
+    } elseif ($Context.kind -eq "VisualStudio") {
+        "checking dependencies - $elapsedText"
+    } else {
+        $elapsedText
+    }
+    Write-Progress -Activity $Activity -Status $status -PercentComplete -1
+}
+
 function Invoke-MajoShovelNativeCommandWithProgress(
     [string]$FilePath,
     [string[]]$Arguments,
@@ -486,26 +689,57 @@ function Invoke-MajoShovelNativeCommandWithProgress(
     $process.StartInfo.WorkingDirectory = $WorkingDirectory
     $process.StartInfo.UseShellExecute = $false
     $captureOutput = -not [string]::IsNullOrWhiteSpace($LogPath)
-    if ($captureOutput) {
-        $process.StartInfo.RedirectStandardOutput = $true
-        $process.StartInfo.RedirectStandardError = $true
-        $process.StartInfo.StandardOutputEncoding = [System.Text.Encoding]::UTF8
-        $process.StartInfo.StandardErrorEncoding = [System.Text.Encoding]::UTF8
-    }
+    $process.StartInfo.RedirectStandardOutput = $true
+    $process.StartInfo.RedirectStandardError = $true
+    $process.StartInfo.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+    $process.StartInfo.StandardErrorEncoding = [System.Text.Encoding]::UTF8
 
     $startedAt = Get-Date
-    $frames = @("|", "/", "-", "\")
+    $progressContext = New-MajoShovelNativeProgressContext $Arguments
+    $standardOutput = [System.Text.StringBuilder]::new()
+    $standardError = [System.Text.StringBuilder]::new()
     $exitCode = 1
     [void]$process.Start()
-    $standardOutputTask = if ($captureOutput) { $process.StandardOutput.ReadToEndAsync() } else { $null }
-    $standardErrorTask = if ($captureOutput) { $process.StandardError.ReadToEndAsync() } else { $null }
+    $standardOutputTask = $process.StandardOutput.ReadLineAsync()
+    $standardErrorTask = $process.StandardError.ReadLineAsync()
+    $standardOutputEnded = $false
+    $standardErrorEnded = $false
 
     try {
-        while (-not $process.WaitForExit(200)) {
+        while (-not $process.HasExited -or -not $standardOutputEnded -or -not $standardErrorEnded) {
+            while (-not $standardOutputEnded -and $standardOutputTask.IsCompleted) {
+                $line = $standardOutputTask.GetAwaiter().GetResult()
+                if ($null -eq $line) {
+                    $standardOutputEnded = $true
+                    break
+                }
+                Update-MajoShovelNativeProgressFromLine $progressContext $line
+                [void]$standardOutput.AppendLine($line)
+                if (-not $captureOutput) {
+                    Write-Host $line
+                }
+                $standardOutputTask = $process.StandardOutput.ReadLineAsync()
+            }
+            while (-not $standardErrorEnded -and $standardErrorTask.IsCompleted) {
+                $line = $standardErrorTask.GetAwaiter().GetResult()
+                if ($null -eq $line) {
+                    $standardErrorEnded = $true
+                    break
+                }
+                Update-MajoShovelNativeProgressFromLine $progressContext $line
+                [void]$standardError.AppendLine($line)
+                if (-not $captureOutput) {
+                    Write-Host $line
+                }
+                $standardErrorTask = $process.StandardError.ReadLineAsync()
+            }
             $elapsed = (Get-Date) - $startedAt
-            $frame = $frames[[int]($elapsed.TotalMilliseconds / 200) % $frames.Count]
-            $percent = [int](($elapsed.TotalSeconds * 8) % 100)
-            Write-Progress -Activity $Activity -Status "$frame elapsed $([int]$elapsed.TotalSeconds)s" -PercentComplete $percent
+            Write-MajoShovelNativeProgress $progressContext $Activity $elapsed
+            if (-not $process.HasExited) {
+                [void]$process.WaitForExit(200)
+            } elseif (-not $standardOutputEnded -or -not $standardErrorEnded) {
+                Start-Sleep -Milliseconds 10
+            }
         }
         $exitCode = $process.ExitCode
     }
@@ -518,18 +752,16 @@ function Invoke-MajoShovelNativeCommandWithProgress(
     }
 
     if ($captureOutput) {
-        $standardOutput = $standardOutputTask.GetAwaiter().GetResult()
-        $standardError = $standardErrorTask.GetAwaiter().GetResult()
         $utf8Bom = New-Object System.Text.UTF8Encoding($true)
         $writer = New-Object System.IO.StreamWriter($LogPath, $true, $utf8Bom)
         try {
-            if (-not [string]::IsNullOrEmpty($standardOutput)) {
-                $writer.Write($standardOutput)
-                [Console]::Out.Write($standardOutput)
+            if ($standardOutput.Length -gt 0) {
+                $writer.Write($standardOutput.ToString())
+                [Console]::Out.Write($standardOutput.ToString())
             }
-            if (-not [string]::IsNullOrEmpty($standardError)) {
-                $writer.Write($standardError)
-                [Console]::Error.Write($standardError)
+            if ($standardError.Length -gt 0) {
+                $writer.Write($standardError.ToString())
+                [Console]::Error.Write($standardError.ToString())
             }
         }
         finally {

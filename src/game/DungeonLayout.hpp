@@ -34,6 +34,13 @@ struct SpecialRoomAnchor {
     float radius = 5.0f;
 };
 
+struct DungeonBoundary {
+    bool enabled = false;
+    DungeonTile minTile{};
+    DungeonTile maxTile{};
+    float edgeVariationTiles = 0.0f;
+};
+
 struct DungeonGenerationContext {
     int stageId = 1;
     std::uint32_t seed = 0;
@@ -65,6 +72,7 @@ struct DungeonLayout {
     std::vector<DungeonPath> branchPathPoints;
     std::vector<Vec2> warpPointAnchors;
     std::vector<SpecialRoomAnchor> specialRoomAnchors;
+    DungeonBoundary boundary;
 };
 
 struct DungeonLayoutMetrics {
@@ -80,6 +88,7 @@ struct SpecialRoomMetrics {
 };
 
 DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context);
+bool dungeonBoundaryContainsTile(const DungeonLayout& layout, DungeonTile tile);
 float dungeonPathRouteLengthTiles(const std::vector<Vec2>& points);
 Vec2 pointAtDungeonPathDistanceTiles(const std::vector<Vec2>& points, float routeDistanceTiles);
 DungeonLayoutMetrics calculateDungeonLayoutMetrics(const DungeonLayout& layout, Vec2 tilePosition);
